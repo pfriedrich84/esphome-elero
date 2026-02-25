@@ -60,6 +60,7 @@ static const uint8_t ELERO_MAX_PACKET_SIZE = 57; // according to FCC documents
 static const uint32_t ELERO_POLL_INTERVAL_MOVING = 2000;  // poll every two seconds while moving
 static const uint32_t ELERO_DELAY_SEND_PACKETS = 50; // 50ms send delay between repeats
 static const uint32_t ELERO_TIMEOUT_MOVEMENT = 120000; // poll for up to two minutes while moving
+static const uint32_t ELERO_POST_MOVEMENT_POLL_DELAY = 5000; // poll 5s after open/close duration elapses
 
 static const uint8_t ELERO_SEND_RETRIES = 3;
 static const uint8_t ELERO_SEND_PACKETS = 2;
