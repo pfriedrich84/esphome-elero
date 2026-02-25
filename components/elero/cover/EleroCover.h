@@ -92,6 +92,7 @@ class EleroCover : public cover::Cover, public Component, public EleroBlindBase 
   uint32_t last_publish_{0};
   uint32_t last_recompute_time_{0};
   uint32_t poll_intvl_{0};
+  uint32_t post_movement_poll_at_{0};
   float target_position_{0};
   bool supports_tilt_{false};
   uint32_t last_seen_ms_{0};

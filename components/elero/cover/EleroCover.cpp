@@ -54,6 +54,15 @@ void EleroCover::loop() {
     }
   }
 
+  if(this->post_movement_poll_at_ > 0 && now >= this->post_movement_poll_at_) {
+    this->post_movement_poll_at_ = 0;
+    if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE) {
+      ESP_LOGD(TAG, "Post-movement status poll for blind 0x%06x", this->command_.blind_addr);
+      this->commands_to_send_.push(this->command_check_);
+      this->last_poll_ = now - this->poll_offset_;
+    }
+  }
+
   this->handle_commands(now);
 
   if((this->current_operation != COVER_OPERATION_IDLE) && (this->open_duration_ > 0) && (this->close_duration_ > 0)) {
@@ -288,6 +297,15 @@ void EleroCover::start_movement(CoverOperation dir) {
   this->current_operation = dir;
   this->movement_start_ = millis();
   this->last_recompute_time_ = millis();
+
+  if(dir == COVER_OPERATION_OPENING && this->open_duration_ > 0) {
+    this->post_movement_poll_at_ = this->movement_start_ + this->open_duration_ + ELERO_POST_MOVEMENT_POLL_DELAY;
+  } else if(dir == COVER_OPERATION_CLOSING && this->close_duration_ > 0) {
+    this->post_movement_poll_at_ = this->movement_start_ + this->close_duration_ + ELERO_POST_MOVEMENT_POLL_DELAY;
+  } else {
+    this->post_movement_poll_at_ = 0;
+  }
+
   this->publish_state();
 }
 
