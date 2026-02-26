@@ -4,8 +4,10 @@
 #include <cstring>
 #include <algorithm>
 
-#ifdef USE_ESP32
+#ifdef USE_ESP_IDF
 #include "esp_spiffs.h"
+#elif defined(USE_ARDUINO)
+#include "SPIFFS.h"
 #endif
 
 namespace esphome {
@@ -14,8 +16,8 @@ namespace elero {
 static const char *const TAG = "elero.log";
 
 bool EleroEventLog::begin(uint16_t max_entries) {
-#ifdef USE_ESP32
-  // Mount SPIFFS if not already mounted
+#ifdef USE_ESP_IDF
+  // Mount SPIFFS if not already mounted (ESP-IDF API)
   esp_vfs_spiffs_conf_t spiffs_conf = {
       .base_path = "/spiffs",
       .partition_label = nullptr,
@@ -33,6 +35,17 @@ bool EleroEventLog::begin(uint16_t max_entries) {
   } else {
     ESP_LOGD(TAG, "SPIFFS mounted successfully");
   }
+#elif defined(USE_ARDUINO) && defined(USE_ESP32)
+  // Mount SPIFFS (Arduino API) — true = format on first use
+  if (!SPIFFS.begin(true)) {
+    ESP_LOGE(TAG, "Failed to mount SPIFFS");
+    return false;
+  }
+  ESP_LOGD(TAG, "SPIFFS mounted successfully");
+#else
+  ESP_LOGW(TAG, "Persistent logging only supported on ESP32");
+  return false;
+#endif
 
   // Try to open existing file
   this->file_ = fopen(LOG_PATH, "r+b");
@@ -77,10 +90,6 @@ bool EleroEventLog::begin(uint16_t max_entries) {
   ESP_LOGI(TAG, "Event log created: max %u entries (%" PRIu32 " bytes)",
            max_entries, (uint32_t)(64 + max_entries * 64));
   return true;
-#else
-  ESP_LOGW(TAG, "Persistent logging only supported on ESP32");
-  return false;
-#endif
 }
 
 void EleroEventLog::create_file_() {

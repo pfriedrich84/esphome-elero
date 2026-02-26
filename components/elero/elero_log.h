@@ -26,9 +26,9 @@ struct __attribute__((packed)) PersistentLogEntry {
   int8_t   rssi;             // RSSI in dBm (0 if N/A)
   uint8_t  operation;        // Cover operation enum (0=idle, 1=opening, 2=closing)
   uint16_t position_x100;    // Position * 100 (0-10000), 0xFFFF if unknown
-  char     message[44];      // Human-readable summary, null-terminated
+  char     message[45];      // Human-readable summary, null-terminated
 };
-// sizeof = 4+4+1+4+1+1+1+1+2+44 = 63 bytes + 1 padding = 64 bytes
+// sizeof = 4+4+1+4+1+1+1+1+2+45 = 64 bytes (packed, no implicit padding)
 static_assert(sizeof(PersistentLogEntry) == 64, "PersistentLogEntry must be 64 bytes");
 
 // File header (64 bytes, same as one entry for alignment)
