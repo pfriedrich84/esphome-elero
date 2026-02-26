@@ -133,6 +133,7 @@ cover::CoverTraits EleroCover::get_traits() {
 }
 
 void EleroCover::set_rx_state(uint8_t state) {
+  uint8_t old_state = this->last_state_raw_;  // Capture before overwrite for logging
   this->last_state_raw_ = state;
   ESP_LOGV(TAG, "Got state: 0x%02x (%s) for blind 0x%06x", state, elero_state_to_string(state), this->command_.blind_addr);
   float pos = this->position;
@@ -201,6 +202,14 @@ void EleroCover::set_rx_state(uint8_t state) {
   }
 
   if((pos != this->position) || (op != this->current_operation) || (current_tilt != this->tilt)) {
+    // Log state transition to persistent log
+    if (this->parent_->is_persistent_log_enabled()) {
+      auto *log = this->parent_->get_event_log();
+      if (log && log->is_ready()) {
+        log->log_state_change(this->command_.blind_addr, old_state, state,
+                              static_cast<uint8_t>(op), pos);
+      }
+    }
     this->position = pos;
     this->tilt = current_tilt;
     this->current_operation = op;

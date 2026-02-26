@@ -125,6 +125,14 @@ void Elero::setup() {
   this->gdo0_pin_->attach_interrupt(Elero::interrupt, this, gpio::INTERRUPT_FALLING_EDGE);
   this->reset();
   this->init();
+
+  if (this->persistent_log_enabled_) {
+    if (this->event_log_.begin(this->persistent_log_max_entries_)) {
+      this->event_log_.log_system("Device booted, event log initialized");
+    } else {
+      ESP_LOGE(TAG, "Failed to initialize persistent event log");
+    }
+  }
 }
 
 void Elero::reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
@@ -653,6 +661,11 @@ void Elero::interpret_msg() {
     }
 #endif
 
+    // Log RF received event to persistent log
+    if (this->persistent_log_enabled_ && this->event_log_.is_ready()) {
+      this->event_log_.log_rf_received(src, payload[6], static_cast<int8_t>(rssi));
+    }
+
     // Check if we know the blind (configured ESPHome cover)
     auto search = this->address_to_cover_mapping_.find(src);
     if(search != this->address_to_cover_mapping_.end()) {
@@ -846,6 +859,10 @@ void Elero::track_discovered_blind(uint32_t src, uint32_t remote, uint8_t channe
 
 bool Elero::send_command(t_elero_command *cmd) {
   ESP_LOGVV(TAG, "send_command called");
+  // Log command sent to persistent log
+  if (this->persistent_log_enabled_ && this->event_log_.is_ready()) {
+    this->event_log_.log_command_sent(cmd->blind_addr, cmd->payload[4]);
+  }
   uint16_t code = (0x00 - (cmd->counter * ELERO_CRYPTO_MULT)) & ELERO_CRYPTO_MASK;
   this->msg_tx_[0] = ELERO_MSG_LENGTH;
   this->msg_tx_[1] = cmd->counter; // message counter

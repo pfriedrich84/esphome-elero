@@ -269,6 +269,12 @@ body {
 .log-debug .log-level  { color: #89b4fa; }
 .log-verbose .log-level{ color: #6c7086; }
 
+/* Persistent log event types */
+.log-evt-state_change .log-level { color: #89b4fa; }
+.log-evt-rf_received  .log-level { color: #a6e3a1; }
+.log-evt-command_sent .log-level { color: #fab387; }
+.log-evt-system       .log-level { color: #6c7086; }
+
 /* ─── Configuration — frequency ──────────────────────────────────────────── */
 .freq-row { margin-bottom: 10px; }
 .freq-preset {
