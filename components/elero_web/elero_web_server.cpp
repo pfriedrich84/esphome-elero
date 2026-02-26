@@ -188,6 +188,7 @@ void EleroWebServer::handleRequest(AsyncWebServerRequest *request) {
   if (url == "/elero/api/logs/clear"          && method == HTTP_POST) { handle_clear_logs(request); return; }
   if (url == "/elero/api/logs/capture/start"  && method == HTTP_POST) { handle_log_capture_start(request); return; }
   if (url == "/elero/api/logs/capture/stop"   && method == HTTP_POST) { handle_log_capture_stop(request); return; }
+  if (url == "/elero/api/logs/status"         && method == HTTP_GET)  { handle_get_log_status(request); return; }
 
   // ── Web UI enable/disable (REST mirror of HA switch) ──
   if (url == "/elero/api/ui/status" && method == HTTP_GET)  { handle_webui_status(request); return; }
@@ -762,6 +763,57 @@ void EleroWebServer::handle_set_frequency(AsyncWebServerRequest *request) {
 // ─── Logs ─────────────────────────────────────────────────────────────────────
 
 void EleroWebServer::handle_get_logs(AsyncWebServerRequest *request) {
+  // If persistent logging is enabled, serve from the persistent event log
+  if (this->parent_->is_persistent_log_enabled()) {
+    auto *log = this->parent_->get_event_log();
+    if (log == nullptr || !log->is_ready()) {
+      this->send_json_error(request, 500, "Event log not ready");
+      return;
+    }
+
+    uint32_t since_seq = 0;
+    if (request->hasParam("since")) {
+      auto since_param = request->getParam("since");
+      if (since_param != nullptr)
+        since_seq = (uint32_t)strtoul(since_param->value().c_str(), nullptr, 10);
+    }
+
+    auto entries = (since_seq > 0) ? log->read_since(since_seq) : log->read_all();
+
+    static const char *event_type_strs[] = {"unknown", "rf_received", "state_change", "command_sent", "system"};
+    static const char *op_strs[] = {"idle", "opening", "closing"};
+
+    std::string json = "{\"persistent\":true,\"entries\":[";
+    bool first = true;
+    for (const auto &e : entries) {
+      if (!first) json += ",";
+      first = false;
+
+      uint8_t et = (e.event_type >= 1 && e.event_type <= 4) ? e.event_type : 0;
+      const char *op_str = (e.operation <= 2) ? op_strs[e.operation] : "unknown";
+
+      std::string msg_esc = json_escape(e.message);
+      char buf[512];
+      snprintf(buf, sizeof(buf),
+        "{\"seq\":%lu,\"t\":%lu,\"type\":\"%s\",\"addr\":\"0x%06x\","
+        "\"data1\":%u,\"data2\":%u,\"rssi\":%d,\"op\":\"%s\","
+        "\"pos\":%u,\"msg\":\"%s\"}",
+        (unsigned long)e.sequence, (unsigned long)e.timestamp_ms,
+        event_type_strs[et], (unsigned)e.blind_address,
+        e.data1, e.data2, (int)e.rssi, op_str,
+        e.position_x100 != 0xFFFF ? (unsigned)(e.position_x100 / 100) : 0,
+        msg_esc.c_str());
+      json += buf;
+    }
+    json += "]}";
+
+    AsyncWebServerResponse *response = request->beginResponse(200, "application/json", json.c_str());
+    this->add_cors_headers(response);
+    request->send(response);
+    return;
+  }
+
+  // Fallback: in-memory log capture (legacy behavior)
   uint32_t since_ms = 0;
   if (request->hasParam("since")) {
     auto since_param = request->getParam("since");
@@ -771,7 +823,7 @@ void EleroWebServer::handle_get_logs(AsyncWebServerRequest *request) {
 
   const auto &entries = this->parent_->get_log_entries();
 
-  std::string json = "{\"capture_active\":";
+  std::string json = "{\"persistent\":false,\"capture_active\":";
   json += this->parent_->is_log_capture_active() ? "true" : "false";
   json += ",\"entries\":[";
 
@@ -800,7 +852,14 @@ void EleroWebServer::handle_get_logs(AsyncWebServerRequest *request) {
 }
 
 void EleroWebServer::handle_clear_logs(AsyncWebServerRequest *request) {
-  this->parent_->clear_log_entries();
+  if (this->parent_->is_persistent_log_enabled()) {
+    auto *log = this->parent_->get_event_log();
+    if (log && log->is_ready()) {
+      log->clear();
+    }
+  } else {
+    this->parent_->clear_log_entries();
+  }
   AsyncWebServerResponse *response =
       request->beginResponse(200, "application/json", "{\"status\":\"cleared\"}");
   this->add_cors_headers(response);
@@ -808,6 +867,14 @@ void EleroWebServer::handle_clear_logs(AsyncWebServerRequest *request) {
 }
 
 void EleroWebServer::handle_log_capture_start(AsyncWebServerRequest *request) {
+  // When persistent logging is enabled, capture is always-on — this is a no-op
+  if (this->parent_->is_persistent_log_enabled()) {
+    AsyncWebServerResponse *response =
+        request->beginResponse(200, "application/json", "{\"status\":\"persistent_active\"}");
+    this->add_cors_headers(response);
+    request->send(response);
+    return;
+  }
   this->parent_->set_log_capture(true);
   AsyncWebServerResponse *response =
       request->beginResponse(200, "application/json", "{\"status\":\"capturing\"}");
@@ -816,9 +883,36 @@ void EleroWebServer::handle_log_capture_start(AsyncWebServerRequest *request) {
 }
 
 void EleroWebServer::handle_log_capture_stop(AsyncWebServerRequest *request) {
+  // When persistent logging is enabled, capture is always-on — this is a no-op
+  if (this->parent_->is_persistent_log_enabled()) {
+    AsyncWebServerResponse *response =
+        request->beginResponse(200, "application/json", "{\"status\":\"persistent_active\"}");
+    this->add_cors_headers(response);
+    request->send(response);
+    return;
+  }
   this->parent_->set_log_capture(false);
   AsyncWebServerResponse *response =
       request->beginResponse(200, "application/json", "{\"status\":\"stopped\"}");
+  this->add_cors_headers(response);
+  request->send(response);
+}
+
+void EleroWebServer::handle_get_log_status(AsyncWebServerRequest *request) {
+  bool persistent = this->parent_->is_persistent_log_enabled();
+  char buf[128];
+  if (persistent) {
+    auto *log = this->parent_->get_event_log();
+    uint16_t entries = (log && log->is_ready()) ? log->get_entry_count() : 0;
+    uint16_t max_entries = (log && log->is_ready()) ? log->get_max_entries() : 0;
+    uint32_t total = (log && log->is_ready()) ? log->get_total_written() : 0;
+    snprintf(buf, sizeof(buf),
+             "{\"persistent\":true,\"entries\":%u,\"max\":%u,\"total_written\":%lu}",
+             entries, max_entries, (unsigned long)total);
+  } else {
+    snprintf(buf, sizeof(buf), "{\"persistent\":false}");
+  }
+  AsyncWebServerResponse *response = request->beginResponse(200, "application/json", buf);
   this->add_cors_headers(response);
   request->send(response);
 }

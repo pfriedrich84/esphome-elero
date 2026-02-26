@@ -14,6 +14,16 @@ CONF_ELERO_ID = "elero_id"
 CONF_FREQ0 = "freq0"
 CONF_FREQ1 = "freq1"
 CONF_FREQ2 = "freq2"
+CONF_LOGGING = "logging"
+CONF_LOGGING_ENABLE = "enable"
+CONF_LOGGING_MAX_ENTRIES = "max_entries"
+
+LOGGING_SCHEMA = cv.Schema(
+    {
+        cv.Optional(CONF_LOGGING_ENABLE, default=True): cv.boolean,
+        cv.Optional(CONF_LOGGING_MAX_ENTRIES, default=1000): cv.int_range(min=100, max=5000),
+    }
+)
 
 CONFIG_SCHEMA = (
     cv.Schema(
@@ -23,6 +33,7 @@ CONFIG_SCHEMA = (
             cv.Optional(CONF_FREQ0, default=0x7a): cv.hex_int_range(min=0x0, max=0xff),
             cv.Optional(CONF_FREQ1, default=0x71): cv.hex_int_range(min=0x0, max=0xff),
             cv.Optional(CONF_FREQ2, default=0x21): cv.hex_int_range(min=0x0, max=0xff),
+            cv.Optional(CONF_LOGGING): LOGGING_SCHEMA,
         }
     )
     .extend(cv.COMPONENT_SCHEMA)
@@ -40,3 +51,9 @@ async def to_code(config):
     cg.add(var.set_freq0(config[CONF_FREQ0]))
     cg.add(var.set_freq1(config[CONF_FREQ1]))
     cg.add(var.set_freq2(config[CONF_FREQ2]))
+
+    if CONF_LOGGING in config:
+        log_conf = config[CONF_LOGGING]
+        if log_conf[CONF_LOGGING_ENABLE]:
+            cg.add(var.set_persistent_log_enabled(True))
+            cg.add(var.set_persistent_log_max_entries(log_conf[CONF_LOGGING_MAX_ENTRIES]))

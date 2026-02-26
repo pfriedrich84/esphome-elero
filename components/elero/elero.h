@@ -4,6 +4,7 @@
 #include "esphome/core/preferences.h"
 #include "esphome/components/spi/spi.h"
 #include "cc1101.h"
+#include "elero_log.h"
 #include <string>
 #include <vector>
 #include <map>
@@ -268,6 +269,12 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void set_log_capture(bool en) { log_capture_ = en; }
   bool is_log_capture_active() const { return log_capture_; }
 
+  // Persistent event log
+  void set_persistent_log_enabled(bool en) { persistent_log_enabled_ = en; }
+  void set_persistent_log_max_entries(uint16_t n) { persistent_log_max_entries_ = n; }
+  bool is_persistent_log_enabled() const { return persistent_log_enabled_; }
+  EleroEventLog *get_event_log() { return persistent_log_enabled_ ? &event_log_ : nullptr; }
+
   void set_gdo0_pin(InternalGPIOPin *pin) { gdo0_pin_ = pin; }
   void set_freq0(uint8_t freq) { freq0_ = freq; }
   void set_freq1(uint8_t freq) { freq1_ = freq; }
@@ -321,6 +328,10 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   bool log_capture_{false};
   std::vector<LogEntry> log_entries_;
   uint8_t log_write_idx_{0};
+  // Persistent event log
+  bool persistent_log_enabled_{false};
+  uint16_t persistent_log_max_entries_{1000};
+  EleroEventLog event_log_;
 };
 
 }  // namespace elero

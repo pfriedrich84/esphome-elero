@@ -22,6 +22,7 @@ external_components:
 - RSSI signal strength monitoring per blind
 - RF discovery scan to find nearby blinds (web UI and log-based)
 - Optional web UI served at `http://<device-ip>/elero` for discovery and YAML generation
+- Optional persistent event logging (SPIFFS ring buffer) for RF packets, state transitions, and commands
 
 **Upstream credits:**
 - Encryption/decryption: [QuadCorei8085/elero_protocol](https://github.com/QuadCorei8085/elero_protocol) (MIT)
@@ -46,6 +47,8 @@ esphome-elero/
     │   ├── __init__.py                # ESPHome component schema & code-gen (hub)
     │   ├── elero.h                    # C++ hub class header
     │   ├── elero.cpp                  # C++ RF protocol implementation (~625 lines)
+    │   ├── elero_log.h                # Persistent event log header (EleroEventLog)
+    │   ├── elero_log.cpp              # SPIFFS ring buffer implementation
     │   ├── cc1101.h                   # CC1101 register map & command strobes
     │   ├── cover/                     # Cover (blind) platform
     │   │   ├── __init__.py            # Cover schema & code-gen
@@ -158,6 +161,19 @@ Key behaviors:
 - Shares the same RF protocol and command structure as covers
 - Supports optional status checking via `command_check`
 
+### `components/elero/elero_log.h` / `elero_log.cpp`
+
+**Class:** `EleroEventLog`
+**Namespace:** `esphome::elero`
+
+Key behaviors:
+- SPIFFS-based persistent ring buffer storing 64-byte fixed-size event entries
+- Logs RF received packets, cover state transitions, commands sent, and system events
+- Survives reboots — entries persist on flash storage
+- Header flush batching (every 10 appends) reduces flash wear
+- Enabled via `logging: enable: true` in the hub config; disabled by default
+- File layout: 64-byte header + N × 64-byte entries at `/spiffs/elero_events.bin`
+
 ### `components/elero_web/elero_web_server.h` / `elero_web_server.cpp`
 
 **Class:** `EleroWebServer : public Component`
@@ -204,6 +220,7 @@ All endpoints are served at `http://<device-ip>/elero` and support CORS. A 503 r
 | `/elero/api/logs/clear` | POST | Clear captured logs |
 | `/elero/api/logs/capture/start` | POST | Start capturing logs |
 | `/elero/api/logs/capture/stop` | POST | Stop capturing logs |
+| `/elero/api/logs/status` | GET | Log status (persistent mode, entry count, max entries) |
 | `/elero/api/dump/start` | POST | Start RF packet dump |
 | `/elero/api/dump/stop` | POST | Stop RF packet dump |
 | `/elero/api/packets` | GET | Recent captured RF packets |
@@ -272,6 +289,9 @@ elero:
   freq0: 0x7a            # CC1101 FREQ0 register (optional, default 868.35 MHz)
   freq1: 0x71            # CC1101 FREQ1 register
   freq2: 0x21            # CC1101 FREQ2 register
+  logging:               # Optional persistent event log
+    enable: true         # default: true when section present
+    max_entries: 1000    # default: 1000, range 100-5000
 ```
 
 Default frequency registers (`freq2=0x21, freq1=0x71, freq0=0x7a`) correspond to **868.35 MHz**. Use `freq0=0xc0` for 868.95 MHz variants.

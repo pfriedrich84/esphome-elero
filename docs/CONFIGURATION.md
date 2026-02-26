@@ -27,6 +27,33 @@ elero:
 
 > Der Hub erweitert die ESPHome SPI-Konfiguration. `spi:` muss separat mit `clk_pin`, `mosi_pin` und `miso_pin` konfiguriert sein.
 
+### Persistentes Event-Logging
+
+Optionales SPIFFS-basiertes Event-Logging das RF-Pakete, Zustandsübergänge und gesendete Befehle aufzeichnet. Die Einträge überleben einen Neustart.
+
+```yaml
+elero:
+  cs_pin: GPIO5
+  gdo0_pin: GPIO26
+  logging:
+    enable: true
+    max_entries: 1000
+```
+
+| Parameter | Typ | Pflicht | Standard | Beschreibung |
+|---|---|---|---|---|
+| `logging` | Schema | Nein | - | Persistentes Event-Logging aktivieren |
+| `logging.enable` | Boolean | Nein | `true` | Logging aktivieren/deaktivieren (wenn `logging:` Abschnitt vorhanden) |
+| `logging.max_entries` | Integer (100-5000) | Nein | `1000` | Maximale Anzahl der Einträge im Ringpuffer (~64 Bytes pro Eintrag) |
+
+**Aufgezeichnete Events:**
+- **RF empfangen** — Adresse, Zustandsbyte, RSSI
+- **Zustandsübergang** — Alter/neuer Zustand, Operation, Position
+- **Befehl gesendet** — Adresse, Befehlsbyte
+- **System** — Boot, Fehler
+
+**Speicherverbrauch:** 1000 Einträge ≈ 64 KB auf SPIFFS. Die Einträge werden als Ringpuffer gespeichert — bei vollem Puffer werden die ältesten Einträge überschrieben.
+
 ### Frequenz-Varianten
 
 | Variante | freq0 | freq1 | freq2 | Hinweis |
@@ -323,10 +350,11 @@ Alle Endpoints unterstuetzen CORS (Cross-Origin Resource Sharing).
 |---|---|---|
 | `/elero/api/frequency` | GET | Aktuelle CC1101-Frequenzeinstellungen |
 | `/elero/api/frequency/set` | POST | CC1101-Frequenz aendern (Body: `{"freq0": 0x7a, "freq1": 0x71, "freq2": 0x21}`) |
-| `/elero/api/logs` | GET | Aktuelle Log-Eintraege (unterstützt `since`-Query-Parameter) |
+| `/elero/api/logs` | GET | Aktuelle Log-Eintraege (unterstützt `since`-Query-Parameter; bei persistentem Logging: `since` = Sequenznummer) |
 | `/elero/api/logs/clear` | POST | Erfasste Logs loeschen |
-| `/elero/api/logs/capture/start` | POST | Log-Erfassung starten |
-| `/elero/api/logs/capture/stop` | POST | Log-Erfassung beenden |
+| `/elero/api/logs/status` | GET | Log-Status: `{"persistent": bool, "entries": N, "max": N, "total_written": N}` |
+| `/elero/api/logs/capture/start` | POST | Log-Erfassung starten (bei persistentem Logging: No-Op) |
+| `/elero/api/logs/capture/stop` | POST | Log-Erfassung beenden (bei persistentem Logging: No-Op) |
 | `/elero/api/dump/start` | POST | RF-Paket-Dump starten |
 | `/elero/api/dump/stop` | POST | RF-Paket-Dump beenden |
 | `/elero/api/packets` | GET | Erfasste RF-Pakete |
@@ -399,6 +427,9 @@ spi:
 elero:
   cs_pin: GPIO5
   gdo0_pin: GPIO26
+  # logging:
+  #   enable: true
+  #   max_entries: 1000
 
 cover:
   - platform: elero
