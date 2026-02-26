@@ -5,10 +5,12 @@
 #include <cstring>
 
 #ifdef USE_ESP32
-#ifdef USE_ESP_IDF
+#if __has_include("esp_spiffs.h")
 #include "esp_spiffs.h"
-#else
+#define HAS_ESP_SPIFFS
+#elif __has_include("SPIFFS.h")
 #include "SPIFFS.h"
+#define HAS_ARDUINO_SPIFFS
 #endif
 #endif
 
@@ -20,7 +22,7 @@ static const char *const TAG = "elero.log";
 bool EleroEventLog::begin(uint16_t max_entries) {
 #ifdef USE_ESP32
   // Mount SPIFFS if not already mounted
-#ifdef USE_ESP_IDF
+#ifdef HAS_ESP_SPIFFS
   esp_vfs_spiffs_conf_t spiffs_conf = {
       .base_path = "/spiffs",
       .partition_label = nullptr,
@@ -38,12 +40,16 @@ bool EleroEventLog::begin(uint16_t max_entries) {
   } else {
     ESP_LOGD(TAG, "SPIFFS mounted successfully");
   }
-#else // Arduino framework
+#elif defined(HAS_ARDUINO_SPIFFS)
   if (!SPIFFS.begin(true)) {
     ESP_LOGE(TAG, "Failed to mount SPIFFS");
     return false;
   }
   ESP_LOGD(TAG, "SPIFFS mounted successfully");
+#else
+  // No SPIFFS header available — assume filesystem is already mounted by
+  // ESPHome
+  ESP_LOGD(TAG, "SPIFFS header not available, assuming filesystem is mounted");
 #endif
 
   // Try to open existing file
