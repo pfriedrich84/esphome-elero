@@ -1,17 +1,13 @@
 #include "elero_log.h"
-#include "esphome/core/hal.h"
 #include "esphome/core/log.h"
-#include <algorithm>
+#include "esphome/core/hal.h"
 #include <cstring>
+#include <algorithm>
 
-#ifdef USE_ESP32
-#if __has_include("esp_spiffs.h")
+#ifdef USE_ESP_IDF
 #include "esp_spiffs.h"
-#define HAS_ESP_SPIFFS
-#elif __has_include("SPIFFS.h")
+#elif defined(USE_ARDUINO)
 #include "SPIFFS.h"
-#define HAS_ARDUINO_SPIFFS
-#endif
 #endif
 
 namespace esphome {
@@ -20,9 +16,8 @@ namespace elero {
 static const char *const TAG = "elero.log";
 
 bool EleroEventLog::begin(uint16_t max_entries) {
-#ifdef USE_ESP32
-  // Mount SPIFFS if not already mounted
-#ifdef HAS_ESP_SPIFFS
+#ifdef USE_ESP_IDF
+  // Mount SPIFFS if not already mounted (ESP-IDF API)
   esp_vfs_spiffs_conf_t spiffs_conf = {
       .base_path = "/spiffs",
       .partition_label = nullptr,
@@ -40,16 +35,16 @@ bool EleroEventLog::begin(uint16_t max_entries) {
   } else {
     ESP_LOGD(TAG, "SPIFFS mounted successfully");
   }
-#elif defined(HAS_ARDUINO_SPIFFS)
+#elif defined(USE_ARDUINO) && defined(USE_ESP32)
+  // Mount SPIFFS (Arduino API) — true = format on first use
   if (!SPIFFS.begin(true)) {
     ESP_LOGE(TAG, "Failed to mount SPIFFS");
     return false;
   }
   ESP_LOGD(TAG, "SPIFFS mounted successfully");
 #else
-  // No SPIFFS header available — assume filesystem is already mounted by
-  // ESPHome
-  ESP_LOGD(TAG, "SPIFFS header not available, assuming filesystem is mounted");
+  ESP_LOGW(TAG, "Persistent logging only supported on ESP32");
+  return false;
 #endif
 
   // Try to open existing file
@@ -57,11 +52,9 @@ bool EleroEventLog::begin(uint16_t max_entries) {
   if (this->file_ != nullptr) {
     // File exists — read and validate header
     this->read_header_();
-    if (this->header_.magic != MAGIC ||
-        this->header_.version != FORMAT_VERSION ||
+    if (this->header_.magic != MAGIC || this->header_.version != FORMAT_VERSION ||
         this->header_.max_entries != max_entries) {
-      ESP_LOGW(TAG,
-               "Event log header invalid or max_entries changed, recreating");
+      ESP_LOGW(TAG, "Event log header invalid or max_entries changed, recreating");
       fclose(this->file_);
       this->file_ = nullptr;
     } else {
@@ -97,10 +90,6 @@ bool EleroEventLog::begin(uint16_t max_entries) {
   ESP_LOGI(TAG, "Event log created: max %u entries (%" PRIu32 " bytes)",
            max_entries, (uint32_t)(64 + max_entries * 64));
   return true;
-#else
-  ESP_LOGW(TAG, "Persistent logging only supported on ESP32");
-  return false;
-#endif
 }
 
 void EleroEventLog::create_file_() {
@@ -135,12 +124,10 @@ void EleroEventLog::read_header_() {
   fread(&this->header_, sizeof(PersistentLogHeader), 1, this->file_);
 }
 
-void EleroEventLog::write_entry_(uint16_t idx,
-                                 const PersistentLogEntry &entry) {
+void EleroEventLog::write_entry_(uint16_t idx, const PersistentLogEntry &entry) {
   if (this->file_ == nullptr)
     return;
-  long offset =
-      sizeof(PersistentLogHeader) + (long)idx * sizeof(PersistentLogEntry);
+  long offset = sizeof(PersistentLogHeader) + (long)idx * sizeof(PersistentLogEntry);
   fseek(this->file_, offset, SEEK_SET);
   fwrite(&entry, sizeof(PersistentLogEntry), 1, this->file_);
   fflush(this->file_);
@@ -150,8 +137,7 @@ PersistentLogEntry EleroEventLog::read_entry_(uint16_t idx) const {
   PersistentLogEntry entry{};
   if (this->file_ == nullptr)
     return entry;
-  long offset =
-      sizeof(PersistentLogHeader) + (long)idx * sizeof(PersistentLogEntry);
+  long offset = sizeof(PersistentLogHeader) + (long)idx * sizeof(PersistentLogEntry);
   fseek(this->file_, offset, SEEK_SET);
   fread(&entry, sizeof(PersistentLogEntry), 1, this->file_);
   return entry;
@@ -167,8 +153,7 @@ void EleroEventLog::append(const PersistentLogEntry &entry) {
 
   this->write_entry_(this->header_.write_idx, e);
 
-  this->header_.write_idx =
-      (this->header_.write_idx + 1) % this->header_.max_entries;
+  this->header_.write_idx = (this->header_.write_idx + 1) % this->header_.max_entries;
   this->header_.total_written++;
 
   // Batch header flushes to reduce flash wear
@@ -208,8 +193,7 @@ std::vector<PersistentLogEntry> EleroEventLog::read_all() const {
   return result;
 }
 
-std::vector<PersistentLogEntry>
-EleroEventLog::read_since(uint32_t since_seq) const {
+std::vector<PersistentLogEntry> EleroEventLog::read_since(uint32_t since_seq) const {
   std::vector<PersistentLogEntry> all = this->read_all();
   std::vector<PersistentLogEntry> result;
   for (const auto &entry : all) {
@@ -242,8 +226,7 @@ void EleroEventLog::clear() {
 
 // ─── Convenience logging methods ──────────────────────────────────────────
 
-void EleroEventLog::log_rf_received(uint32_t blind_addr, uint8_t state_byte,
-                                    int8_t rssi) {
+void EleroEventLog::log_rf_received(uint32_t blind_addr, uint8_t state_byte, int8_t rssi) {
   PersistentLogEntry entry{};
   entry.event_type = EVENT_RF_RECEIVED;
   entry.blind_address = blind_addr;
@@ -252,14 +235,13 @@ void EleroEventLog::log_rf_received(uint32_t blind_addr, uint8_t state_byte,
   entry.rssi = rssi;
   entry.operation = 0;
   entry.position_x100 = 0xFFFF;
-  snprintf(entry.message, sizeof(entry.message),
-           "0x%06x: rx state=0x%02x rssi=%d", blind_addr, state_byte, rssi);
+  snprintf(entry.message, sizeof(entry.message), "0x%06x: rx state=0x%02x rssi=%d",
+           blind_addr, state_byte, rssi);
   this->append(entry);
 }
 
-void EleroEventLog::log_state_change(uint32_t blind_addr, uint8_t old_state,
-                                     uint8_t new_state, uint8_t operation,
-                                     float position) {
+void EleroEventLog::log_state_change(uint32_t blind_addr, uint8_t old_state, uint8_t new_state,
+                                     uint8_t operation, float position) {
   PersistentLogEntry entry{};
   entry.event_type = EVENT_STATE_CHANGE;
   entry.blind_address = blind_addr;
@@ -268,13 +250,11 @@ void EleroEventLog::log_state_change(uint32_t blind_addr, uint8_t old_state,
   entry.rssi = 0;
   entry.operation = operation;
   entry.position_x100 = (position >= 0.0f && position <= 1.0f)
-                            ? static_cast<uint16_t>(position * 10000.0f)
-                            : 0xFFFF;
-  snprintf(entry.message, sizeof(entry.message),
-           "0x%06x: 0x%02x->0x%02x op=%u pos=%u%%", blind_addr, old_state,
-           new_state, operation,
-           entry.position_x100 != 0xFFFF ? (unsigned)(entry.position_x100 / 100)
-                                         : 0);
+                             ? static_cast<uint16_t>(position * 10000.0f)
+                             : 0xFFFF;
+  snprintf(entry.message, sizeof(entry.message), "0x%06x: 0x%02x->0x%02x op=%u pos=%u%%",
+           blind_addr, old_state, new_state, operation,
+           entry.position_x100 != 0xFFFF ? (unsigned)(entry.position_x100 / 100) : 0);
   this->append(entry);
 }
 
@@ -306,5 +286,5 @@ void EleroEventLog::log_system(const char *message) {
   this->append(entry);
 }
 
-} // namespace elero
-} // namespace esphome
+}  // namespace elero
+}  // namespace esphome
