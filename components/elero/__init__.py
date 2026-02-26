@@ -3,6 +3,7 @@ import esphome.config_validation as cv
 from esphome import pins
 from esphome.components import spi
 from esphome.const import CONF_ID
+from esphome.core import CORE
 
 DEPENDENCIES = ["spi"]
 
@@ -57,3 +58,6 @@ async def to_code(config):
         if log_conf[CONF_LOGGING_ENABLE]:
             cg.add(var.set_persistent_log_enabled(True))
             cg.add(var.set_persistent_log_max_entries(log_conf[CONF_LOGGING_MAX_ENTRIES]))
+            # Ensure SPIFFS library is available for persistent logging
+            if CORE.using_arduino:
+                cg.add_library("SPIFFS", None)
