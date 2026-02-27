@@ -110,10 +110,6 @@ bool EleroEventLog::begin(uint16_t max_entries) {
 
 void EleroEventLog::close() {
   if (this->file_ != nullptr) {
-    // Flush any pending header updates before closing
-    if (this->ready_ && this->append_count_ > 0) {
-      this->write_header_();
-    }
     fclose(this->file_);
     this->file_ = nullptr;
   }
@@ -187,6 +183,8 @@ void EleroEventLog::append(const PersistentLogEntry &entry) {
   if (!this->ready_)
     return;
 
+  std::lock_guard<std::mutex> lock(this->mutex_);
+
   PersistentLogEntry e = entry;
   e.sequence = this->next_sequence_++;
   e.timestamp_ms = millis();
@@ -196,12 +194,11 @@ void EleroEventLog::append(const PersistentLogEntry &entry) {
   this->header_.write_idx = (this->header_.write_idx + 1) % this->header_.max_entries;
   this->header_.total_written++;
 
-  // Batch header flushes to reduce flash wear
-  this->append_count_++;
-  if (this->append_count_ >= HEADER_FLUSH_INTERVAL) {
-    this->write_header_();
-    this->append_count_ = 0;
-  }
+  // Always flush the header so that total_written and write_idx survive
+  // unexpected reboots.  Without this, entries written to disk become
+  // invisible after a power cycle because the stale header still claims
+  // total_written == 0.
+  this->write_header_();
 }
 
 uint16_t EleroEventLog::get_entry_count() const {
@@ -214,6 +211,8 @@ std::vector<PersistentLogEntry> EleroEventLog::read_all() const {
   std::vector<PersistentLogEntry> result;
   if (!this->ready_)
     return result;
+
+  std::lock_guard<std::mutex> lock(this->mutex_);
 
   uint16_t count = this->get_entry_count();
   result.reserve(count);
@@ -238,6 +237,8 @@ std::vector<PersistentLogEntry> EleroEventLog::read_since(uint32_t since_seq) co
   if (!this->ready_)
     return result;
 
+  std::lock_guard<std::mutex> lock(this->mutex_);
+
   uint16_t count = this->get_entry_count();
   uint16_t start = (this->header_.total_written <= this->header_.max_entries)
                    ? 0 : this->header_.write_idx;
@@ -255,10 +256,11 @@ void EleroEventLog::clear() {
   if (!this->ready_)
     return;
 
+  std::lock_guard<std::mutex> lock(this->mutex_);
+
   this->header_.write_idx = 0;
   this->header_.total_written = 0;
   this->next_sequence_ = 1;
-  this->append_count_ = 0;
   this->write_header_();
 
   // Zero out all entries
