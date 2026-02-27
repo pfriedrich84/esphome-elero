@@ -64,9 +64,8 @@ void Elero::loop() {
     }
   }
 
-  if(this->received_) {
+  if(this->received_.exchange(false)) {
     ESP_LOGVV(TAG, "loop says \"received\"");
-    this->received_ = false;
     uint8_t len = this->read_status(CC1101_RXBYTES);
     if(len & 0x80) { // overflow - FIFO data unreliable
       ESP_LOGV(TAG, "Rx overflow, flushing FIFOs");
@@ -241,9 +240,10 @@ void Elero::write_cmd(uint8_t cmd) {
 
 bool Elero::wait_rx() {
   ESP_LOGVV(TAG, "wait_rx");
-  uint8_t timeout = 200;
+  uint16_t timeout = 500;
   while ((this->read_status(CC1101_MARCSTATE) != CC1101_MARCSTATE_RX) && (--timeout != 0)) {
     delay_microseconds_safe(200);
+    if (timeout % 50 == 0) yield();  // prevent WDT reset on ESP32
   }
 
   if(timeout > 0)
@@ -254,9 +254,10 @@ bool Elero::wait_rx() {
 
 bool Elero::wait_idle() {
   ESP_LOGVV(TAG, "wait_idle");
-  uint8_t timeout = 200;
+  uint16_t timeout = 500;
   while ((this->read_status(CC1101_MARCSTATE) != CC1101_MARCSTATE_IDLE) && (--timeout != 0)) {
     delay_microseconds_safe(200);
+    if (timeout % 50 == 0) yield();
   }
 
   if(timeout > 0)
@@ -267,10 +268,11 @@ bool Elero::wait_idle() {
 
 bool Elero::wait_tx() {
   ESP_LOGVV(TAG, "wait_tx");
-  uint8_t timeout = 200;
+  uint16_t timeout = 500;
 
   while ((this->read_status(CC1101_MARCSTATE) != CC1101_MARCSTATE_TX) && (--timeout != 0)) {
     delay_microseconds_safe(200);
+    if (timeout % 50 == 0) yield();
   }
 
   if(timeout > 0)
@@ -281,10 +283,11 @@ bool Elero::wait_tx() {
 
 bool Elero::wait_tx_done() {
   ESP_LOGVV(TAG, "wait_tx_done");
-  uint8_t timeout = 200;
+  uint16_t timeout = 500;
 
   while((!this->received_) && (--timeout != 0)) {
     delay_microseconds_safe(200);
+    if (timeout % 50 == 0) yield();
   }
 
   if(timeout > 0)
@@ -542,7 +545,7 @@ void Elero::interpret_msg() {
   uint8_t dests_len;
 
   // Validate destination count before multiplication to prevent overflow
-  if (num_dests > 20) {
+  if (num_dests > ELERO_MAX_DESTINATIONS) {
     ESP_LOGE(TAG, "Received invalid packet: too many destinations (%d)", num_dests);
     ESP_LOGD(TAG, "  Raw [%d bytes]: %s", length + 3,
              format_hex_pretty(this->msg_rx_, length + 3).c_str());

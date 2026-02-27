@@ -372,18 +372,37 @@ Alle Endpoints unterstuetzen CORS (Cross-Origin Resource Sharing).
 | Code | Bedeutung | Wann |
 |---|---|---|
 | 200 | OK | Erfolgreiche Anfrage |
+| 400 | Bad Request | Fehlende oder ungueltige Parameter (z.B. fehlender `cmd`-Parameter, ungueltiger `since`-Wert) |
+| 404 | Not Found | Adresse nicht gefunden (weder konfiguriert noch adoptiert) |
 | 409 | Conflict | Scan starten wenn bereits laeuft, oder Scan stoppen wenn keiner laeuft |
+| 500 | Internal Server Error | Event-Log nicht bereit |
 | 503 | Service Unavailable | Wenn Web-UI via Switch deaktiviert ist |
 
 Fehlerantworten werden als JSON zurueckgegeben: `{"error": "Beschreibung"}`
+
+**Parameter-Format:**
+
+POST-Endpoints akzeptieren Parameter als URL-Query-Parameter (nicht als JSON-Body). Beispiel:
+```
+POST /elero/api/covers/0xa831e5/command?cmd=up
+POST /elero/api/covers/0xa831e5/settings?open_duration=25000&close_duration=22000&poll_interval=300000
+POST /elero/api/frequency/set?freq2=0x21&freq1=0x71&freq0=0x7a
+```
 
 **CORS-Unterstuetzung:**
 
 Alle API-Endpoints unterstuetzen Cross-Origin-Zugriff (CORS):
 - `Access-Control-Allow-Origin: *`
-- `Access-Control-Allow-Methods: GET, POST, OPTIONS`
+- `Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS`
 - `Access-Control-Allow-Headers: Content-Type`
 - Preflight-Requests (OPTIONS) werden auf allen API-Endpoints unterstuetzt
+
+**Sicherheitshinweis:**
+
+Die Web-API verfuegt ueber keine Authentifizierung. Jedes Geraet im lokalen Netzwerk kann Rolllaeden steuern, die Frequenz aendern und Logs einsehen. Dies ist fuer lokale IoT-Geraete ueblich, sollte aber beruecksichtigt werden:
+- Stellen Sie sicher, dass Ihr WLAN-Netzwerk gesichert ist
+- Verwenden Sie den optionalen `elero_web` Switch um die Web-UI bei Bedarf zu deaktivieren
+- Setzen Sie das Geraet nicht direkt dem Internet aus
 
 ---
 
