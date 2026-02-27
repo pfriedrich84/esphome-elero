@@ -188,19 +188,13 @@ void EleroWebServer::handleRequest(AsyncWebServerRequest *request) {
   // ── Packet dump ──
   if (url == "/elero/api/dump/start"   && method == HTTP_POST) { handle_packet_dump_start(request); return; }
   if (url == "/elero/api/dump/stop"    && method == HTTP_POST) { handle_packet_dump_stop(request); return; }
-  if (url == "/elero/api/packets"      && method == HTTP_GET)  { handle_get_packets(request); return; }
-  if (url == "/elero/api/packets/clear"&& method == HTTP_POST) { handle_clear_packets(request); return; }
+  if (url == "/elero/api/packets"         && method == HTTP_GET)  { handle_get_packets(request); return; }
+  if (url == "/elero/api/packets/clear"  && method == HTTP_POST) { handle_clear_packets(request); return; }
+  if (url == "/elero/api/packets/download" && method == HTTP_GET) { handle_packets_download(request); return; }
 
   // ── Frequency ──
   if (url == "/elero/api/frequency"     && method == HTTP_GET)  { handle_get_frequency(request); return; }
   if (url == "/elero/api/frequency/set" && method == HTTP_POST) { handle_set_frequency(request); return; }
-
-  // ── Logs ──
-  if (url == "/elero/api/logs"                && method == HTTP_GET)  { handle_get_logs(request); return; }
-  if (url == "/elero/api/logs/clear"          && method == HTTP_POST) { handle_clear_logs(request); return; }
-  if (url == "/elero/api/logs/capture/start"  && method == HTTP_POST) { handle_log_capture_start(request); return; }
-  if (url == "/elero/api/logs/capture/stop"   && method == HTTP_POST) { handle_log_capture_stop(request); return; }
-  if (url == "/elero/api/logs/status"         && method == HTTP_GET)  { handle_get_log_status(request); return; }
 
   // ── Web UI enable/disable (REST mirror of HA switch) ──
   if (url == "/elero/api/ui/status" && method == HTTP_GET)  { handle_webui_status(request); return; }
@@ -705,170 +699,64 @@ void EleroWebServer::handle_set_frequency(AsyncWebServerRequest *request) {
   request->send(response);
 }
 
-// ─── Logs ─────────────────────────────────────────────────────────────────────
+// ─── Packet dump download ─────────────────────────────────────────────────────
 
-void EleroWebServer::handle_get_logs(AsyncWebServerRequest *request) {
-  // If persistent logging is enabled, serve from the persistent event log
-  if (this->parent_->is_persistent_log_enabled()) {
-    auto *log = this->parent_->get_event_log();
-    if (log == nullptr || !log->is_ready()) {
-      this->send_json_error(request, 500, "Event log not ready");
-      return;
-    }
+void EleroWebServer::handle_packets_download(AsyncWebServerRequest *request) {
+  const auto &packets = this->parent_->get_raw_packets();
 
-    uint32_t since_seq = 0;
-    if (request->hasParam("since")) {
-      auto since_param = request->getParam("since");
-      if (since_param != nullptr) {
-        char *endptr;
-        unsigned long v = strtoul(since_param->value().c_str(), &endptr, 10);
-        if (endptr == since_param->value().c_str()) {
-          this->send_json_error(request, 400, "Invalid 'since' parameter (expected integer)");
-          return;
-        }
-        since_seq = (uint32_t)v;
-      }
-    }
+  std::string json;
+  json.reserve(256 + packets.size() * 320);
 
-    auto entries = (since_seq > 0) ? log->read_since(since_seq) : log->read_all();
-
-    static const char *event_type_strs[] = {"unknown", "rf_received", "state_change", "command_sent", "system"};
-    static const char *op_strs[] = {"idle", "opening", "closing"};
-
-    std::string json = "{\"persistent\":true,\"entries\":[";
-    bool first = true;
-    for (const auto &e : entries) {
-      if (!first) json += ",";
-      first = false;
-
-      uint8_t et = (e.event_type >= 1 && e.event_type <= 4) ? e.event_type : 0;
-      const char *op_str = (e.operation <= 2) ? op_strs[e.operation] : "unknown";
-
-      json += "{\"seq\":" + fmt_ulong((unsigned long)e.sequence) + ","
-              "\"t\":" + fmt_ulong((unsigned long)e.timestamp_ms) + ","
-              "\"type\":\"" + event_type_strs[et] + "\","
-              "\"addr\":\"" + fmt_hex6((unsigned)e.blind_address) + "\","
-              "\"data1\":" + fmt_uint(e.data1) + ","
-              "\"data2\":" + fmt_uint(e.data2) + ","
-              "\"rssi\":" + fmt_int((int)e.rssi) + ","
-              "\"op\":\"" + op_str + "\","
-              "\"pos\":" + fmt_uint(e.position_x100 != 0xFFFF ? (unsigned)(e.position_x100 / 100) : 0) + ","
-              "\"msg\":\"" + json_escape(e.message) + "\"}";
-    }
-    json += "]}";
-
-    AsyncWebServerResponse *response = request->beginResponse(200, "application/json", json.c_str());
-    this->add_cors_headers(response);
-    request->send(response);
-    return;
-  }
-
-  // Fallback: in-memory log capture (legacy behavior)
-  uint32_t since_ms = 0;
-  if (request->hasParam("since")) {
-    auto since_param = request->getParam("since");
-    if (since_param != nullptr) {
-      char *endptr;
-      unsigned long v = strtoul(since_param->value().c_str(), &endptr, 10);
-      if (endptr == since_param->value().c_str()) {
-        this->send_json_error(request, 400, "Invalid 'since' parameter (expected integer)");
-        return;
-      }
-      since_ms = (uint32_t)v;
-    }
-  }
-
-  const auto &entries = this->parent_->get_log_entries();
-
-  std::string json = "{\"persistent\":false,\"capture_active\":";
-  json += this->parent_->is_log_capture_active() ? "true" : "false";
-  json += ",\"entries\":[";
-
-  static const char *level_strs[] = {"", "error", "warn", "info", "debug", "verbose"};
+  std::string esc_name = json_escape(App.get_name());
+  char meta[256];
+  snprintf(meta, sizeof(meta),
+    "{\"device_name\":\"%s\","
+    "\"uptime_ms\":%lu,"
+    "\"freq2\":\"0x%02x\","
+    "\"freq1\":\"0x%02x\","
+    "\"freq0\":\"0x%02x\","
+    "\"dump_active\":%s,"
+    "\"exported_at_ms\":%lu,"
+    "\"count\":%d,"
+    "\"packets\":[",
+    esc_name.c_str(),
+    (unsigned long)millis(),
+    this->parent_->get_freq2(),
+    this->parent_->get_freq1(),
+    this->parent_->get_freq0(),
+    this->parent_->is_packet_dump_active() ? "true" : "false",
+    (unsigned long)millis(),
+    (int)packets.size());
+  json += meta;
 
   bool first = true;
-  for (const auto &e : entries) {
-    if (e.timestamp_ms <= since_ms) continue;
+  for (const auto &pkt : packets) {
     if (!first) json += ",";
     first = false;
 
-    uint8_t lv = (e.level >= 1 && e.level <= 5) ? e.level : 3;
-
-    json += "{\"t\":" + fmt_ulong((unsigned long)e.timestamp_ms) + ","
-            "\"level\":" + fmt_int(lv) + ","
-            "\"level_str\":\"" + level_strs[lv] + "\","
-            "\"tag\":\"" + json_escape(e.tag) + "\","
-            "\"msg\":\"" + json_escape(e.message) + "\"}";
-  }
-
-  json += "]}";
-  AsyncWebServerResponse *response = request->beginResponse(200, "application/json", json.c_str());
-  this->add_cors_headers(response);
-  request->send(response);
-}
-
-void EleroWebServer::handle_clear_logs(AsyncWebServerRequest *request) {
-  if (this->parent_->is_persistent_log_enabled()) {
-    auto *log = this->parent_->get_event_log();
-    if (log && log->is_ready()) {
-      log->clear();
+    std::string hex_str;
+    hex_str.reserve(pkt.fifo_len * 3);
+    for (int i = 0; i < pkt.fifo_len && i < CC1101_FIFO_LENGTH; i++) {
+      char byte_buf[4];
+      snprintf(byte_buf, sizeof(byte_buf), i == 0 ? "%02x" : " %02x", pkt.data[i]);
+      hex_str += byte_buf;
     }
-  } else {
-    this->parent_->clear_log_entries();
-  }
-  AsyncWebServerResponse *response =
-      request->beginResponse(200, "application/json", "{\"status\":\"cleared\"}");
-  this->add_cors_headers(response);
-  request->send(response);
-}
 
-void EleroWebServer::handle_log_capture_start(AsyncWebServerRequest *request) {
-  // When persistent logging is enabled, capture is always-on — this is a no-op
-  if (this->parent_->is_persistent_log_enabled()) {
-    AsyncWebServerResponse *response =
-        request->beginResponse(200, "application/json", "{\"status\":\"persistent_active\"}");
-    this->add_cors_headers(response);
-    request->send(response);
-    return;
+    json += "{\"t\":" + fmt_ulong((unsigned long)pkt.timestamp_ms) + ","
+            "\"len\":" + fmt_int(pkt.fifo_len) + ","
+            "\"valid\":" + (pkt.valid ? "true" : "false") + ","
+            "\"reason\":\"" + json_escape(pkt.reject_reason) + "\","
+            "\"hex\":\"" + hex_str + "\"}";
   }
-  this->parent_->set_log_capture(true);
-  AsyncWebServerResponse *response =
-      request->beginResponse(200, "application/json", "{\"status\":\"capturing\"}");
-  this->add_cors_headers(response);
-  request->send(response);
-}
+  json += "]}";
 
-void EleroWebServer::handle_log_capture_stop(AsyncWebServerRequest *request) {
-  // When persistent logging is enabled, capture is always-on — this is a no-op
-  if (this->parent_->is_persistent_log_enabled()) {
-    AsyncWebServerResponse *response =
-        request->beginResponse(200, "application/json", "{\"status\":\"persistent_active\"}");
-    this->add_cors_headers(response);
-    request->send(response);
-    return;
-  }
-  this->parent_->set_log_capture(false);
-  AsyncWebServerResponse *response =
-      request->beginResponse(200, "application/json", "{\"status\":\"stopped\"}");
-  this->add_cors_headers(response);
-  request->send(response);
-}
+  char disp[64];
+  snprintf(disp, sizeof(disp), "attachment; filename=\"elero_packets_%lu.json\"",
+           (unsigned long)millis());
 
-void EleroWebServer::handle_get_log_status(AsyncWebServerRequest *request) {
-  bool persistent = this->parent_->is_persistent_log_enabled();
-  char buf[128];
-  if (persistent) {
-    auto *log = this->parent_->get_event_log();
-    uint16_t entries = (log && log->is_ready()) ? log->get_entry_count() : 0;
-    uint16_t max_entries = (log && log->is_ready()) ? log->get_max_entries() : 0;
-    uint32_t total = (log && log->is_ready()) ? log->get_total_written() : 0;
-    snprintf(buf, sizeof(buf),
-             "{\"persistent\":true,\"entries\":%u,\"max\":%u,\"total_written\":%lu}",
-             entries, max_entries, (unsigned long)total);
-  } else {
-    snprintf(buf, sizeof(buf), "{\"persistent\":false}");
-  }
-  AsyncWebServerResponse *response = request->beginResponse(200, "application/json", buf);
+  AsyncWebServerResponse *response =
+      request->beginResponse(200, "application/json", json.c_str());
+  response->addHeader("Content-Disposition", disp);
   this->add_cors_headers(response);
   request->send(response);
 }
