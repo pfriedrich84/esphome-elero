@@ -140,6 +140,7 @@ document.addEventListener('alpine:init', () => {
       await this.refreshCovers()
       await this.loadFrequency()
       await this.checkLogStatus()
+      await this.refreshLog()
       this._pollCovers = setInterval(() => this.refreshCovers(), 3000)
       this._pollDisc   = setInterval(() => this.refreshDiscovered(), 3000)
       this._pollDump   = setInterval(() => this.refreshDump(), 2000)

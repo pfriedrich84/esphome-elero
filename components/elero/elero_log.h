@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <vector>
+#include <mutex>
 
 namespace esphome {
 namespace elero {
@@ -74,12 +75,11 @@ class EleroEventLog {
   FILE *file_{nullptr};
   PersistentLogHeader header_{};
   uint32_t next_sequence_{1};
-  uint32_t append_count_{0};  // Count appends for header flush batching
   bool ready_{false};
+  mutable std::mutex mutex_;  // Protects file_ and header_ across tasks
   static constexpr const char *LOG_PATH = "/littlefs/elero_events.bin";
   static constexpr uint32_t MAGIC = 0x454C4F47;  // "ELOG"
   static constexpr uint16_t FORMAT_VERSION = 1;
-  static constexpr uint32_t HEADER_FLUSH_INTERVAL = 10;  // Flush header every N appends
 };
 
 }  // namespace elero
