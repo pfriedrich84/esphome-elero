@@ -3,7 +3,6 @@
 #include "esphome/core/log.h"
 #include "esphome/core/application.h"
 #include <cstdio>
-#include <cstring>
 #include <cstdlib>
 #include <climits>
 
@@ -27,6 +26,16 @@ static std::string json_escape(const std::string &s) {
   }
   return out;
 }
+
+// ─── Formatting helpers (tiny buffers, truncation impossible) ─────────────────
+
+static std::string fmt_hex6(uint32_t v) { char b[12]; snprintf(b, sizeof(b), "0x%06x", v); return b; }
+static std::string fmt_hex2(uint8_t v) { char b[8]; snprintf(b, sizeof(b), "0x%02x", v); return b; }
+static std::string fmt_int(int v) { char b[16]; snprintf(b, sizeof(b), "%d", v); return b; }
+static std::string fmt_uint(unsigned v) { char b[16]; snprintf(b, sizeof(b), "%u", v); return b; }
+static std::string fmt_ulong(unsigned long v) { char b[24]; snprintf(b, sizeof(b), "%lu", v); return b; }
+static std::string fmt_float1(float v) { char b[24]; snprintf(b, sizeof(b), "%.1f", v); return b; }
+static std::string fmt_float2(float v) { char b[24]; snprintf(b, sizeof(b), "%.2f", v); return b; }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -250,40 +259,21 @@ void EleroWebServer::handle_get_discovered(AsyncWebServerRequest *request) {
     if (!first) json += ",";
     first = false;
 
-    char buf[640];
-    snprintf(buf, sizeof(buf),
-      "{\"blind_address\":\"0x%06x\","
-      "\"remote_address\":\"0x%06x\","
-      "\"channel\":%d,"
-      "\"rssi\":%.1f,"
-      "\"last_state\":\"%s\","
-      "\"times_seen\":%d,"
-      "\"hop\":\"0x%02x\","
-      "\"payload_1\":\"0x%02x\","
-      "\"payload_2\":\"0x%02x\","
-      "\"pck_inf1\":\"0x%02x\","
-      "\"pck_inf2\":\"0x%02x\","
-      "\"last_seen_ms\":%lu,"
-      "\"params_from_command\":%s,"
-      "\"already_configured\":%s,"
-      "\"already_adopted\":%s}",
-      blind.blind_address,
-      blind.remote_address,
-      blind.channel,
-      blind.rssi,
-      elero_state_to_string(blind.last_state),
-      blind.times_seen,
-      blind.hop,
-      blind.payload_1,
-      blind.payload_2,
-      blind.pck_inf[0],
-      blind.pck_inf[1],
-      (unsigned long)blind.last_seen,
-      blind.params_from_command ? "true" : "false",
-      this->parent_->is_cover_configured(blind.blind_address) ? "true" : "false",
-      this->parent_->is_blind_adopted(blind.blind_address) ? "true" : "false"
-    );
-    json += buf;
+    json += "{\"blind_address\":\"" + fmt_hex6(blind.blind_address) + "\","
+            "\"remote_address\":\"" + fmt_hex6(blind.remote_address) + "\","
+            "\"channel\":" + fmt_int(blind.channel) + ","
+            "\"rssi\":" + fmt_float1(blind.rssi) + ","
+            "\"last_state\":\"" + elero_state_to_string(blind.last_state) + "\","
+            "\"times_seen\":" + fmt_int(blind.times_seen) + ","
+            "\"hop\":\"" + fmt_hex2(blind.hop) + "\","
+            "\"payload_1\":\"" + fmt_hex2(blind.payload_1) + "\","
+            "\"payload_2\":\"" + fmt_hex2(blind.payload_2) + "\","
+            "\"pck_inf1\":\"" + fmt_hex2(blind.pck_inf[0]) + "\","
+            "\"pck_inf2\":\"" + fmt_hex2(blind.pck_inf[1]) + "\","
+            "\"last_seen_ms\":" + fmt_ulong((unsigned long)blind.last_seen) + ","
+            "\"params_from_command\":" + (blind.params_from_command ? "true" : "false") + ","
+            "\"already_configured\":" + (this->parent_->is_cover_configured(blind.blind_address) ? "true" : "false") + ","
+            "\"already_adopted\":" + (this->parent_->is_blind_adopted(blind.blind_address) ? "true" : "false") + "}";
   }
 
   json += "]}";
@@ -308,38 +298,20 @@ void EleroWebServer::handle_get_configured(AsyncWebServerRequest *request) {
     if (!first) json += ",";
     first = false;
     auto *blind = pair.second;
-    std::string esc_name = json_escape(blind->get_blind_name());
-    char buf[512];
-    snprintf(buf, sizeof(buf),
-      "{\"blind_address\":\"0x%06x\","
-      "\"name\":\"%s\","
-      "\"position\":%.2f,"
-      "\"operation\":\"%s\","
-      "\"last_state\":\"%s\","
-      "\"last_seen_ms\":%lu,"
-      "\"rssi\":%.1f,"
-      "\"channel\":%d,"
-      "\"remote_address\":\"0x%06x\","
-      "\"poll_interval_ms\":%lu,"
-      "\"open_duration_ms\":%lu,"
-      "\"close_duration_ms\":%lu,"
-      "\"supports_tilt\":%s,"
-      "\"adopted\":false}",
-      pair.first,
-      esc_name.c_str(),
-      blind->get_cover_position(),
-      blind->get_operation_str(),
-      elero_state_to_string(blind->get_last_state_raw()),
-      (unsigned long)blind->get_last_seen_ms(),
-      blind->get_last_rssi(),
-      (int)blind->get_channel(),
-      blind->get_remote_address(),
-      (unsigned long)blind->get_poll_interval_ms(),
-      (unsigned long)blind->get_open_duration_ms(),
-      (unsigned long)blind->get_close_duration_ms(),
-      blind->get_supports_tilt() ? "true" : "false"
-    );
-    json += buf;
+    json += "{\"blind_address\":\"" + fmt_hex6(pair.first) + "\","
+            "\"name\":\"" + json_escape(blind->get_blind_name()) + "\","
+            "\"position\":" + fmt_float2(blind->get_cover_position()) + ","
+            "\"operation\":\"" + blind->get_operation_str() + "\","
+            "\"last_state\":\"" + elero_state_to_string(blind->get_last_state_raw()) + "\","
+            "\"last_seen_ms\":" + fmt_ulong((unsigned long)blind->get_last_seen_ms()) + ","
+            "\"rssi\":" + fmt_float1(blind->get_last_rssi()) + ","
+            "\"channel\":" + fmt_int((int)blind->get_channel()) + ","
+            "\"remote_address\":\"" + fmt_hex6(blind->get_remote_address()) + "\","
+            "\"poll_interval_ms\":" + fmt_ulong((unsigned long)blind->get_poll_interval_ms()) + ","
+            "\"open_duration_ms\":" + fmt_ulong((unsigned long)blind->get_open_duration_ms()) + ","
+            "\"close_duration_ms\":" + fmt_ulong((unsigned long)blind->get_close_duration_ms()) + ","
+            "\"supports_tilt\":" + (blind->get_supports_tilt() ? "true" : "false") + ","
+            "\"adopted\":false}";
   }
 
   // Runtime adopted blinds (mixed in as "covers" with adopted=true)
@@ -347,35 +319,20 @@ void EleroWebServer::handle_get_configured(AsyncWebServerRequest *request) {
     const auto &rb = entry.second;
     if (!first) json += ",";
     first = false;
-    std::string esc_name = json_escape(rb.name);
-    char buf[512];
-    snprintf(buf, sizeof(buf),
-      "{\"blind_address\":\"0x%06x\","
-      "\"name\":\"%s\","
-      "\"position\":null,"
-      "\"operation\":\"idle\","
-      "\"last_state\":\"%s\","
-      "\"last_seen_ms\":%lu,"
-      "\"rssi\":%.1f,"
-      "\"channel\":%d,"
-      "\"remote_address\":\"0x%06x\","
-      "\"poll_interval_ms\":%lu,"
-      "\"open_duration_ms\":%lu,"
-      "\"close_duration_ms\":%lu,"
-      "\"supports_tilt\":false,"
-      "\"adopted\":true}",
-      rb.blind_address,
-      esc_name.c_str(),
-      elero_state_to_string(rb.last_state),
-      (unsigned long)rb.last_seen_ms,
-      rb.last_rssi,
-      (int)rb.channel,
-      rb.remote_address,
-      (unsigned long)rb.poll_intvl_ms,
-      (unsigned long)rb.open_duration_ms,
-      (unsigned long)rb.close_duration_ms
-    );
-    json += buf;
+    json += "{\"blind_address\":\"" + fmt_hex6(rb.blind_address) + "\","
+            "\"name\":\"" + json_escape(rb.name) + "\","
+            "\"position\":null,"
+            "\"operation\":\"idle\","
+            "\"last_state\":\"" + elero_state_to_string(rb.last_state) + "\","
+            "\"last_seen_ms\":" + fmt_ulong((unsigned long)rb.last_seen_ms) + ","
+            "\"rssi\":" + fmt_float1(rb.last_rssi) + ","
+            "\"channel\":" + fmt_int((int)rb.channel) + ","
+            "\"remote_address\":\"" + fmt_hex6(rb.remote_address) + "\","
+            "\"poll_interval_ms\":" + fmt_ulong((unsigned long)rb.poll_intvl_ms) + ","
+            "\"open_duration_ms\":" + fmt_ulong((unsigned long)rb.open_duration_ms) + ","
+            "\"close_duration_ms\":" + fmt_ulong((unsigned long)rb.close_duration_ms) + ","
+            "\"supports_tilt\":false,"
+            "\"adopted\":true}";
   }
 
   json += "]}";
@@ -537,28 +494,16 @@ void EleroWebServer::handle_get_runtime(AsyncWebServerRequest *request) {
     const auto &rb = entry.second;
     if (!first) json += ",";
     first = false;
-    std::string esc_name = json_escape(rb.name);
-    char buf[384];
-    snprintf(buf, sizeof(buf),
-      "{\"blind_address\":\"0x%06x\","
-      "\"name\":\"%s\","
-      "\"channel\":%d,"
-      "\"remote_address\":\"0x%06x\","
-      "\"rssi\":%.1f,"
-      "\"last_state\":\"%s\","
-      "\"last_seen_ms\":%lu,"
-      "\"open_duration_ms\":%lu,"
-      "\"close_duration_ms\":%lu,"
-      "\"poll_interval_ms\":%lu}",
-      rb.blind_address, esc_name.c_str(), (int)rb.channel,
-      rb.remote_address, rb.last_rssi,
-      elero_state_to_string(rb.last_state),
-      (unsigned long)rb.last_seen_ms,
-      (unsigned long)rb.open_duration_ms,
-      (unsigned long)rb.close_duration_ms,
-      (unsigned long)rb.poll_intvl_ms
-    );
-    json += buf;
+    json += "{\"blind_address\":\"" + fmt_hex6(rb.blind_address) + "\","
+            "\"name\":\"" + json_escape(rb.name) + "\","
+            "\"channel\":" + fmt_int((int)rb.channel) + ","
+            "\"remote_address\":\"" + fmt_hex6(rb.remote_address) + "\","
+            "\"rssi\":" + fmt_float1(rb.last_rssi) + ","
+            "\"last_state\":\"" + elero_state_to_string(rb.last_state) + "\","
+            "\"last_seen_ms\":" + fmt_ulong((unsigned long)rb.last_seen_ms) + ","
+            "\"open_duration_ms\":" + fmt_ulong((unsigned long)rb.open_duration_ms) + ","
+            "\"close_duration_ms\":" + fmt_ulong((unsigned long)rb.close_duration_ms) + ","
+            "\"poll_interval_ms\":" + fmt_ulong((unsigned long)rb.poll_intvl_ms) + "}";
   }
   json += "]}";
   AsyncWebServerResponse *response = request->beginResponse(200, "application/json", json.c_str());
@@ -609,30 +554,23 @@ void EleroWebServer::handle_get_yaml(AsyncWebServerRequest *request) {
     if (this->parent_->is_cover_configured(blind.blind_address))
       continue;
 
-    char buf[640];
-    snprintf(buf, sizeof(buf),
-      "%s"
-      "  - platform: elero\n"
-      "    blind_address: 0x%06x\n"
-      "    channel: %d\n"
-      "    remote_address: 0x%06x\n"
-      "    name: \"Discovered Blind %d\"\n"
-      "    # open_duration: 25s\n"
-      "    # close_duration: 22s\n"
-      "    hop: 0x%02x\n"
-      "    payload_1: 0x%02x\n"
-      "    payload_2: 0x%02x\n"
-      "    pck_inf1: 0x%02x\n"
-      "    pck_inf2: 0x%02x\n"
-      "\n",
-      blind.params_from_command
-        ? ""
-        : "  # WARNING: params derived from status packet only — press a remote\n"
-          "  # button during scan so command packets can be captured for reliable values.\n",
-      blind.blind_address, blind.channel, blind.remote_address, ++idx,
-      blind.hop, blind.payload_1, blind.payload_2, blind.pck_inf[0], blind.pck_inf[1]
-    );
-    yaml += buf;
+    if (!blind.params_from_command) {
+      yaml += "  # WARNING: params derived from status packet only — press a remote\n"
+              "  # button during scan so command packets can be captured for reliable values.\n";
+    }
+    ++idx;
+    yaml += "  - platform: elero\n"
+            "    blind_address: " + fmt_hex6(blind.blind_address) + "\n"
+            "    channel: " + fmt_int(blind.channel) + "\n"
+            "    remote_address: " + fmt_hex6(blind.remote_address) + "\n"
+            "    name: \"Discovered Blind " + fmt_int(idx) + "\"\n"
+            "    # open_duration: 25s\n"
+            "    # close_duration: 22s\n"
+            "    hop: " + fmt_hex2(blind.hop) + "\n"
+            "    payload_1: " + fmt_hex2(blind.payload_1) + "\n"
+            "    payload_2: " + fmt_hex2(blind.payload_2) + "\n"
+            "    pck_inf1: " + fmt_hex2(blind.pck_inf[0]) + "\n"
+            "    pck_inf2: " + fmt_hex2(blind.pck_inf[1]) + "\n\n";
   }
 
   if (idx == 0)
@@ -689,25 +627,19 @@ void EleroWebServer::handle_get_packets(AsyncWebServerRequest *request) {
     if (!first) json += ",";
     first = false;
 
-    char hex_buf[CC1101_FIFO_LENGTH * 3 + 1];
-    hex_buf[0] = '\0';
+    std::string hex_str;
+    hex_str.reserve(pkt.fifo_len * 3);
     for (int i = 0; i < pkt.fifo_len && i < CC1101_FIFO_LENGTH; i++) {
       char byte_buf[4];
       snprintf(byte_buf, sizeof(byte_buf), i == 0 ? "%02x" : " %02x", pkt.data[i]);
-      strncat(hex_buf, byte_buf, sizeof(hex_buf) - strlen(hex_buf) - 1);
+      hex_str += byte_buf;
     }
 
-    std::string reason_esc = json_escape(pkt.reject_reason);
-    char entry_buf[320];
-    snprintf(entry_buf, sizeof(entry_buf),
-      "{\"t\":%lu,\"len\":%d,\"valid\":%s,\"reason\":\"%s\",\"hex\":\"%s\"}",
-      (unsigned long)pkt.timestamp_ms,
-      pkt.fifo_len,
-      pkt.valid ? "true" : "false",
-      reason_esc.c_str(),
-      hex_buf
-    );
-    json += entry_buf;
+    json += "{\"t\":" + fmt_ulong((unsigned long)pkt.timestamp_ms) + ","
+            "\"len\":" + fmt_int(pkt.fifo_len) + ","
+            "\"valid\":" + (pkt.valid ? "true" : "false") + ","
+            "\"reason\":\"" + json_escape(pkt.reject_reason) + "\","
+            "\"hex\":\"" + hex_str + "\"}";
   }
 
   json += "]}";
@@ -811,18 +743,16 @@ void EleroWebServer::handle_get_logs(AsyncWebServerRequest *request) {
       uint8_t et = (e.event_type >= 1 && e.event_type <= 4) ? e.event_type : 0;
       const char *op_str = (e.operation <= 2) ? op_strs[e.operation] : "unknown";
 
-      std::string msg_esc = json_escape(e.message);
-      char buf[512];
-      snprintf(buf, sizeof(buf),
-        "{\"seq\":%lu,\"t\":%lu,\"type\":\"%s\",\"addr\":\"0x%06x\","
-        "\"data1\":%u,\"data2\":%u,\"rssi\":%d,\"op\":\"%s\","
-        "\"pos\":%u,\"msg\":\"%s\"}",
-        (unsigned long)e.sequence, (unsigned long)e.timestamp_ms,
-        event_type_strs[et], (unsigned)e.blind_address,
-        e.data1, e.data2, (int)e.rssi, op_str,
-        e.position_x100 != 0xFFFF ? (unsigned)(e.position_x100 / 100) : 0,
-        msg_esc.c_str());
-      json += buf;
+      json += "{\"seq\":" + fmt_ulong((unsigned long)e.sequence) + ","
+              "\"t\":" + fmt_ulong((unsigned long)e.timestamp_ms) + ","
+              "\"type\":\"" + event_type_strs[et] + "\","
+              "\"addr\":\"" + fmt_hex6((unsigned)e.blind_address) + "\","
+              "\"data1\":" + fmt_uint(e.data1) + ","
+              "\"data2\":" + fmt_uint(e.data2) + ","
+              "\"rssi\":" + fmt_int((int)e.rssi) + ","
+              "\"op\":\"" + op_str + "\","
+              "\"pos\":" + fmt_uint(e.position_x100 != 0xFFFF ? (unsigned)(e.position_x100 / 100) : 0) + ","
+              "\"msg\":\"" + json_escape(e.message) + "\"}";
     }
     json += "]}";
 
@@ -863,12 +793,11 @@ void EleroWebServer::handle_get_logs(AsyncWebServerRequest *request) {
 
     uint8_t lv = (e.level >= 1 && e.level <= 5) ? e.level : 3;
 
-    std::string msg_esc = json_escape(e.message);
-    char buf[512];
-    snprintf(buf, sizeof(buf),
-      "{\"t\":%lu,\"level\":%d,\"level_str\":\"%s\",\"tag\":\"%s\",\"msg\":\"%s\"}",
-      (unsigned long)e.timestamp_ms, lv, level_strs[lv], e.tag, msg_esc.c_str());
-    json += buf;
+    json += "{\"t\":" + fmt_ulong((unsigned long)e.timestamp_ms) + ","
+            "\"level\":" + fmt_int(lv) + ","
+            "\"level_str\":\"" + level_strs[lv] + "\","
+            "\"tag\":\"" + json_escape(e.tag) + "\","
+            "\"msg\":\"" + json_escape(e.message) + "\"}";
   }
 
   json += "]}";
