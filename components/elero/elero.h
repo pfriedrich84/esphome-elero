@@ -34,7 +34,6 @@ static const uint8_t ELERO_COMMAND_COVER_STOP = 0x10;
 static const uint8_t ELERO_COMMAND_COVER_UP = 0x20;
 static const uint8_t ELERO_COMMAND_COVER_TILT = 0x24;
 static const uint8_t ELERO_COMMAND_COVER_DOWN = 0x40;
-static const uint8_t ELERO_COMMAND_COVER_INT = 0x44;
 
 static const uint8_t ELERO_STATE_UNKNOWN = 0x00;
 static const uint8_t ELERO_STATE_TOP = 0x01;

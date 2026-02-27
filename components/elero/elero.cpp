@@ -2,7 +2,6 @@
 #include "esphome/core/log.h"
 #include "esphome/core/helpers.h"
 #include <cstring>
-#include <algorithm>
 
 #ifdef USE_SENSOR
 #include "esphome/components/sensor/sensor.h"
