@@ -102,6 +102,7 @@ enum class TxPhase : uint8_t {
   WAIT_CC_IDLE,    // SIDLE sent; polling MARCSTATE until CC1101 reaches IDLE
   WAIT_CC_TX,      // STX sent; polling MARCSTATE until CC1101 enters TX
   WAIT_DONE,       // TX in progress; waiting for GDO0 TX-end signal (received_ flag)
+  FLUSH_RX,        // SIDLE sent; waiting for IDLE before flushing FIFOs and entering RX
 };
 
 struct RawPacket {
@@ -293,6 +294,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
 
  private:
   void advance_tx_();
+  void start_flush_rx_();  // non-blocking: SIDLE → FLUSH_RX phase
   uint8_t count_bits(uint8_t byte);
   void calc_parity(uint8_t* msg);
   void add_r20_to_nibbles(uint8_t* msg, uint8_t r20, uint8_t start, uint8_t length);

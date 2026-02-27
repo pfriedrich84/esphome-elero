@@ -48,8 +48,16 @@ void EleroCover::loop() {
   uint32_t intvl = this->poll_intvl_;
   uint32_t now = millis();
   if(this->current_operation != COVER_OPERATION_IDLE) {
-    if((now - this->movement_start_) < ELERO_TIMEOUT_MOVEMENT)  // Poll frequently while moving (up to 2 min timeout)
-      intvl = ELERO_POLL_INTERVAL_MOVING;
+    if(this->movement_start_ > 0 && (now - this->movement_start_) > ELERO_TIMEOUT_MOVEMENT) {
+      // Force idle if movement timed out with no RF feedback
+      ESP_LOGW(TAG, "Blind 0x%06x: movement timed out after %us with no RF feedback, forcing idle",
+               this->command_.blind_addr, ELERO_TIMEOUT_MOVEMENT / 1000);
+      this->current_operation = COVER_OPERATION_IDLE;
+      this->movement_start_ = 0;
+      this->publish_state();
+    } else {
+      intvl = ELERO_POLL_INTERVAL_MOVING;  // Poll frequently while moving
+    }
   }
 
   if((now > this->poll_offset_) && (now - this->poll_offset_ - this->last_poll_) > intvl) {
@@ -201,16 +209,19 @@ void EleroCover::set_rx_state(uint8_t state) {
     current_tilt = 0.0;
     break;
   case ELERO_STATE_BLOCKING:
-    ESP_LOGW(TAG, "Blind 0x%06x reports BLOCKING", this->command_.blind_addr);
-    op = COVER_OPERATION_IDLE;
-    break;
   case ELERO_STATE_OVERHEATED:
-    ESP_LOGW(TAG, "Blind 0x%06x reports OVERHEATED", this->command_.blind_addr);
-    op = COVER_OPERATION_IDLE;
-    break;
   case ELERO_STATE_TIMEOUT:
-    ESP_LOGW(TAG, "Blind 0x%06x reports TIMEOUT", this->command_.blind_addr);
+    ESP_LOGW(TAG, "Blind 0x%06x reports %s", this->command_.blind_addr,
+             elero_state_to_string(state));
     op = COVER_OPERATION_IDLE;
+    // Flush pending commands — motor is in error, don't send more
+    while (!this->commands_to_send_.empty()) this->commands_to_send_.pop();
+    this->send_packets_ = 0;
+    this->send_retries_ = 0;
+    // Cancel movement tracking
+    this->movement_start_ = 0;
+    // Schedule recovery poll (10s later) to check if blind has recovered
+    this->post_movement_poll_at_ = millis() + 10000;
     break;
   default:
     op = COVER_OPERATION_IDLE;
