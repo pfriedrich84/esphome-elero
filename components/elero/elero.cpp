@@ -344,6 +344,18 @@ void Elero::advance_tx_() {
       if (this->read_status(CC1101_MARCSTATE) == CC1101_MARCSTATE_TX) {
         this->tx_deadline_ms_ = millis() + 40;
         this->tx_phase_ = TxPhase::WAIT_DONE;
+      } else if (this->received_) {
+        // TX completed before we observed MARCSTATE==TX.  The GDO0
+        // falling-edge interrupt already fired (end-of-packet), and
+        // the CC1101 transitioned to RX per TXOFF_MODE.  Treat as
+        // successful completion — same logic as WAIT_DONE.
+        uint8_t bytes = this->read_status(CC1101_TXBYTES) & 0x7f;
+        if (bytes != 0)
+          ESP_LOGE(TAG, "Error transferring, %d bytes left in buffer", bytes);
+        else
+          ESP_LOGD(TAG, "Transmission successful (fast)");
+        this->flush_and_rx();
+        this->tx_phase_ = TxPhase::IDLE;
       } else if (millis() > this->tx_deadline_ms_) {
         ESP_LOGE(TAG, "Timed out waiting for TX: 0x%02x",
                  this->read_status(CC1101_MARCSTATE));
