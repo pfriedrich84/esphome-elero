@@ -29,7 +29,7 @@ external_components:
 - Realtime log capture accessible via REST API
 - Runtime CC1101 frequency switching
 - Optional web UI served at `http://<device-ip>/elero` for discovery and YAML generation
-- Optional persistent event logging (SPIFFS ring buffer) for RF packets, state transitions, and commands
+- Optional persistent event logging (LittleFS ring buffer) for RF packets, state transitions, and commands
 
 **Upstream credits:**
 - Encryption/decryption: [QuadCorei8085/elero_protocol](https://github.com/QuadCorei8085/elero_protocol) (MIT)
@@ -55,7 +55,7 @@ esphome-elero/
     │   ├── elero.h                    # C++ hub class header
     │   ├── elero.cpp                  # C++ RF protocol implementation (~625 lines)
     │   ├── elero_log.h                # Persistent event log header (EleroEventLog)
-    │   ├── elero_log.cpp              # SPIFFS ring buffer implementation
+    │   ├── elero_log.cpp              # LittleFS ring buffer implementation
     │   ├── cc1101.h                   # CC1101 register map & command strobes
     │   ├── cover/                     # Cover (blind) platform
     │   │   ├── __init__.py            # Cover schema & code-gen
@@ -287,12 +287,12 @@ Key behaviors:
 **Namespace:** `esphome::elero`
 
 Key behaviors:
-- SPIFFS-based persistent ring buffer storing 64-byte fixed-size event entries
+- LittleFS-based persistent ring buffer storing 64-byte fixed-size event entries
 - Logs RF received packets, cover state transitions, commands sent, and system events
 - Survives reboots — entries persist on flash storage
 - Header flush batching (every 10 appends) reduces flash wear
 - Enabled via `logging: enable: true` in the hub config; disabled by default
-- File layout: 64-byte header + N × 64-byte entries at `/spiffs/elero_events.bin`
+- File layout: 64-byte header + N × 64-byte entries at `/littlefs/elero_events.bin`
 
 ### `components/elero_web/elero_web_server.h` / `elero_web_server.cpp`
 

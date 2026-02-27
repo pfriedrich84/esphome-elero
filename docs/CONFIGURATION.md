@@ -29,7 +29,7 @@ elero:
 
 ### Persistentes Event-Logging
 
-Optionales SPIFFS-basiertes Event-Logging das RF-Pakete, Zustandsübergänge und gesendete Befehle aufzeichnet. Die Einträge überleben einen Neustart.
+Optionales LittleFS-basiertes Event-Logging das RF-Pakete, Zustandsübergänge und gesendete Befehle aufzeichnet. Die Einträge überleben einen Neustart.
 
 ```yaml
 elero:
@@ -52,7 +52,7 @@ elero:
 - **Befehl gesendet** — Adresse, Befehlsbyte
 - **System** — Boot, Fehler
 
-**Speicherverbrauch:** 1000 Einträge ≈ 64 KB auf SPIFFS. Die Einträge werden als Ringpuffer gespeichert — bei vollem Puffer werden die ältesten Einträge überschrieben.
+**Speicherverbrauch:** 1000 Einträge ≈ 64 KB auf LittleFS. Die Einträge werden als Ringpuffer gespeichert — bei vollem Puffer werden die ältesten Einträge überschrieben.
 
 ### Frequenz-Varianten
 
