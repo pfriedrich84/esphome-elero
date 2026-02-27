@@ -1063,3 +1063,11 @@ void Elero::load_blind_states() {
 
 }  // namespace elero
 }  // namespace esphome
+
+// ─── Unity-build includes ─────────────────────────────────────────────────
+// ESPHome's build system only compiles .cpp files that have a corresponding
+// Python module.  elero_log.cpp and elero_storage.cpp are helper files with
+// no __init__.py of their own, so they are included here to ensure their
+// implementations are always compiled as part of this translation unit.
+#include "elero_log.cpp"      // NOLINT(build/include)
+#include "elero_storage.cpp"  // NOLINT(build/include)
