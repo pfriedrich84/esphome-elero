@@ -1,7 +1,7 @@
 #pragma once
 
 #include "esphome/core/component.h"
-#include "esphome/core/preferences.h"
+#include "elero_storage.h"
 #include "esphome/components/spi/spi.h"
 #include "cc1101.h"
 #include "elero_log.h"
@@ -63,6 +63,7 @@ static const uint8_t ELERO_MAX_PACKET_SIZE = 57; // according to FCC documents
 static const uint32_t ELERO_POLL_INTERVAL_MOVING = 2000;  // poll every two seconds while moving
 static const uint32_t ELERO_DELAY_SEND_PACKETS = 50; // 50ms send delay between repeats
 static const uint32_t ELERO_TIMEOUT_MOVEMENT = 120000; // poll for up to two minutes while moving
+static const uint32_t ELERO_POST_MOVEMENT_POLL_DELAY = 5000; // poll 5s after open/close duration elapses
 
 static const uint8_t ELERO_SEND_RETRIES = 3;
 static const uint8_t ELERO_SEND_PACKETS = 2;
@@ -284,11 +285,18 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void set_log_capture(bool en) { log_capture_ = en; }
   bool is_log_capture_active() const { return log_capture_; }
 
-  // Persistent event log
-  void set_persistent_log_enabled(bool en) { persistent_log_enabled_ = en; }
-  void set_persistent_log_max_entries(uint16_t n) { persistent_log_max_entries_ = n; }
-  bool is_persistent_log_enabled() const { return persistent_log_enabled_; }
-  EleroEventLog *get_event_log() { return persistent_log_enabled_ ? &event_log_ : nullptr; }
+  // LittleFS persistent storage
+  EleroStorage &get_storage() { return storage_; }
+  /// Save all runtime-adopted blinds to flash.
+  void save_runtime_blinds();
+  /// Flush the current RF packet ring buffer to flash (on-demand).
+  void save_packet_log();
+  /// Load previously saved RF packets into the in-memory ring buffer.
+  void load_packet_log();
+  /// Collect and persist the last-known state of every known blind.
+  void save_blind_states();
+  /// Restore persisted blind states after boot (called from setup).
+  void load_blind_states();
 
   void set_gdo0_pin(InternalGPIOPin *pin) { gdo0_pin_ = pin; }
   void set_freq0(uint8_t freq) { freq0_ = freq; }
@@ -347,10 +355,11 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   bool log_capture_{false};
   std::vector<LogEntry> log_entries_;
   uint8_t log_write_idx_{0};
-  // Persistent event log
-  bool persistent_log_enabled_{false};
-  uint16_t persistent_log_max_entries_{1000};
-  EleroEventLog event_log_;
+  // LittleFS persistent storage
+  EleroStorage storage_;
+  uint32_t last_state_save_ms_{0};
+  static const uint32_t STATE_SAVE_INTERVAL_MS = 300000;  // save blind states every 5 min
+  bool states_dirty_{false};
 };
 
 }  // namespace elero
