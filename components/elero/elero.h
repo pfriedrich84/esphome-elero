@@ -97,6 +97,14 @@ typedef struct {
   uint8_t payload[10];
 } t_elero_command;
 
+/// TX state machine phases — used by advance_tx_() to replace blocking spin-loops.
+enum class TxPhase : uint8_t {
+  IDLE = 0,        // No TX in progress; ready to accept new commands
+  WAIT_CC_IDLE,    // SIDLE sent; polling MARCSTATE until CC1101 reaches IDLE
+  WAIT_CC_TX,      // STX sent; polling MARCSTATE until CC1101 enters TX
+  WAIT_DONE,       // TX in progress; waiting for GDO0 TX-end signal (received_ flag)
+};
+
 struct RawPacket {
   uint32_t timestamp_ms;            // millis() when captured
   uint8_t  fifo_len;                // bytes actually read from CC1101 FIFO
@@ -211,8 +219,6 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void write_burst(uint8_t addr, uint8_t *data, uint8_t len);
   void write_cmd(uint8_t cmd);
   bool wait_rx();
-  bool wait_tx();
-  bool wait_tx_done();
   bool wait_idle();
   bool transmit();
   uint8_t read_reg(uint8_t addr);
@@ -294,6 +300,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   uint8_t get_freq2() const { return freq2_; }
 
  private:
+  void advance_tx_();
   uint8_t count_bits(uint8_t byte);
   void calc_parity(uint8_t* msg);
   void add_r20_to_nibbles(uint8_t* msg, uint8_t r20, uint8_t start, uint8_t length);
@@ -333,6 +340,9 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   std::vector<RawPacket> raw_packets_;
   uint8_t raw_packet_write_idx_{0};
   std::map<uint32_t, RuntimeBlind> runtime_blinds_;
+  // Non-blocking TX state machine
+  TxPhase  tx_phase_{TxPhase::IDLE};
+  uint32_t tx_deadline_ms_{0};
   // Log buffer
   bool log_capture_{false};
   std::vector<LogEntry> log_entries_;
