@@ -136,7 +136,7 @@ struct RuntimeBlind {
   std::queue<uint8_t> command_queue;
 };
 
-const char *elero_state_to_string(uint8_t state);
+const char *elero_state_to_string(uint8_t state, bool is_light = false);
 
 /// Abstract base class for light actuators registered with the Elero hub.
 /// EleroLight inherits from this so the hub never needs the light header.
@@ -238,6 +238,9 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
     return address_to_cover_mapping_.find(address) != address_to_cover_mapping_.end();
   }
   const std::map<uint32_t, EleroBlindBase *> &get_configured_covers() const { return address_to_cover_mapping_; }
+  bool is_light_configured(uint32_t address) const {
+    return address_to_light_mapping_.find(address) != address_to_light_mapping_.end();
+  }
 
   // Packet dump mode: capture every received FIFO read into a ring buffer
   void start_packet_dump();
