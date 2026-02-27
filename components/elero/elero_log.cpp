@@ -21,7 +21,7 @@
 namespace esphome {
 namespace elero {
 
-static const char *const TAG = "elero.log";
+static const char *const ELERO_LOG_TAG = "elero.log";
 
 bool EleroEventLog::begin(uint16_t max_entries) {
   // LittleFS is expected to be mounted already by EleroStorage::begin().
@@ -29,16 +29,16 @@ bool EleroEventLog::begin(uint16_t max_entries) {
 #ifdef USE_ARDUINO
   if (!LittleFS.begin(false)) {  // false = don't format, try mount only
     if (!LittleFS.begin(true)) { // true = format on first use
-      ESP_LOGE(TAG, "Failed to mount LittleFS");
+      ESP_LOGE(ELERO_LOG_TAG, "Failed to mount LittleFS");
       return false;
     }
   }
-  ESP_LOGD(TAG, "LittleFS available for event log");
+  ESP_LOGD(ELERO_LOG_TAG, "LittleFS available for event log");
 #elif defined(USE_ESP_IDF)
 #ifdef ELERO_NO_ESP_LITTLEFS
   // esp_littlefs.h not available — assume LittleFS is already mounted
   // by EleroStorage or externally.
-  ESP_LOGW(TAG, "esp_littlefs.h not found; assuming LittleFS is already mounted");
+  ESP_LOGW(ELERO_LOG_TAG, "esp_littlefs.h not found; assuming LittleFS is already mounted");
 #else
   // Try opening the log file directly — EleroStorage should have mounted
   // LittleFS already. If it hasn't, mount it here.
@@ -51,16 +51,16 @@ bool EleroEventLog::begin(uint16_t max_entries) {
   esp_err_t ret = esp_vfs_littlefs_register(&conf);
   if (ret == ESP_ERR_INVALID_STATE) {
     // Already mounted by EleroStorage — that's expected
-    ESP_LOGD(TAG, "LittleFS already mounted");
+    ESP_LOGD(ELERO_LOG_TAG, "LittleFS already mounted");
   } else if (ret != ESP_OK) {
-    ESP_LOGE(TAG, "Failed to mount LittleFS: %s", esp_err_to_name(ret));
+    ESP_LOGE(ELERO_LOG_TAG, "Failed to mount LittleFS: %s", esp_err_to_name(ret));
     return false;
   } else {
-    ESP_LOGD(TAG, "LittleFS mounted for event log");
+    ESP_LOGD(ELERO_LOG_TAG, "LittleFS mounted for event log");
   }
 #endif
 #else
-  ESP_LOGW(TAG, "Persistent logging only supported on ESP32");
+  ESP_LOGW(ELERO_LOG_TAG, "Persistent logging only supported on ESP32");
   return false;
 #endif
 
@@ -71,7 +71,7 @@ bool EleroEventLog::begin(uint16_t max_entries) {
     this->read_header_();
     if (this->header_.magic != MAGIC || this->header_.version != FORMAT_VERSION ||
         this->header_.max_entries != max_entries) {
-      ESP_LOGW(TAG, "Event log header invalid or max_entries changed, recreating");
+      ESP_LOGW(ELERO_LOG_TAG, "Event log header invalid or max_entries changed, recreating");
       fclose(this->file_);
       this->file_ = nullptr;
     } else {
@@ -81,7 +81,7 @@ bool EleroEventLog::begin(uint16_t max_entries) {
       if (this->header_.write_idx >= this->header_.max_entries) {
         this->header_.write_idx = 0;
       }
-      ESP_LOGI(TAG, "Event log opened: %u entries, %u total written",
+      ESP_LOGI(ELERO_LOG_TAG, "Event log opened: %u entries, %u total written",
                this->get_entry_count(), this->header_.total_written);
       this->ready_ = true;
       return true;
@@ -98,13 +98,13 @@ bool EleroEventLog::begin(uint16_t max_entries) {
 
   this->create_file_();
   if (this->file_ == nullptr) {
-    ESP_LOGE(TAG, "Failed to create event log file");
+    ESP_LOGE(ELERO_LOG_TAG, "Failed to create event log file");
     return false;
   }
 
   this->next_sequence_ = 1;
   this->ready_ = true;
-  ESP_LOGI(TAG, "Event log created: max %u entries (%" PRIu32 " bytes)",
+  ESP_LOGI(ELERO_LOG_TAG, "Event log created: max %u entries (%" PRIu32 " bytes)",
            max_entries, (uint32_t)(64 + max_entries * 64));
   return true;
 }
@@ -143,7 +143,7 @@ void EleroEventLog::write_header_() {
     return;
   fseek(this->file_, 0, SEEK_SET);
   if (fwrite(&this->header_, sizeof(PersistentLogHeader), 1, this->file_) != 1) {
-    ESP_LOGE(TAG, "Failed to write event log header");
+    ESP_LOGE(ELERO_LOG_TAG, "Failed to write event log header");
     this->ready_ = false;
     return;
   }
@@ -155,7 +155,7 @@ void EleroEventLog::read_header_() {
     return;
   fseek(this->file_, 0, SEEK_SET);
   if (fread(&this->header_, sizeof(PersistentLogHeader), 1, this->file_) != 1) {
-    ESP_LOGE(TAG, "Failed to read event log header");
+    ESP_LOGE(ELERO_LOG_TAG, "Failed to read event log header");
     memset(&this->header_, 0, sizeof(this->header_));
   }
 }
@@ -166,7 +166,7 @@ void EleroEventLog::write_entry_(uint16_t idx, const PersistentLogEntry &entry) 
   long offset = sizeof(PersistentLogHeader) + (long)idx * sizeof(PersistentLogEntry);
   fseek(this->file_, offset, SEEK_SET);
   if (fwrite(&entry, sizeof(PersistentLogEntry), 1, this->file_) != 1) {
-    ESP_LOGW(TAG, "Failed to write event log entry at index %u", idx);
+    ESP_LOGW(ELERO_LOG_TAG, "Failed to write event log entry at index %u", idx);
   }
   fflush(this->file_);
 }
@@ -178,7 +178,7 @@ PersistentLogEntry EleroEventLog::read_entry_(uint16_t idx) const {
   long offset = sizeof(PersistentLogHeader) + (long)idx * sizeof(PersistentLogEntry);
   fseek(this->file_, offset, SEEK_SET);
   if (fread(&entry, sizeof(PersistentLogEntry), 1, this->file_) != 1) {
-    ESP_LOGW(TAG, "Failed to read event log entry at index %u", idx);
+    ESP_LOGW(ELERO_LOG_TAG, "Failed to read event log entry at index %u", idx);
     memset(&entry, 0, sizeof(entry));
   }
   return entry;
@@ -269,7 +269,7 @@ void EleroEventLog::clear() {
     this->write_entry_(i, empty);
   }
 
-  ESP_LOGI(TAG, "Event log cleared");
+  ESP_LOGI(ELERO_LOG_TAG, "Event log cleared");
 }
 
 // ─── Convenience logging methods ──────────────────────────────────────────
