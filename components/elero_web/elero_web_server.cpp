@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
+#include <climits>
 
 namespace esphome {
 namespace elero {
@@ -74,6 +75,7 @@ bool EleroWebServer::parse_addr_url(const std::string &url, const char *prefix,
   char *end;
   unsigned long v = strtoul(addr_str.c_str(), &end, 0);
   if (end == addr_str.c_str()) return false;
+  if (v > UINT32_MAX) return false;
   addr_out = (uint32_t)v;
   return true;
 }
@@ -236,7 +238,9 @@ void EleroWebServer::handle_scan_stop(AsyncWebServerRequest *request) {
 // ─── Discovered blinds ────────────────────────────────────────────────────────
 
 void EleroWebServer::handle_get_discovered(AsyncWebServerRequest *request) {
-  std::string json = "{\"scanning\":";
+  std::string json;
+  json.reserve(64 + this->parent_->get_discovered_count() * 640);
+  json = "{\"scanning\":";
   json += this->parent_->is_scanning() ? "true" : "false";
   json += ",\"blinds\":[";
 
@@ -292,7 +296,10 @@ void EleroWebServer::handle_get_discovered(AsyncWebServerRequest *request) {
 // ─── Configured covers ────────────────────────────────────────────────────────
 
 void EleroWebServer::handle_get_configured(AsyncWebServerRequest *request) {
-  std::string json = "{\"covers\":[";
+  size_t total = this->parent_->get_configured_covers().size() + this->parent_->get_runtime_blinds().size();
+  std::string json;
+  json.reserve(64 + total * 512);
+  json = "{\"covers\":[";
 
   bool first = true;
 
@@ -522,7 +529,9 @@ void EleroWebServer::handle_adopt_discovered(AsyncWebServerRequest *request, uin
 // ─── Runtime blinds ───────────────────────────────────────────────────────────
 
 void EleroWebServer::handle_get_runtime(AsyncWebServerRequest *request) {
-  std::string json = "{\"blinds\":[";
+  std::string json;
+  json.reserve(64 + this->parent_->get_runtime_blinds().size() * 384);
+  json = "{\"blinds\":[";
   bool first = true;
   for (const auto &entry : this->parent_->get_runtime_blinds()) {
     const auto &rb = entry.second;
@@ -665,7 +674,9 @@ void EleroWebServer::handle_packet_dump_stop(AsyncWebServerRequest *request) {
 void EleroWebServer::handle_get_packets(AsyncWebServerRequest *request) {
   const auto &packets = this->parent_->get_raw_packets();
 
-  std::string json = "{\"dump_active\":";
+  std::string json;
+  json.reserve(64 + packets.size() * 320);
+  json = "{\"dump_active\":";
   json += this->parent_->is_packet_dump_active() ? "true" : "false";
   json += ",\"count\":";
   char cnt_buf[12];
@@ -686,13 +697,14 @@ void EleroWebServer::handle_get_packets(AsyncWebServerRequest *request) {
       strncat(hex_buf, byte_buf, sizeof(hex_buf) - strlen(hex_buf) - 1);
     }
 
+    std::string reason_esc = json_escape(pkt.reject_reason);
     char entry_buf[320];
     snprintf(entry_buf, sizeof(entry_buf),
       "{\"t\":%lu,\"len\":%d,\"valid\":%s,\"reason\":\"%s\",\"hex\":\"%s\"}",
       (unsigned long)pkt.timestamp_ms,
       pkt.fifo_len,
       pkt.valid ? "true" : "false",
-      pkt.reject_reason,
+      reason_esc.c_str(),
       hex_buf
     );
     json += entry_buf;
@@ -774,8 +786,15 @@ void EleroWebServer::handle_get_logs(AsyncWebServerRequest *request) {
     uint32_t since_seq = 0;
     if (request->hasParam("since")) {
       auto since_param = request->getParam("since");
-      if (since_param != nullptr)
-        since_seq = (uint32_t)strtoul(since_param->value().c_str(), nullptr, 10);
+      if (since_param != nullptr) {
+        char *endptr;
+        unsigned long v = strtoul(since_param->value().c_str(), &endptr, 10);
+        if (endptr == since_param->value().c_str()) {
+          this->send_json_error(request, 400, "Invalid 'since' parameter (expected integer)");
+          return;
+        }
+        since_seq = (uint32_t)v;
+      }
     }
 
     auto entries = (since_seq > 0) ? log->read_since(since_seq) : log->read_all();
@@ -817,8 +836,15 @@ void EleroWebServer::handle_get_logs(AsyncWebServerRequest *request) {
   uint32_t since_ms = 0;
   if (request->hasParam("since")) {
     auto since_param = request->getParam("since");
-    if (since_param != nullptr)
-      since_ms = (uint32_t)strtoul(since_param->value().c_str(), nullptr, 10);
+    if (since_param != nullptr) {
+      char *endptr;
+      unsigned long v = strtoul(since_param->value().c_str(), &endptr, 10);
+      if (endptr == since_param->value().c_str()) {
+        this->send_json_error(request, 400, "Invalid 'since' parameter (expected integer)");
+        return;
+      }
+      since_ms = (uint32_t)v;
+    }
   }
 
   const auto &entries = this->parent_->get_log_entries();

@@ -162,7 +162,7 @@ document.addEventListener('alpine:init', () => {
         this.freq.freq2 = d.freq2 || this.freq.freq2
         this.freq.freq1 = d.freq1 || this.freq.freq1
         this.freq.freq0 = d.freq0 || this.freq.freq0
-      } catch {}
+      } catch (e) { console.warn('refreshInfo failed:', e) }
     },
 
     // ── Covers ────────────────────────────────────────────────────────────────
@@ -179,7 +179,7 @@ document.addEventListener('alpine:init', () => {
         }))
         // Also pull uptime from info periodically
         this.uptimeMs += 3000  // rough increment
-      } catch {}
+      } catch (e) { console.warn('refreshCovers failed:', e) }
     },
 
     toggleSettings(c) {
@@ -216,7 +216,7 @@ document.addEventListener('alpine:init', () => {
         const d = await api('GET', '/elero/api/discovered')
         this.scanning = d.scanning
         this.allDiscovered = d.blinds || []
-      } catch {}
+      } catch (e) { console.warn('refreshDiscovered failed:', e) }
     },
 
     async startScan() {
@@ -292,7 +292,7 @@ document.addEventListener('alpine:init', () => {
       try {
         const d = await api('GET', '/elero/api/logs/status')
         this.logPersistent = d.persistent === true
-      } catch {}
+      } catch (e) { console.warn('checkLogStatus failed:', e) }
     },
 
     async startCapture() {
@@ -353,7 +353,7 @@ document.addEventListener('alpine:init', () => {
             }
           }
         }
-      } catch {}
+      } catch (e) { console.warn('refreshLog failed:', e) }
     },
 
     // Replace 0xABCDEF hex addresses with linked name annotations
@@ -365,9 +365,9 @@ document.addEventListener('alpine:init', () => {
       const safe = msg.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
       return safe.replace(/0x[0-9a-fA-F]{6}/g, m => {
         const name = addrMap[m.toLowerCase()] || addrMap[m]
-        return name
-          ? `${m}<span class="blind-ref">(${name})</span>`
-          : m
+        if (!name) return m
+        const safeName = name.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')
+        return `${m}<span class="blind-ref">(${safeName})</span>`
       })
     },
 
@@ -376,7 +376,7 @@ document.addEventListener('alpine:init', () => {
       try {
         const d = await api('GET', '/elero/api/frequency')
         this.freq = { freq2: d.freq2, freq1: d.freq1, freq0: d.freq0 }
-      } catch {}
+      } catch (e) { console.warn('loadFrequency failed:', e) }
     },
 
     applyPreset(v) {
@@ -425,7 +425,7 @@ document.addEventListener('alpine:init', () => {
         const d = await api('GET', '/elero/api/packets')
         this.dumpActive  = d.dump_active
         this.dumpPackets = d.packets || []
-      } catch {}
+      } catch (e) { console.warn('refreshDump failed:', e) }
     },
 
     // ── Helpers exposed to template ───────────────────────────────────────────

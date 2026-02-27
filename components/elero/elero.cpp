@@ -18,7 +18,7 @@ static const char *TAG = "elero";
 static const uint8_t flash_table_encode[] = {0x08, 0x02, 0x0d, 0x01, 0x0f, 0x0e, 0x07, 0x05, 0x09, 0x0c, 0x00, 0x0a, 0x03, 0x04, 0x0b, 0x06};
 static const uint8_t flash_table_decode[] = {0x0a, 0x03, 0x01, 0x0c, 0x0d, 0x07, 0x0f, 0x06, 0x00, 0x08, 0x0b, 0x0e, 0x09, 0x02, 0x05, 0x04};
 
-const char *elero_state_to_string(uint8_t state) {
+const char *elero_state_to_string(uint8_t state, bool is_light) {
   switch (state) {
     case ELERO_STATE_TOP: return "top";
     case ELERO_STATE_BOTTOM: return "bottom";
@@ -33,7 +33,8 @@ const char *elero_state_to_string(uint8_t state) {
     case ELERO_STATE_MOVING_DOWN: return "moving_down";
     case ELERO_STATE_STOPPED: return "stopped";
     case ELERO_STATE_TOP_TILT: return "top_tilt";
-    case ELERO_STATE_BOTTOM_TILT: return "bottom_tilt"; // also ELERO_STATE_OFF (0x0f)
+    case ELERO_STATE_BOTTOM_TILT: // also ELERO_STATE_OFF (0x0f)
+      return is_light ? "off" : "bottom_tilt";
     case ELERO_STATE_ON: return "on";
     default: return "unknown";
   }
@@ -74,7 +75,6 @@ void Elero::loop() {
   // While in WAIT_DONE, received_ signals TX completion — not an RX packet.
   if (this->tx_phase_ == TxPhase::IDLE && this->received_) {
     ESP_LOGVV(TAG, "loop says \"received\"");
-    this->received_ = false;
     uint8_t len = this->read_status(CC1101_RXBYTES);
     if(len & 0x80) { // overflow - FIFO data unreliable
       ESP_LOGV(TAG, "Rx overflow, flushing FIFOs");
@@ -249,9 +249,10 @@ void Elero::write_cmd(uint8_t cmd) {
 
 bool Elero::wait_rx() {
   ESP_LOGVV(TAG, "wait_rx");
-  uint8_t timeout = 200;
+  uint16_t timeout = 500;
   while ((this->read_status(CC1101_MARCSTATE) != CC1101_MARCSTATE_RX) && (--timeout != 0)) {
     delay_microseconds_safe(200);
+    if (timeout % 50 == 0) yield();  // prevent WDT reset on ESP32
   }
 
   if(timeout > 0)
@@ -262,9 +263,10 @@ bool Elero::wait_rx() {
 
 bool Elero::wait_idle() {
   ESP_LOGVV(TAG, "wait_idle");
-  uint8_t timeout = 200;
+  uint16_t timeout = 500;
   while ((this->read_status(CC1101_MARCSTATE) != CC1101_MARCSTATE_IDLE) && (--timeout != 0)) {
     delay_microseconds_safe(200);
+    if (timeout % 50 == 0) yield();
   }
 
   if(timeout > 0)
@@ -548,7 +550,7 @@ void Elero::interpret_msg() {
   uint8_t dests_len;
 
   // Validate destination count before multiplication to prevent overflow
-  if (num_dests > 20) {
+  if (num_dests > ELERO_MAX_DESTINATIONS) {
     ESP_LOGE(TAG, "Received invalid packet: too many destinations (%d)", num_dests);
     ESP_LOGD(TAG, "  Raw [%d bytes]: %s", length + 3,
              format_hex_pretty(this->msg_rx_, length + 3).c_str());
@@ -662,7 +664,8 @@ void Elero::interpret_msg() {
     {
       auto text_it = this->address_to_text_sensor_.find(src);
       if (text_it != this->address_to_text_sensor_.end()) {
-        text_it->second->publish_state(elero_state_to_string(payload[6]));
+        bool light = this->is_light_configured(src);
+        text_it->second->publish_state(elero_state_to_string(payload[6], light));
       }
     }
 #endif

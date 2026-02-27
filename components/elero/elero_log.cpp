@@ -92,6 +92,18 @@ bool EleroEventLog::begin(uint16_t max_entries) {
   return true;
 }
 
+void EleroEventLog::close() {
+  if (this->file_ != nullptr) {
+    // Flush any pending header updates before closing
+    if (this->ready_ && this->append_count_ > 0) {
+      this->write_header_();
+    }
+    fclose(this->file_);
+    this->file_ = nullptr;
+  }
+  this->ready_ = false;
+}
+
 void EleroEventLog::create_file_() {
   this->file_ = fopen(LOG_PATH, "w+b");
   if (this->file_ == nullptr)
