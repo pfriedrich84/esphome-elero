@@ -64,6 +64,13 @@ void Elero::loop() {
     }
   }
 
+  // Periodically save blind states to flash (every 5 min, only if dirty)
+  if (this->states_dirty_ && (millis() - this->last_state_save_ms_ > STATE_SAVE_INTERVAL_MS)) {
+    this->save_blind_states();
+    this->states_dirty_ = false;
+    this->last_state_save_ms_ = millis();
+  }
+
   if(this->received_) {
     ESP_LOGVV(TAG, "loop says \"received\"");
     this->received_ = false;
@@ -125,6 +132,13 @@ void Elero::setup() {
   this->gdo0_pin_->attach_interrupt(Elero::interrupt, this, gpio::INTERRUPT_FALLING_EDGE);
   this->reset();
   this->init();
+
+  // Mount LittleFS and restore persisted data
+  if (this->storage_.begin()) {
+    this->storage_.load_runtime_blinds(this->runtime_blinds_);
+    this->load_packet_log();
+    this->load_blind_states();
+  }
 }
 
 void Elero::reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
@@ -674,6 +688,7 @@ void Elero::interpret_msg() {
       it->second.last_rssi = rssi;
       it->second.last_state = payload[6];
     }
+    this->states_dirty_ = true;
   } else {
     // Non-status packets: still update RSSI/last_seen for any known blind
     auto search = this->address_to_cover_mapping_.find(src);
@@ -902,6 +917,7 @@ bool Elero::adopt_blind(const DiscoveredBlind &discovered, const std::string &na
   this->runtime_blinds_.insert({discovered.blind_address, std::move(rb)});
   ESP_LOGI(TAG, "Adopted runtime blind 0x%06x as \"%s\"",
            discovered.blind_address, rb.name.c_str());
+  this->save_runtime_blinds();
   return true;
 }
 
@@ -910,6 +926,7 @@ bool Elero::remove_runtime_blind(uint32_t addr) {
   if (it != this->runtime_blinds_.end()) {
     ESP_LOGI(TAG, "Removed runtime blind 0x%06x", addr);
     this->runtime_blinds_.erase(it);
+    this->save_runtime_blinds();
     return true;
   }
   return false;
@@ -934,6 +951,7 @@ bool Elero::update_runtime_blind_settings(uint32_t addr, uint32_t open_dur_ms,
     it->second.open_duration_ms = open_dur_ms;
     it->second.close_duration_ms = close_dur_ms;
     it->second.poll_intvl_ms = poll_intvl_ms;
+    this->save_runtime_blinds();
     return true;
   }
   return false;
@@ -960,6 +978,62 @@ void Elero::append_log(uint8_t level, const char *tag, const char *fmt, ...) {
   } else {
     this->log_entries_[this->log_write_idx_] = entry;
     this->log_write_idx_ = (this->log_write_idx_ + 1) % ELERO_LOG_BUFFER_SIZE;
+  }
+}
+
+// ─── LittleFS persistence helpers ─────────────────────────────────────────
+
+void Elero::save_runtime_blinds() {
+  this->storage_.save_runtime_blinds(this->runtime_blinds_);
+}
+
+void Elero::save_packet_log() {
+  this->storage_.save_packets(this->raw_packets_, this->raw_packet_write_idx_);
+}
+
+void Elero::load_packet_log() {
+  this->storage_.load_packets(this->raw_packets_, this->raw_packet_write_idx_);
+}
+
+void Elero::save_blind_states() {
+  std::vector<PersistedBlindState> states;
+
+  // Configured covers
+  for (const auto &entry : this->address_to_cover_mapping_) {
+    PersistedBlindState s{};
+    s.blind_address = entry.first;
+    s.last_state = entry.second->get_last_state_raw();
+    s.last_rssi = entry.second->get_last_rssi();
+    s.timestamp_ms = entry.second->get_last_seen_ms();
+    states.push_back(s);
+  }
+
+  // Runtime adopted blinds
+  for (const auto &entry : this->runtime_blinds_) {
+    PersistedBlindState s{};
+    s.blind_address = entry.first;
+    s.last_state = entry.second.last_state;
+    s.last_rssi = entry.second.last_rssi;
+    s.timestamp_ms = entry.second.last_seen_ms;
+    states.push_back(s);
+  }
+
+  this->storage_.save_blind_states(states);
+}
+
+void Elero::load_blind_states() {
+  std::vector<PersistedBlindState> states;
+  if (!this->storage_.load_blind_states(states))
+    return;
+
+  for (const auto &s : states) {
+    // Restore state for runtime blinds
+    auto rb_it = this->runtime_blinds_.find(s.blind_address);
+    if (rb_it != this->runtime_blinds_.end()) {
+      rb_it->second.last_state = s.last_state;
+      rb_it->second.last_rssi = s.last_rssi;
+      rb_it->second.last_seen_ms = s.timestamp_ms;
+    }
   }
 }
 

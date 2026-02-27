@@ -1,7 +1,7 @@
 #pragma once
 
 #include "esphome/core/component.h"
-#include "esphome/core/preferences.h"
+#include "elero_storage.h"
 #include "esphome/components/spi/spi.h"
 #include "cc1101.h"
 #include <string>
@@ -269,6 +269,19 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void set_log_capture(bool en) { log_capture_ = en; }
   bool is_log_capture_active() const { return log_capture_; }
 
+  // LittleFS persistent storage
+  EleroStorage &get_storage() { return storage_; }
+  /// Save all runtime-adopted blinds to flash.
+  void save_runtime_blinds();
+  /// Flush the current RF packet ring buffer to flash (on-demand).
+  void save_packet_log();
+  /// Load previously saved RF packets into the in-memory ring buffer.
+  void load_packet_log();
+  /// Collect and persist the last-known state of every known blind.
+  void save_blind_states();
+  /// Restore persisted blind states after boot (called from setup).
+  void load_blind_states();
+
   void set_gdo0_pin(InternalGPIOPin *pin) { gdo0_pin_ = pin; }
   void set_freq0(uint8_t freq) { freq0_ = freq; }
   void set_freq1(uint8_t freq) { freq1_ = freq; }
@@ -322,6 +335,11 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   bool log_capture_{false};
   std::vector<LogEntry> log_entries_;
   uint8_t log_write_idx_{0};
+  // LittleFS persistent storage
+  EleroStorage storage_;
+  uint32_t last_state_save_ms_{0};
+  static const uint32_t STATE_SAVE_INTERVAL_MS = 300000;  // save blind states every 5 min
+  bool states_dirty_{false};
 };
 
 }  // namespace elero
