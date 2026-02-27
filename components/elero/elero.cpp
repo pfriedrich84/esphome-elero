@@ -18,7 +18,7 @@ static const char *TAG = "elero";
 static const uint8_t flash_table_encode[] = {0x08, 0x02, 0x0d, 0x01, 0x0f, 0x0e, 0x07, 0x05, 0x09, 0x0c, 0x00, 0x0a, 0x03, 0x04, 0x0b, 0x06};
 static const uint8_t flash_table_decode[] = {0x0a, 0x03, 0x01, 0x0c, 0x0d, 0x07, 0x0f, 0x06, 0x00, 0x08, 0x0b, 0x0e, 0x09, 0x02, 0x05, 0x04};
 
-const char *elero_state_to_string(uint8_t state) {
+const char *elero_state_to_string(uint8_t state, bool is_light) {
   switch (state) {
     case ELERO_STATE_TOP: return "top";
     case ELERO_STATE_BOTTOM: return "bottom";
@@ -33,7 +33,8 @@ const char *elero_state_to_string(uint8_t state) {
     case ELERO_STATE_MOVING_DOWN: return "moving_down";
     case ELERO_STATE_STOPPED: return "stopped";
     case ELERO_STATE_TOP_TILT: return "top_tilt";
-    case ELERO_STATE_BOTTOM_TILT: return "bottom_tilt"; // also ELERO_STATE_OFF (0x0f)
+    case ELERO_STATE_BOTTOM_TILT: // also ELERO_STATE_OFF (0x0f)
+      return is_light ? "off" : "bottom_tilt";
     case ELERO_STATE_ON: return "on";
     default: return "unknown";
   }
@@ -659,7 +660,8 @@ void Elero::interpret_msg() {
     {
       auto text_it = this->address_to_text_sensor_.find(src);
       if (text_it != this->address_to_text_sensor_.end()) {
-        text_it->second->publish_state(elero_state_to_string(payload[6]));
+        bool light = this->is_light_configured(src);
+        text_it->second->publish_state(elero_state_to_string(payload[6], light));
       }
     }
 #endif
