@@ -54,6 +54,16 @@ elero:
 
 **Speicherverbrauch:** 1000 Einträge ≈ 64 KB auf LittleFS. Die Einträge werden als Ringpuffer gespeichert — bei vollem Puffer werden die ältesten Einträge überschrieben.
 
+**Partition-Konfiguration:** Die Komponente richtet die LittleFS-Partition **automatisch** ein — eine manuelle Partition-Konfiguration ist für Standardboards (4 MB Flash) **nicht erforderlich**:
+- **Arduino-Framework**: `board_build.partitions = default.csv` (enthält SPIFFS-Partition, in arduino-esp32 enthalten)
+- **ESP-IDF-Framework**: Generiert `elero_partitions.csv` neben der YAML-Datei und setzt `board_build.partitions` automatisch
+
+Bei Boards mit **8 MB oder 16 MB Flash** muss die Partition-Tabelle überschrieben werden:
+```yaml
+platformio_options:
+  board_build.partitions: default_8MB.csv   # Arduino; oder eigene CSV für IDF
+```
+
 ### Frequenz-Varianten
 
 | Variante | freq0 | freq1 | freq2 | Hinweis |
