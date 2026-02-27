@@ -78,12 +78,12 @@ void Elero::loop() {
     this->last_state_save_ms_ = millis();
   }
 
-  if(this->received_) {
+  if(this->received_ && this->tx_phase_ == TxPhase::IDLE) {
     ESP_LOGD(TAG, "RF packet received, reading FIFO");
     uint8_t len = this->read_status(CC1101_RXBYTES);
     if(len & 0x80) { // overflow - FIFO data unreliable
       ESP_LOGV(TAG, "Rx overflow, flushing FIFOs");
-      this->flush_and_rx();
+      this->start_flush_rx_();
       return;
     }
     if(len & 0x7F) { // bytes available
@@ -313,6 +313,12 @@ bool Elero::transmit() {
   return true;
 }
 
+void Elero::start_flush_rx_() {
+  this->write_cmd(CC1101_SIDLE);
+  this->tx_deadline_ms_ = millis() + 100;
+  this->tx_phase_ = TxPhase::FLUSH_RX;
+}
+
 void Elero::advance_tx_() {
   switch (this->tx_phase_) {
     case TxPhase::IDLE:
@@ -335,8 +341,7 @@ void Elero::advance_tx_() {
       } else if (millis() > this->tx_deadline_ms_) {
         ESP_LOGE(TAG, "Timed out waiting for Idle: 0x%02x",
                  this->read_status(CC1101_MARCSTATE));
-        this->flush_and_rx();
-        this->tx_phase_ = TxPhase::IDLE;
+        this->start_flush_rx_();
       }
       break;
 
@@ -354,13 +359,11 @@ void Elero::advance_tx_() {
           ESP_LOGE(TAG, "Error transferring, %d bytes left in buffer", bytes);
         else
           ESP_LOGD(TAG, "Transmission successful (fast)");
-        this->flush_and_rx();
-        this->tx_phase_ = TxPhase::IDLE;
+        this->start_flush_rx_();
       } else if (millis() > this->tx_deadline_ms_) {
         ESP_LOGE(TAG, "Timed out waiting for TX: 0x%02x",
                  this->read_status(CC1101_MARCSTATE));
-        this->flush_and_rx();
-        this->tx_phase_ = TxPhase::IDLE;
+        this->start_flush_rx_();
       }
       break;
 
@@ -371,12 +374,27 @@ void Elero::advance_tx_() {
           ESP_LOGE(TAG, "Error transferring, %d bytes left in buffer", bytes);
         else
           ESP_LOGD(TAG, "Transmission successful");
-        this->flush_and_rx();  // return chip to clean RX state and clear received_
-        this->tx_phase_ = TxPhase::IDLE;
+        this->start_flush_rx_();  // return chip to clean RX state
       } else if (millis() > this->tx_deadline_ms_) {
         ESP_LOGE(TAG, "Timed out waiting for TX Done: 0x%02x",
                  this->read_status(CC1101_MARCSTATE));
-        this->flush_and_rx();
+        this->start_flush_rx_();
+      }
+      break;
+
+    case TxPhase::FLUSH_RX:
+      if (this->read_status(CC1101_MARCSTATE) == CC1101_MARCSTATE_IDLE) {
+        this->write_cmd(CC1101_SFRX);
+        this->write_cmd(CC1101_SFTX);
+        this->write_cmd(CC1101_SRX);
+        this->received_ = false;
+        this->tx_phase_ = TxPhase::IDLE;
+      } else if (millis() > this->tx_deadline_ms_) {
+        ESP_LOGE(TAG, "FLUSH_RX: timed out waiting for IDLE: 0x%02x",
+                 this->read_status(CC1101_MARCSTATE));
+        // Hard reset as last resort
+        this->write_cmd(CC1101_SRES);
+        this->received_ = false;
         this->tx_phase_ = TxPhase::IDLE;
       }
       break;
@@ -725,6 +743,15 @@ void Elero::interpret_msg() {
       it->second.last_seen_ms = millis();
       it->second.last_rssi = rssi;
       it->second.last_state = payload[6];
+      // Flush command queue on error states to prevent stale commands
+      if (payload[6] == ELERO_STATE_BLOCKING ||
+          payload[6] == ELERO_STATE_OVERHEATED ||
+          payload[6] == ELERO_STATE_TIMEOUT) {
+        ESP_LOGW(TAG, "Runtime blind 0x%06x reports %s — flushing command queue",
+                 src, elero_state_to_string(payload[6]));
+        while (!it->second.command_queue.empty())
+          it->second.command_queue.pop();
+      }
     }
     this->states_dirty_ = true;
   } else {
