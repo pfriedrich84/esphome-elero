@@ -378,6 +378,7 @@ Key behaviors:
 - Persists runtime-adopted blinds to flash so they survive reboots (saved on adopt/remove/settings change)
 - Optionally persists the RF packet dump ring buffer on demand (not every packet, to reduce flash wear)
 - Persists last-known blind states periodically and on significant state changes
+- Mounting is graceful — if the partition is absent or mount fails, `mounted_` stays `false` and all storage operations become no-ops (no crash)
 
 **`PersistedBlindState`** — compact state snapshot saved per blind address:
 ```cpp
@@ -572,6 +573,11 @@ elero:
 
 Default frequency registers (`freq2=0x21, freq1=0x71, freq0=0x7a`) correspond to **868.35 MHz**. Use `freq0=0xc0` for 868.95 MHz variants.
 
+**LittleFS / partition table** — handled automatically by `__init__.py`:
+- **Arduino framework**: adds the `LittleFS` library and sets `board_build.partitions = default.csv` (bundled with arduino-esp32; provides a `spiffs` partition on standard 4 MB boards). For 8 MB / 16 MB flash boards override via `platformio_options: board_build.partitions: default_8MB.csv`.
+- **ESP-IDF framework**: adds `joltwallet/esp_littlefs@^1.10.2` as a lib dependency and generates `elero_partitions.csv` (4 MB OTA + SPIFFS layout) next to the user's YAML config, then sets `board_build.partitions` to its absolute path.
+- Users can always override the partition table with `platformio_options: board_build.partitions:` in their ESPHome YAML — user options are processed last and take precedence.
+
 SPI bus must be declared separately:
 ```yaml
 spi:
@@ -765,6 +771,11 @@ There are no automated tests in this repository. Validation is done manually on 
 - **Light dimming with `dim_duration: 0s`**: Results in `ON_OFF` color mode — no brightness slider is exposed to Home Assistant. Set a non-zero value only for dimmable receivers.
 - **Command queue cap**: Each cover/light allows at most `ELERO_MAX_COMMAND_QUEUE` (10) queued commands to guard against OOM. Commands sent when the queue is full are silently dropped — avoid flooding the queue.
 - **EleroLight feedback loop**: The `ignore_write_state_` flag prevents the light from re-sending a command when its own `set_rx_state()` updates the light's internal state. Do not remove this guard.
+- **LittleFS partition (8 MB / 16 MB flash boards)**: The component automatically selects `default.csv` (Arduino) or generates `elero_partitions.csv` (ESP-IDF) for standard 4 MB boards. If your board has more flash and ESPHome rejects the partition table size, override it:
+  ```yaml
+  platformio_options:
+    board_build.partitions: default_8MB.csv   # Arduino; or your own CSV for IDF
+  ```
 
 ---
 
