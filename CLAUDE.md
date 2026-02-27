@@ -29,6 +29,7 @@ external_components:
 - Realtime log capture accessible via REST API
 - Runtime CC1101 frequency switching
 - Optional web UI served at `http://<device-ip>/elero` for discovery and YAML generation
+- Optional persistent event logging (LittleFS ring buffer) for RF packets, state transitions, and commands
 
 **Upstream credits:**
 - Encryption/decryption: [QuadCorei8085/elero_protocol](https://github.com/QuadCorei8085/elero_protocol) (MIT)
@@ -47,17 +48,21 @@ esphome-elero/
 ├── docs/
 │   ├── INSTALLATION.md                # Step-by-step hardware and software setup
 │   ├── CONFIGURATION.md               # Full parameter reference
-│   └── examples/                      # Additional YAML examples
+│   └── examples/                      # Additional YAML examples (currently empty)
 └── components/
     ├── elero/                         # Main hub component
     │   ├── __init__.py                # ESPHome component schema & code-gen (hub)
-    │   ├── elero.h                    # C++ hub class header (~329 lines)
-    │   ├── elero.cpp                  # C++ RF protocol implementation (~967 lines)
+    │   ├── elero.h                    # C++ hub class header
+    │   ├── elero.cpp                  # C++ RF protocol implementation (~1065 lines)
+    │   ├── elero_log.h                # Persistent event log header (EleroEventLog, PersistentLogEntry)
+    │   ├── elero_log.cpp              # LittleFS ring buffer implementation
+    │   ├── elero_storage.h            # LittleFS persistent storage header (EleroStorage)
+    │   ├── elero_storage.cpp          # Persistent storage: runtime blinds, RF packets, blind states
     │   ├── cc1101.h                   # CC1101 register map & command strobes
     │   ├── cover/                     # Cover (blind) platform
     │   │   ├── __init__.py            # Cover schema & code-gen
     │   │   ├── EleroCover.h           # Cover class header
-    │   │   └── EleroCover.cpp         # Cover logic, position tracking (~349 lines)
+    │   │   └── EleroCover.cpp         # Cover logic, position tracking (~360 lines)
     │   ├── light/                     # Light (dimmer) platform
     │   │   ├── __init__.py            # Light schema & code-gen
     │   │   ├── EleroLight.h           # Light class header
@@ -73,7 +78,7 @@ esphome-elero/
     └── elero_web/                     # Optional web UI component
         ├── __init__.py
         ├── elero_web_server.h         # Web server header
-        ├── elero_web_server.cpp       # REST API + CORS (~878 lines)
+        ├── elero_web_server.cpp       # REST API + CORS (~930 lines)
         ├── elero_web_ui.h             # Inline web UI HTML/JS
         ├── frontend/                  # Build-time web UI source
         │   ├── index.html
@@ -120,13 +125,15 @@ The `EleroBlindBase` and `EleroLightBase` abstract classes decouple the hub (`El
 
 ### Data flow
 
-1. `Elero::setup()` configures CC1101 registers over SPI and attaches a GPIO interrupt on `gdo0_pin`.
+1. `Elero::setup()` configures CC1101 registers over SPI, mounts LittleFS storage, and attaches a GPIO interrupt on `gdo0_pin`.
 2. When the CC1101 signals a received packet (GDO0 interrupt), `Elero::interrupt()` sets `received_ = true`.
 3. `Elero::loop()` detects `received_`, reads the FIFO, decodes and decrypts the packet, then:
    - If it is a **status packet**, dispatches the state to the matching `EleroBlindBase` / `EleroLightBase` via `set_rx_state()`.
    - If it is a **command packet** from a physical remote, calls `schedule_immediate_poll()` on the targeted device so the hub can observe the new state quickly.
-4. `EleroCover::loop()` handles polling timers, position recomputation, and drains the command queue by calling `parent_->send_command()`.
-5. `EleroLight::loop()` handles dimming timers and drains its command queue similarly.
+4. Transmissions use a **non-blocking TX state machine** (`TxPhase` enum: `IDLE → WAIT_CC_IDLE → WAIT_CC_TX → WAIT_DONE`). `Elero::advance_tx_()` is called from `loop()` each tick and polls CC1101 state without spin-blocking the main loop.
+5. `EleroCover::loop()` handles polling timers, position recomputation, and drains the command queue by calling `parent_->send_command()`.
+6. `EleroLight::loop()` handles dimming timers and drains its command queue similarly.
+7. Blind states are periodically persisted to LittleFS (every `STATE_SAVE_INTERVAL_MS` = 5 min) and restored on boot.
 
 ---
 
@@ -140,16 +147,19 @@ The `EleroBlindBase` and `EleroLightBase` abstract classes decouple the hub (`El
 Critical public API:
 - `register_cover(EleroBlindBase*)` — called by each `EleroCover` at setup
 - `register_light(EleroLightBase*)` — called by each `EleroLight` at setup
-- `send_command(t_elero_command*)` — encodes, encrypts, and transmits a command
+- `send_command(t_elero_command*)` — encodes, encrypts, and transmits a command via the non-blocking TX state machine
 - `start_scan()` / `stop_scan()` / `is_scanning()` — toggle RF discovery mode
-- `get_discovered_blinds()` / `get_discovered_count()` — discovered device info
-- `adopt_blind(uint32_t addr)` — promote a discovered blind into a runtime-managed blind
-- `remove_runtime_blind(uint32_t addr)` — drop a runtime-adopted blind
+- `get_discovered_blinds()` / `get_discovered_count()` / `clear_discovered()` — discovered device info
+- `adopt_blind(const DiscoveredBlind&, const std::string& name)` — promote a discovered blind into a runtime-managed blind (persisted to flash)
+- `remove_runtime_blind(uint32_t addr)` — drop a runtime-adopted blind (persisted to flash)
 - `send_runtime_command(uint32_t addr, uint8_t cmd)` — send a command to a runtime blind
+- `update_runtime_blind_settings(uint32_t addr, uint32_t open_dur_ms, uint32_t close_dur_ms, uint32_t poll_intvl_ms)` — update timing/poll settings for a runtime blind (persisted to flash)
 - `register_rssi_sensor(uint32_t addr, sensor::Sensor*)` — link RSSI sensor to a blind address
 - `register_text_sensor(uint32_t addr, text_sensor::TextSensor*)` — link text sensor to a blind address
 - `start_packet_dump()` / `stop_packet_dump()` — toggle raw RF packet capture (ring buffer)
-- `append_log(level, tag, msg)` / `get_log_entries()` — web UI log capture helpers
+- `save_runtime_blinds()` / `save_packet_log()` / `load_packet_log()` — on-demand LittleFS persistence
+- `save_blind_states()` / `load_blind_states()` — persist/restore last-known state of every known blind
+- `append_log(level, tag, msg)` / `get_log_entries()` / `set_log_capture(bool)` — web UI in-memory log helpers
 - `interrupt(Elero *arg)` — static ISR, sets `received_` flag
 
 Key constants (defined in `elero.h`):
@@ -159,11 +169,17 @@ Key constants (defined in `elero.h`):
 | `ELERO_MAX_PACKET_SIZE` | 57 | Maximum RF packet length (FCC spec) |
 | `ELERO_POLL_INTERVAL_MOVING` | 2000 ms | Status poll while blind is moving |
 | `ELERO_TIMEOUT_MOVEMENT` | 120 000 ms | Give up movement tracking after 2 min |
+| `ELERO_POST_MOVEMENT_POLL_DELAY` | 5000 ms | Extra poll 5 s after travel time elapses |
 | `ELERO_SEND_RETRIES` | 3 | Command retry count |
 | `ELERO_SEND_PACKETS` | 2 | Packets sent per command |
 | `ELERO_DELAY_SEND_PACKETS` | 50 ms | Delay between packet repeats |
 | `ELERO_MAX_DISCOVERED` | 20 | Max blinds tracked in scan mode |
+| `ELERO_MAX_RAW_PACKETS` | 50 | Max entries in the packet dump ring buffer |
+| `ELERO_MAX_DESTINATIONS` | 20 | Max destination addresses per RF packet |
 | `ELERO_MAX_COMMAND_QUEUE` | 10 | Max queued commands per blind (OOM guard) |
+| `ELERO_MSG_LENGTH` | 0x1d | Fixed TX message length |
+| `ELERO_CRYPTO_MULT` | 0x708f | Encryption multiplier |
+| `ELERO_CRYPTO_MASK` | 0xffff | 16-bit encryption mask |
 
 State constants (`ELERO_STATE_*`):
 
@@ -183,8 +199,20 @@ State constants (`ELERO_STATE_*`):
 | `ELERO_STATE_MOVING_DOWN` | 0x0b | Moving down |
 | `ELERO_STATE_STOPPED` | 0x0d | Stopped at intermediate position |
 | `ELERO_STATE_TOP_TILT` | 0x0e | Open and tilted |
-| `ELERO_STATE_BOTTOM_TILT` | 0x0f | Closed and tilted (also maps to light OFF) |
+| `ELERO_STATE_BOTTOM_TILT` | 0x0f | Closed and tilted |
+| `ELERO_STATE_OFF` | 0x0f | Light off — alias for `ELERO_STATE_BOTTOM_TILT` (protocol reuses same byte) |
 | `ELERO_STATE_ON` | 0x10 | Light on |
+
+**`TxPhase`** — non-blocking TX state machine (replaces blocking spin-loops):
+
+```cpp
+enum class TxPhase : uint8_t {
+  IDLE,         // No TX in progress; ready to accept new commands
+  WAIT_CC_IDLE, // SIDLE sent; polling MARCSTATE until CC1101 reaches IDLE
+  WAIT_CC_TX,   // STX sent; polling MARCSTATE until CC1101 enters TX
+  WAIT_DONE,    // TX active; waiting for GDO0 TX-end signal (received_ flag)
+};
+```
 
 Key internal data structures:
 
@@ -231,26 +259,28 @@ struct RuntimeBlind {
 };
 ```
 
-**`RawPacket`** — single captured RF packet (packet dump mode, ring buffer of 50):
+**`RawPacket`** — single captured RF packet (packet dump mode, ring buffer of `ELERO_MAX_RAW_PACKETS` = 50):
 ```cpp
 struct RawPacket {
-  uint32_t timestamp_ms;
-  uint8_t  fifo_len;
-  uint8_t  data[64];        // Raw CC1101 FIFO bytes
-  bool     valid;
-  char     reject_reason[32];
+  uint32_t timestamp_ms;            // millis() when captured
+  uint8_t  fifo_len;                // bytes actually read from CC1101 FIFO
+  uint8_t  data[CC1101_FIFO_LENGTH]; // raw CC1101 FIFO bytes
+  bool     valid;                   // true = passed validation and decoded
+  char     reject_reason[32];       // empty when valid
 };
 ```
 
-**`LogEntry`** — captured log message (circular buffer for web UI):
+**`LogEntry`** — in-memory captured log message (circular buffer, 200 entries, for the web UI `/elero/api/logs` endpoint):
 ```cpp
-struct LogEntry {
+struct LogEntry {       // defined inside class Elero
   uint32_t timestamp_ms;
   uint8_t  level;
   char     tag[24];
   char     message[160];
 };
 ```
+
+> **Note:** `LogEntry` is the **in-memory** log buffer (volatile, lost on reboot). The **persistent** log uses `PersistentLogEntry` (see `elero_log.h` below). Both are exposed through `/elero/api/logs`, with the persistent variant taking precedence when `logging: enable: true` is set.
 
 ### `components/elero/cover/EleroCover.h` / `EleroCover.cpp`
 
@@ -277,6 +307,108 @@ Key behaviors:
 - Uses an `ignore_write_state_` flag to break feedback loops when `set_rx_state()` updates the internal state
 - Shares the same RF protocol and `t_elero_command` structure as covers
 - Polls blind status when `command_check: 0x00` is set (optional; omit for lights that do not respond)
+
+### `components/elero/elero_log.h` / `elero_log.cpp`
+
+**Class:** `EleroEventLog`
+**Namespace:** `esphome::elero`
+
+Key behaviors:
+- LittleFS-based persistent ring buffer storing 64-byte fixed-size `PersistentLogEntry` records
+- Logs RF received packets, cover state transitions, commands sent, and system events
+- Survives reboots — entries persist on flash at `/littlefs/elero_events.bin`
+- Header flush batching (every 10 appends via `HEADER_FLUSH_INTERVAL`) reduces flash wear
+- Enabled via `logging: enable: true` in the hub config; disabled by default
+- File layout: 64-byte `PersistentLogHeader` + N × 64-byte `PersistentLogEntry` records
+
+**`EleroEventType`** — event type codes stored in each log entry:
+```cpp
+enum EleroEventType : uint8_t {
+  EVENT_RF_RECEIVED  = 0x01,  // RF packet decoded from a blind
+  EVENT_STATE_CHANGE = 0x02,  // Cover state transition (old -> new)
+  EVENT_COMMAND_SENT = 0x03,  // Command transmitted to a blind
+  EVENT_SYSTEM       = 0x04,  // System event (boot, error, scan)
+};
+```
+
+**`PersistentLogEntry`** — 64-byte packed struct (compile-time size assertion enforced):
+```cpp
+struct __attribute__((packed)) PersistentLogEntry {
+  uint32_t sequence;        // Monotonic sequence number
+  uint32_t timestamp_ms;    // millis() at event time
+  uint8_t  event_type;      // EleroEventType
+  uint32_t blind_address;   // 3-byte blind address (0 for system events)
+  uint8_t  data1;           // old_state / state_byte / cmd_byte
+  uint8_t  data2;           // new_state / 0 / 0
+  int8_t   rssi;            // RSSI in dBm (0 if N/A)
+  uint8_t  operation;       // Cover operation (0=idle,1=opening,2=closing)
+  uint16_t position_x100;   // Position * 100 (0-10000); 0xFFFF if unknown
+  char     message[45];     // Human-readable summary, null-terminated
+};  // total: 64 bytes
+```
+
+**`PersistentLogHeader`** — 64-byte file header at offset 0:
+```cpp
+struct __attribute__((packed)) PersistentLogHeader {
+  uint32_t magic;          // 0x454C4F47 ("ELOG")
+  uint16_t version;        // Format version (1)
+  uint16_t max_entries;    // Max entries in ring buffer
+  uint32_t write_idx;      // Next write index (ring buffer slot)
+  uint32_t total_written;  // Monotonic total entries ever written
+  uint8_t  reserved[48];   // Future use, zero-filled
+};  // total: 64 bytes
+```
+
+**Convenience logging methods** on `EleroEventLog`:
+```cpp
+void log_rf_received(uint32_t blind_addr, uint8_t state_byte, int8_t rssi);
+void log_state_change(uint32_t blind_addr, uint8_t old_state, uint8_t new_state,
+                      uint8_t operation, float position);
+void log_command_sent(uint32_t blind_addr, uint8_t cmd_byte);
+void log_system(const char *message);
+```
+
+### `components/elero/elero_storage.h` / `elero_storage.cpp`
+
+**Class:** `EleroStorage`
+**Namespace:** `esphome::elero`
+
+Key behaviors:
+- Mounts LittleFS partition once during `Elero::setup()` via `begin()`
+- Persists runtime-adopted blinds to flash so they survive reboots (saved on adopt/remove/settings change)
+- Optionally persists the RF packet dump ring buffer on demand (not every packet, to reduce flash wear)
+- Persists last-known blind states periodically and on significant state changes
+- Mounting is graceful — if the partition is absent or mount fails, `mounted_` stays `false` and all storage operations become no-ops (no crash)
+
+**`PersistedBlindState`** — compact state snapshot saved per blind address:
+```cpp
+struct PersistedBlindState {
+  uint32_t blind_address;
+  uint8_t  last_state;
+  float    last_rssi;
+  uint32_t timestamp_ms;
+};
+```
+
+**`RuntimeBlindRecord`** — fixed-size serialisation of `RuntimeBlind` for LittleFS:
+```cpp
+struct RuntimeBlindRecord {
+  uint32_t blind_address, remote_address;
+  uint8_t  channel, pck_inf[2], hop;
+  uint8_t  payload_1, payload_2;
+  char     name[32];
+  uint32_t open_duration_ms, close_duration_ms, poll_intvl_ms;
+  uint8_t  last_state, cmd_counter;
+};
+```
+
+**Storage magic numbers** (detect corrupt/wrong files):
+
+| Constant | Value | File |
+|---|---|---|
+| `STORAGE_MAGIC_BLINDS` | `0x454C4252` ("ELBR") | Runtime blinds |
+| `STORAGE_MAGIC_PACKETS` | `0x454C504B` ("ELPK") | RF packet dump |
+| `STORAGE_MAGIC_STATES` | `0x454C5354` ("ELST") | Blind state snapshots |
 
 ### `components/elero_web/elero_web_server.h` / `elero_web_server.cpp`
 
@@ -326,6 +458,7 @@ All endpoints are served at `http://<device-ip>/elero`. A 503 response is return
 | `/elero/api/logs/clear` | POST | Clear captured logs |
 | `/elero/api/logs/capture/start` | POST | Start capturing logs |
 | `/elero/api/logs/capture/stop` | POST | Stop capturing logs |
+| `/elero/api/logs/status` | GET | Log status (persistent mode, entry count, max entries) |
 | `/elero/api/dump/start` | POST | Start RF packet dump |
 | `/elero/api/dump/stop` | POST | Stop RF packet dump |
 | `/elero/api/packets` | GET | Recent captured RF packets |
@@ -343,8 +476,23 @@ All endpoints are served at `http://<device-ip>/elero`. A 503 response is return
 | Code | Meaning |
 |---|---|
 | 200 | Success |
-| 409 | Conflict (e.g., trying to start scan when one is already running) |
-| 503 | Service Unavailable (returned when web UI is disabled via switch) |
+| 400 | Bad Request — missing or invalid parameters (e.g., missing `cmd`, invalid `since` value) |
+| 404 | Not Found — blind address not found (neither configured nor adopted) |
+| 409 | Conflict — e.g., starting scan when already running |
+| 500 | Internal Server Error — event log not ready |
+| 503 | Service Unavailable — web UI disabled via the `elero_web` switch |
+
+Error responses are returned as JSON: `{"error": "description"}`
+
+**Parameter format for POST endpoints:**
+
+POST endpoints accept parameters as **URL query parameters** (not JSON body). Example:
+```
+POST /elero/api/covers/0xa831e5/command?cmd=up
+POST /elero/api/covers/0xa831e5/settings?open_duration=25000&close_duration=22000&poll_interval=300000
+POST /elero/api/frequency/set?freq2=0x21&freq1=0x71&freq0=0x7a
+POST /elero/api/ui/enable?enabled=true
+```
 
 ---
 
@@ -418,9 +566,17 @@ elero:
   freq0: 0x7a            # CC1101 FREQ0 register (optional, default 868.35 MHz)
   freq1: 0x71            # CC1101 FREQ1 register
   freq2: 0x21            # CC1101 FREQ2 register
+  logging:               # Optional persistent event log
+    enable: true         # default: true when section present
+    max_entries: 1000    # default: 1000, range 100-5000
 ```
 
 Default frequency registers (`freq2=0x21, freq1=0x71, freq0=0x7a`) correspond to **868.35 MHz**. Use `freq0=0xc0` for 868.95 MHz variants.
+
+**LittleFS / partition table** — handled automatically by `__init__.py`:
+- **Arduino framework**: adds the `LittleFS` library and sets `board_build.partitions = default.csv` (bundled with arduino-esp32; provides a `spiffs` partition on standard 4 MB boards). For 8 MB / 16 MB flash boards override via `platformio_options: board_build.partitions: default_8MB.csv`.
+- **ESP-IDF framework**: adds `https://github.com/joltwallet/esp_littlefs.git` as a lib dependency and generates `elero_partitions.csv` (4 MB OTA + SPIFFS layout) next to the user's YAML config, then sets `board_build.partitions` to its absolute path.
+- Users can always override the partition table with `platformio_options: board_build.partitions:` in their ESPHome YAML — user options are processed last and take precedence.
 
 SPI bus must be declared separately:
 ```yaml
@@ -615,6 +771,11 @@ There are no automated tests in this repository. Validation is done manually on 
 - **Light dimming with `dim_duration: 0s`**: Results in `ON_OFF` color mode — no brightness slider is exposed to Home Assistant. Set a non-zero value only for dimmable receivers.
 - **Command queue cap**: Each cover/light allows at most `ELERO_MAX_COMMAND_QUEUE` (10) queued commands to guard against OOM. Commands sent when the queue is full are silently dropped — avoid flooding the queue.
 - **EleroLight feedback loop**: The `ignore_write_state_` flag prevents the light from re-sending a command when its own `set_rx_state()` updates the light's internal state. Do not remove this guard.
+- **LittleFS partition (8 MB / 16 MB flash boards)**: The component automatically selects `default.csv` (Arduino) or generates `elero_partitions.csv` (ESP-IDF) for standard 4 MB boards. If your board has more flash and ESPHome rejects the partition table size, override it:
+  ```yaml
+  platformio_options:
+    board_build.partitions: default_8MB.csv   # Arduino; or your own CSV for IDF
+  ```
 
 ---
 

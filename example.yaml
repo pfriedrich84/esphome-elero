@@ -12,6 +12,10 @@ elero:
   freq0: 0xc0
   freq1: 0x71
   freq2: 0x21
+  # Persistent event logging (survives reboot, stored on LittleFS)
+  # logging:
+  #   enable: true           # default: true when logging section is present
+  #   max_entries: 1000      # default: 1000, range 100-5000 (~64KB at default)
 
 cover:
   - platform: elero

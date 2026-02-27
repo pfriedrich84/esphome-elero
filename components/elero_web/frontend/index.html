@@ -173,19 +173,36 @@
     <section x-show="tab==='log'" x-cloak>
       <div class="card">
         <div class="card-header">
-          <div class="log-controls">
-            <span class="status-dot" :class="logCapture ? 'scanning' : 'idle'"></span>
-            <button class="btn btn-sm btn-primary" @click="startCapture()" :disabled="logCapture">Start</button>
-            <button class="btn btn-sm btn-danger"  @click="stopCapture()"  :disabled="!logCapture">Stop</button>
-            Level:
-            <select x-model="logLevel" class="level-select">
-              <option value="5">VERBOSE</option>
-              <option value="4">DEBUG</option>
-              <option value="3" selected>INFO</option>
-              <option value="2">WARN</option>
-              <option value="1">ERROR</option>
-            </select>
-          </div>
+          <!-- Persistent logging mode -->
+          <template x-if="logPersistent">
+            <div class="log-controls">
+              <span class="status-dot scanning"></span>
+              <span>Persistent logging active</span>
+              <select x-model="logFilter" class="level-select">
+                <option value="all">All events</option>
+                <option value="state_change">State changes</option>
+                <option value="rf_received">RF packets</option>
+                <option value="command_sent">Commands</option>
+                <option value="system">System</option>
+              </select>
+            </div>
+          </template>
+          <!-- Legacy capture mode -->
+          <template x-if="!logPersistent">
+            <div class="log-controls">
+              <span class="status-dot" :class="logCapture ? 'scanning' : 'idle'"></span>
+              <button class="btn btn-sm btn-primary" @click="startCapture()" :disabled="logCapture">Start</button>
+              <button class="btn btn-sm btn-danger"  @click="stopCapture()"  :disabled="!logCapture">Stop</button>
+              Level:
+              <select x-model="logLevel" class="level-select">
+                <option value="5">VERBOSE</option>
+                <option value="4">DEBUG</option>
+                <option value="3" selected>INFO</option>
+                <option value="2">WARN</option>
+                <option value="1">ERROR</option>
+              </select>
+            </div>
+          </template>
           <div>
             <label class="check-label">
               <input type="checkbox" x-model="logAutoScroll"> Auto-scroll
@@ -195,14 +212,38 @@
         </div>
         <div class="log-box" id="log-box">
           <template x-if="filteredLog.length === 0">
-            <div class="empty">No log entries. <span x-show="!logCapture">Start capture first.</span></div>
+            <div class="empty">
+              <template x-if="logPersistent">
+                <span>No events recorded yet. Operate a blind to generate events.</span>
+              </template>
+              <template x-if="!logPersistent">
+                <span>No log entries. <span x-show="!logCapture">Start capture first.</span></span>
+              </template>
+            </div>
           </template>
-          <template x-for="e in filteredLog" :key="e.t+'_'+e.idx">
-            <div class="log-line" :class="'log-'+e.level_str">
-              <span class="log-ts" x-text="fmtTs(e.t)"></span>
-              <span class="log-level" x-text="e.level_str.toUpperCase().padEnd(5)"></span>
-              <span class="log-tag" x-text="e.tag"></span>
-              <span class="log-msg" x-html="linkAddrs(e.msg)"></span>
+          <!-- Persistent log entries (event-type based) -->
+          <template x-if="logPersistent">
+            <div>
+              <template x-for="e in filteredLog" :key="e.seq+'_'+e.idx">
+                <div class="log-line" :class="'log-evt-'+e.type">
+                  <span class="log-ts" x-text="fmtTs(e.t)"></span>
+                  <span class="log-level" x-text="(e.type||'').replace('_',' ').toUpperCase().substring(0,8).padEnd(8)"></span>
+                  <span class="log-msg" x-html="linkAddrs(e.msg)"></span>
+                </div>
+              </template>
+            </div>
+          </template>
+          <!-- Legacy log entries (level-based) -->
+          <template x-if="!logPersistent">
+            <div>
+              <template x-for="e in filteredLog" :key="e.t+'_'+e.idx">
+                <div class="log-line" :class="'log-'+e.level_str">
+                  <span class="log-ts" x-text="fmtTs(e.t)"></span>
+                  <span class="log-level" x-text="e.level_str.toUpperCase().padEnd(5)"></span>
+                  <span class="log-tag" x-text="e.tag"></span>
+                  <span class="log-msg" x-html="linkAddrs(e.msg)"></span>
+                </div>
+              </template>
             </div>
           </template>
         </div>

@@ -101,11 +101,18 @@ document.addEventListener('alpine:init', () => {
 
     // Log
     logCapture: false,
+    logPersistent: false,
     logLevel: '3',
+    logFilter: 'all',
     logAutoScroll: true,
     logEntries: [],
     logLastTs: 0,
+    logLastSeq: 0,
     get filteredLog() {
+      if (this.logPersistent) {
+        if (this.logFilter === 'all') return this.logEntries
+        return this.logEntries.filter(e => e.type === this.logFilter)
+      }
       return this.logEntries.filter(e => e.level <= parseInt(this.logLevel))
     },
 
@@ -132,6 +139,7 @@ document.addEventListener('alpine:init', () => {
       await this.refreshInfo()
       await this.refreshCovers()
       await this.loadFrequency()
+      await this.checkLogStatus()
       this._pollCovers = setInterval(() => this.refreshCovers(), 3000)
       this._pollDisc   = setInterval(() => this.refreshDiscovered(), 3000)
       this._pollDump   = setInterval(() => this.refreshDump(), 2000)
@@ -154,7 +162,7 @@ document.addEventListener('alpine:init', () => {
         this.freq.freq2 = d.freq2 || this.freq.freq2
         this.freq.freq1 = d.freq1 || this.freq.freq1
         this.freq.freq0 = d.freq0 || this.freq.freq0
-      } catch {}
+      } catch (e) { console.warn('refreshInfo failed:', e) }
     },
 
     // ── Covers ────────────────────────────────────────────────────────────────
@@ -171,7 +179,7 @@ document.addEventListener('alpine:init', () => {
         }))
         // Also pull uptime from info periodically
         this.uptimeMs += 3000  // rough increment
-      } catch {}
+      } catch (e) { console.warn('refreshCovers failed:', e) }
     },
 
     toggleSettings(c) {
@@ -208,7 +216,7 @@ document.addEventListener('alpine:init', () => {
         const d = await api('GET', '/elero/api/discovered')
         this.scanning = d.scanning
         this.allDiscovered = d.blinds || []
-      } catch {}
+      } catch (e) { console.warn('refreshDiscovered failed:', e) }
     },
 
     async startScan() {
@@ -280,6 +288,13 @@ document.addEventListener('alpine:init', () => {
     },
 
     // ── Log ───────────────────────────────────────────────────────────────────
+    async checkLogStatus() {
+      try {
+        const d = await api('GET', '/elero/api/logs/status')
+        this.logPersistent = d.persistent === true
+      } catch (e) { console.warn('checkLogStatus failed:', e) }
+    },
+
     async startCapture() {
       try {
         await api('POST', '/elero/api/logs/capture/start')
@@ -301,28 +316,44 @@ document.addEventListener('alpine:init', () => {
         await api('POST', '/elero/api/logs/clear')
         this.logEntries = []
         this.logLastTs = 0
+        this.logLastSeq = 0
         this.showToast('Log cleared')
       } catch (e) { this.showToast(`Failed: ${e.message}`, true) }
     },
 
     async refreshLog() {
       try {
-        const d = await api('GET', '/elero/api/logs', { since: this.logLastTs })
-        this.logCapture = d.capture_active
-        if (d.entries && d.entries.length > 0) {
-          const newEntries = d.entries.map((e, i) => ({ ...e, idx: this.logEntries.length + i }))
-          this.logEntries.push(...newEntries)
-          // Keep buffer to 500 entries
-          if (this.logEntries.length > 500) this.logEntries.splice(0, this.logEntries.length - 500)
-          this.logLastTs = newEntries[newEntries.length - 1].t
-          if (this.logAutoScroll) {
-            this.$nextTick(() => {
-              const box = document.getElementById('log-box')
-              if (box) box.scrollTop = box.scrollHeight
-            })
+        if (this.logPersistent) {
+          const d = await api('GET', '/elero/api/logs', { since: this.logLastSeq })
+          if (d.entries && d.entries.length > 0) {
+            const newEntries = d.entries.map((e, i) => ({ ...e, idx: this.logEntries.length + i }))
+            this.logEntries.push(...newEntries)
+            if (this.logEntries.length > 1000) this.logEntries.splice(0, this.logEntries.length - 1000)
+            this.logLastSeq = newEntries[newEntries.length - 1].seq
+            if (this.logAutoScroll) {
+              this.$nextTick(() => {
+                const box = document.getElementById('log-box')
+                if (box) box.scrollTop = box.scrollHeight
+              })
+            }
+          }
+        } else {
+          const d = await api('GET', '/elero/api/logs', { since: this.logLastTs })
+          this.logCapture = d.capture_active
+          if (d.entries && d.entries.length > 0) {
+            const newEntries = d.entries.map((e, i) => ({ ...e, idx: this.logEntries.length + i }))
+            this.logEntries.push(...newEntries)
+            if (this.logEntries.length > 500) this.logEntries.splice(0, this.logEntries.length - 500)
+            this.logLastTs = newEntries[newEntries.length - 1].t
+            if (this.logAutoScroll) {
+              this.$nextTick(() => {
+                const box = document.getElementById('log-box')
+                if (box) box.scrollTop = box.scrollHeight
+              })
+            }
           }
         }
-      } catch {}
+      } catch (e) { console.warn('refreshLog failed:', e) }
     },
 
     // Replace 0xABCDEF hex addresses with linked name annotations
@@ -334,9 +365,9 @@ document.addEventListener('alpine:init', () => {
       const safe = msg.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
       return safe.replace(/0x[0-9a-fA-F]{6}/g, m => {
         const name = addrMap[m.toLowerCase()] || addrMap[m]
-        return name
-          ? `${m}<span class="blind-ref">(${name})</span>`
-          : m
+        if (!name) return m
+        const safeName = name.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')
+        return `${m}<span class="blind-ref">(${safeName})</span>`
       })
     },
 
@@ -345,7 +376,7 @@ document.addEventListener('alpine:init', () => {
       try {
         const d = await api('GET', '/elero/api/frequency')
         this.freq = { freq2: d.freq2, freq1: d.freq1, freq0: d.freq0 }
-      } catch {}
+      } catch (e) { console.warn('loadFrequency failed:', e) }
     },
 
     applyPreset(v) {
@@ -394,7 +425,7 @@ document.addEventListener('alpine:init', () => {
         const d = await api('GET', '/elero/api/packets')
         this.dumpActive  = d.dump_active
         this.dumpPackets = d.packets || []
-      } catch {}
+      } catch (e) { console.warn('refreshDump failed:', e) }
     },
 
     // ── Helpers exposed to template ───────────────────────────────────────────

@@ -35,6 +35,9 @@ CONF_AUTO_SENSORS = "auto_sensors"
 CONF_RSSI_SENSOR = "rssi_sensor"
 CONF_STATUS_SENSOR = "status_sensor"
 
+# uint32_t max — effectively disables periodic polling
+POLL_INTERVAL_NEVER = 4294967295
+
 EleroCover = elero_ns.class_("EleroCover", cover.Cover, cg.Component)
 
 _RSSI_SENSOR_SCHEMA = sensor.sensor_schema(
@@ -48,7 +51,7 @@ _STATUS_SENSOR_SCHEMA = text_sensor.text_sensor_schema()
 
 def poll_interval(value):
     if value == "never":
-        return 4294967295  # uint32_t max
+        return POLL_INTERVAL_NEVER
     return cv.positive_time_period_milliseconds(value)
 
 
