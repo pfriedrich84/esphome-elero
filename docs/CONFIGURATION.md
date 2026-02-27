@@ -340,9 +340,9 @@ Alle Endpoints unterstuetzen CORS (Cross-Origin Resource Sharing).
 
 | Endpoint | Methode | Beschreibung |
 |---|---|---|
-| `/elero/api/covers/0xADDRESS/command` | POST | Befehl an Rollladen/Licht senden (Body: `{"cmd": "up"\|"down"\|"stop"\|"tilt"}`) |
-| `/elero/api/covers/0xADDRESS/settings` | POST | Einstellungen des Rollladens zur Laufzeit aendern (Body: JSON mit Timing/Poll-Einstellungen) |
-| `/elero/api/discovered/0xADDRESS/adopt` | POST | Entdeckten Rollladen in konfigurierte Covers aufnehmen |
+| `/elero/api/covers/0xADDRESS/command` | POST | Befehl an Rollladen/Licht senden (`?cmd=up\|down\|stop\|tilt`) |
+| `/elero/api/covers/0xADDRESS/settings` | POST | Einstellungen zur Laufzeit ändern (`?open_duration=<ms>&close_duration=<ms>&poll_interval=<ms>`) |
+| `/elero/api/discovered/0xADDRESS/adopt` | POST | Entdeckten Rollladen adoptieren (optional: `?name=<Anzeigename>`). Wird persistent auf LittleFS gespeichert. |
 
 **Diagnose-Endpoints:**
 
@@ -387,6 +387,8 @@ POST-Endpoints akzeptieren Parameter als URL-Query-Parameter (nicht als JSON-Bod
 POST /elero/api/covers/0xa831e5/command?cmd=up
 POST /elero/api/covers/0xa831e5/settings?open_duration=25000&close_duration=22000&poll_interval=300000
 POST /elero/api/frequency/set?freq2=0x21&freq1=0x71&freq0=0x7a
+POST /elero/api/discovered/0xa831e5/adopt?name=Schlafzimmer
+POST /elero/api/ui/enable?enabled=true
 ```
 
 **CORS-Unterstuetzung:**
