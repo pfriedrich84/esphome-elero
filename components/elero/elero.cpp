@@ -65,7 +65,7 @@ void Elero::loop() {
         if (this->send_command(&cmd)) {
           rb.command_queue.pop();
           rb.cmd_counter++;
-          if (rb.cmd_counter > 255) rb.cmd_counter = 1;
+          if (rb.cmd_counter == 0) rb.cmd_counter = 1;
         }
       }
     }
@@ -925,9 +925,10 @@ bool Elero::adopt_blind(const DiscoveredBlind &discovered, const std::string &na
   rb.last_seen_ms = discovered.last_seen;
   rb.last_rssi = discovered.rssi;
   rb.last_state = discovered.last_state;
+  const std::string adopted_name = rb.name;
   this->runtime_blinds_.insert({discovered.blind_address, std::move(rb)});
   ESP_LOGI(TAG, "Adopted runtime blind 0x%06x as \"%s\"",
-           discovered.blind_address, rb.name.c_str());
+           discovered.blind_address, adopted_name.c_str());
   return true;
 }
 

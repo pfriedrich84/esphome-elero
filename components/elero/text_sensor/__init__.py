@@ -13,7 +13,7 @@ CONFIG_SCHEMA = (
     .extend(
         {
             cv.GenerateID(CONF_ELERO_ID): cv.use_id(elero),
-            cv.Required(CONF_BLIND_ADDRESS): cv.hex_int_range(min=0x0, max=0xFFFFFF),
+            cv.Required(CONF_BLIND_ADDRESS): cv.hex_int_range(min=0x0, max=0xffffff),
         }
     )
 )

@@ -125,7 +125,11 @@ void EleroEventLog::write_header_() {
   if (this->file_ == nullptr)
     return;
   fseek(this->file_, 0, SEEK_SET);
-  fwrite(&this->header_, sizeof(PersistentLogHeader), 1, this->file_);
+  if (fwrite(&this->header_, sizeof(PersistentLogHeader), 1, this->file_) != 1) {
+    ESP_LOGE(TAG, "Failed to write event log header");
+    this->ready_ = false;
+    return;
+  }
   fflush(this->file_);
 }
 
@@ -133,7 +137,10 @@ void EleroEventLog::read_header_() {
   if (this->file_ == nullptr)
     return;
   fseek(this->file_, 0, SEEK_SET);
-  fread(&this->header_, sizeof(PersistentLogHeader), 1, this->file_);
+  if (fread(&this->header_, sizeof(PersistentLogHeader), 1, this->file_) != 1) {
+    ESP_LOGE(TAG, "Failed to read event log header");
+    memset(&this->header_, 0, sizeof(this->header_));
+  }
 }
 
 void EleroEventLog::write_entry_(uint16_t idx, const PersistentLogEntry &entry) {
@@ -141,7 +148,9 @@ void EleroEventLog::write_entry_(uint16_t idx, const PersistentLogEntry &entry) 
     return;
   long offset = sizeof(PersistentLogHeader) + (long)idx * sizeof(PersistentLogEntry);
   fseek(this->file_, offset, SEEK_SET);
-  fwrite(&entry, sizeof(PersistentLogEntry), 1, this->file_);
+  if (fwrite(&entry, sizeof(PersistentLogEntry), 1, this->file_) != 1) {
+    ESP_LOGW(TAG, "Failed to write event log entry at index %u", idx);
+  }
   fflush(this->file_);
 }
 
@@ -151,7 +160,10 @@ PersistentLogEntry EleroEventLog::read_entry_(uint16_t idx) const {
     return entry;
   long offset = sizeof(PersistentLogHeader) + (long)idx * sizeof(PersistentLogEntry);
   fseek(this->file_, offset, SEEK_SET);
-  fread(&entry, sizeof(PersistentLogEntry), 1, this->file_);
+  if (fread(&entry, sizeof(PersistentLogEntry), 1, this->file_) != 1) {
+    ESP_LOGW(TAG, "Failed to read event log entry at index %u", idx);
+    memset(&entry, 0, sizeof(entry));
+  }
   return entry;
 }
 
@@ -206,9 +218,16 @@ std::vector<PersistentLogEntry> EleroEventLog::read_all() const {
 }
 
 std::vector<PersistentLogEntry> EleroEventLog::read_since(uint32_t since_seq) const {
-  std::vector<PersistentLogEntry> all = this->read_all();
   std::vector<PersistentLogEntry> result;
-  for (const auto &entry : all) {
+  if (!this->ready_)
+    return result;
+
+  uint16_t count = this->get_entry_count();
+  uint16_t start = (this->header_.total_written <= this->header_.max_entries)
+                   ? 0 : this->header_.write_idx;
+  for (uint16_t i = 0; i < count; i++) {
+    uint16_t idx = (start + i) % this->header_.max_entries;
+    PersistentLogEntry entry = this->read_entry_(idx);
     if (entry.sequence > since_seq) {
       result.push_back(entry);
     }
