@@ -79,7 +79,7 @@ void Elero::loop() {
   }
 
   if(this->received_) {
-    ESP_LOGVV(TAG, "loop says \"received\"");
+    ESP_LOGD(TAG, "RF packet received, reading FIFO");
     uint8_t len = this->read_status(CC1101_RXBYTES);
     if(len & 0x80) { // overflow - FIFO data unreliable
       ESP_LOGV(TAG, "Rx overflow, flushing FIFOs");
@@ -139,19 +139,41 @@ void Elero::setup() {
   this->reset();
   this->init();
 
+  // Verify CC1101 is responding over SPI by reading back a known register
+  uint8_t freq2_readback = this->read_reg(CC1101_FREQ2);
+  if (freq2_readback == this->freq2_) {
+    ESP_LOGI(TAG, "CC1101 SPI communication verified (FREQ2=0x%02x)", freq2_readback);
+  } else {
+    ESP_LOGE(TAG, "CC1101 SPI verification FAILED: wrote FREQ2=0x%02x, read back 0x%02x — check SPI wiring and CS pin!",
+             this->freq2_, freq2_readback);
+  }
+  ESP_LOGI(TAG, "CC1101 frequency: freq2=0x%02x, freq1=0x%02x, freq0=0x%02x",
+           this->freq2_, this->freq1_, this->freq0_);
+
   // Mount LittleFS and restore persisted data
   if (this->storage_.begin()) {
+    ESP_LOGI(TAG, "LittleFS mounted, restoring persisted data");
     this->storage_.load_runtime_blinds(this->runtime_blinds_);
     this->load_packet_log();
     this->load_blind_states();
+    if (!this->runtime_blinds_.empty()) {
+      ESP_LOGI(TAG, "Restored %d runtime-adopted blind(s)", this->runtime_blinds_.size());
+    }
+  } else {
+    ESP_LOGW(TAG, "LittleFS mount failed — runtime blind persistence disabled");
   }
 
   // Initialize persistent event log if enabled
   if (this->persistent_log_enabled_) {
     if (this->event_log_.begin(this->persistent_log_max_entries_)) {
+      ESP_LOGI(TAG, "Persistent event log enabled (max %d entries)", this->persistent_log_max_entries_);
       this->event_log_.log_system("Elero hub started");
+    } else {
+      ESP_LOGW(TAG, "Persistent event log failed to initialize");
     }
   }
+
+  ESP_LOGI(TAG, "Elero setup complete");
 }
 
 void Elero::reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
@@ -165,7 +187,7 @@ void Elero::reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
 }
 
 void Elero::flush_and_rx() {
-  ESP_LOGVV(TAG, "flush_and_rx");
+  ESP_LOGV(TAG, "Flushing FIFOs and entering RX mode");
   this->write_cmd(CC1101_SIDLE);
   this->wait_idle();
   this->write_cmd(CC1101_SFRX);
@@ -288,10 +310,10 @@ bool Elero::wait_idle() {
 
 bool Elero::transmit() {
   if (this->tx_phase_ != TxPhase::IDLE) {
-    ESP_LOGVV(TAG, "transmit: TX busy");
+    ESP_LOGD(TAG, "TX busy, deferring transmit");
     return false;
   }
-  ESP_LOGVV(TAG, "transmit: starting for %d data bytes", this->msg_tx_[0]);
+  ESP_LOGD(TAG, "Starting TX (%d data bytes)", this->msg_tx_[0]);
   // Go to IDLE first so the subsequent STX is not subject to CCA.
   // (STX from RX with MCSM1 CCA_MODE=3 requires a clear channel, which
   // fails when Elero motors are actively transmitting status replies.)
@@ -346,7 +368,7 @@ void Elero::advance_tx_() {
         if (bytes != 0)
           ESP_LOGE(TAG, "Error transferring, %d bytes left in buffer", bytes);
         else
-          ESP_LOGV(TAG, "Transmission successful");
+          ESP_LOGD(TAG, "Transmission successful");
         this->flush_and_rx();  // return chip to clean RX state and clear received_
         this->tx_phase_ = TxPhase::IDLE;
       } else if (millis() > this->tx_deadline_ms_) {
@@ -879,7 +901,8 @@ void Elero::track_discovered_blind(uint32_t src, uint32_t remote, uint8_t channe
 }
 
 bool Elero::send_command(t_elero_command *cmd) {
-  ESP_LOGVV(TAG, "send_command called");
+  ESP_LOGD(TAG, "Sending command 0x%02x to blind 0x%06x (counter=%d)",
+           cmd->payload[4], cmd->blind_addr, cmd->counter);
   // Log command sent to persistent log
   if (this->persistent_log_enabled_ && this->event_log_.is_ready()) {
     this->event_log_.log_command_sent(cmd->blind_addr, cmd->payload[4]);

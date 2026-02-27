@@ -182,8 +182,9 @@ void EleroLight::recompute_brightness() {
 }
 
 void EleroLight::set_rx_state(uint8_t state) {
-  ESP_LOGV(TAG, "Got state: 0x%02x for light 0x%06x",
-           state, this->command_.blind_addr);
+  ESP_LOGD(TAG, "Light 0x%06x state: 0x%02x (%s)",
+           this->command_.blind_addr, state,
+           elero_state_to_string(state, true));
 
   if (state == ELERO_STATE_ON) {
     if (!this->is_on_) {

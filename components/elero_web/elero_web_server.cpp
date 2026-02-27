@@ -92,13 +92,14 @@ bool EleroWebServer::parse_addr_url(const std::string &url, const char *prefix,
 // ─── Setup / config ───────────────────────────────────────────────────────────
 
 void EleroWebServer::setup() {
+  ESP_LOGI(TAG, "Setting up Elero Web Server...");
   if (this->base_ == nullptr) {
-    ESP_LOGE(TAG, "web_server_base not set, cannot start Elero Web UI");
+    ESP_LOGE(TAG, "web_server_base not set — add 'web_server_base:' to your YAML config");
     this->mark_failed();
     return;
   }
   if (this->parent_ == nullptr) {
-    ESP_LOGE(TAG, "Elero parent not set, cannot start Elero Web UI");
+    ESP_LOGE(TAG, "Elero parent not set — add 'elero:' hub to your YAML config");
     this->mark_failed();
     return;
   }
@@ -107,13 +108,13 @@ void EleroWebServer::setup() {
 
   auto *server = this->base_->get_server();
   if (server == nullptr) {
-    ESP_LOGE(TAG, "Failed to get web server instance");
+    ESP_LOGE(TAG, "Failed to get web server instance — web_server_base may not be configured correctly");
     this->mark_failed();
     return;
   }
 
   server->addHandler(this);
-  ESP_LOGI(TAG, "Elero Web UI available at /elero");
+  ESP_LOGI(TAG, "Elero Web UI available at http://<device-ip>/elero (port %d)", this->base_->get_port());
 }
 
 void EleroWebServer::dump_config() {
