@@ -7,7 +7,13 @@
 #endif
 
 #ifdef USE_ESP_IDF
+#if __has_include("esp_littlefs.h")
 #include "esp_littlefs.h"
+#elif __has_include(<esp_littlefs.h>)
+#include <esp_littlefs.h>
+#else
+#define ELERO_NO_ESP_LITTLEFS
+#endif
 #endif
 
 namespace esphome {
@@ -33,6 +39,12 @@ bool EleroStorage::begin() {
 #endif
 
 #ifdef USE_ESP_IDF
+#ifdef ELERO_NO_ESP_LITTLEFS
+  // esp_littlefs.h not available — assume the filesystem will be mounted
+  // externally or try to use POSIX file I/O directly.
+  ESP_LOGW(TAG, "esp_littlefs.h not found; assuming LittleFS is already mounted");
+  mounted_ = true;
+#else
   esp_vfs_littlefs_conf_t conf = {};
   conf.base_path = "/littlefs";
   conf.partition_label = "spiffs";
@@ -40,12 +52,17 @@ bool EleroStorage::begin() {
   conf.format_if_mount_failed = true;
 
   esp_err_t ret = esp_vfs_littlefs_register(&conf);
-  if (ret != ESP_OK) {
+  if (ret == ESP_ERR_INVALID_STATE) {
+    ESP_LOGD(TAG, "LittleFS already mounted");
+    mounted_ = true;
+  } else if (ret != ESP_OK) {
     ESP_LOGE(TAG, "Failed to mount LittleFS: %s", esp_err_to_name(ret));
     return false;
+  } else {
+    mounted_ = true;
+    ESP_LOGI(TAG, "LittleFS mounted");
   }
-  mounted_ = true;
-  ESP_LOGI(TAG, "LittleFS mounted");
+#endif
 #endif
 
   return mounted_;
