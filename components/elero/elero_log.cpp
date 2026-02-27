@@ -4,16 +4,12 @@
 #include <cstring>
 #include <algorithm>
 
-#ifdef USE_ESP_IDF
-#if __has_include("esp_spiffs.h")
-#include "esp_spiffs.h"
-#elif __has_include(<esp_spiffs.h>)
-#include <esp_spiffs.h>
-#else
-#define ELERO_NO_ESP_SPIFFS
+#ifdef USE_ARDUINO
+#include <LittleFS.h>
 #endif
-#elif defined(USE_ARDUINO)
-#include "SPIFFS.h"
+
+#ifdef USE_ESP_IDF
+#include "esp_littlefs.h"
 #endif
 
 namespace esphome {
@@ -22,39 +18,35 @@ namespace elero {
 static const char *const TAG = "elero.log";
 
 bool EleroEventLog::begin(uint16_t max_entries) {
-#ifdef USE_ESP_IDF
-#ifdef ELERO_NO_ESP_SPIFFS
-  // esp_spiffs.h not available — try opening the file directly in case
-  // another component (e.g. ESPHome core) already mounted the filesystem.
-  ESP_LOGW(TAG, "esp_spiffs.h not found at compile time; "
-                "assuming filesystem is already mounted");
-#else
-  // Mount SPIFFS if not already mounted (ESP-IDF API)
-  esp_vfs_spiffs_conf_t spiffs_conf = {
-      .base_path = "/spiffs",
-      .partition_label = nullptr,
-      .max_files = 2,
-      .format_if_mount_failed = true,
-  };
+  // LittleFS is expected to be mounted already by EleroStorage::begin().
+  // If not, mount it here as a fallback.
+#ifdef USE_ARDUINO
+  if (!LittleFS.begin(false)) {  // false = don't format, try mount only
+    if (!LittleFS.begin(true)) { // true = format on first use
+      ESP_LOGE(TAG, "Failed to mount LittleFS");
+      return false;
+    }
+  }
+  ESP_LOGD(TAG, "LittleFS available for event log");
+#elif defined(USE_ESP_IDF)
+  // Try opening the log file directly — EleroStorage should have mounted
+  // LittleFS already. If it hasn't, mount it here.
+  esp_vfs_littlefs_conf_t conf = {};
+  conf.base_path = "/littlefs";
+  conf.partition_label = "spiffs";
+  conf.max_files = 5;
+  conf.format_if_mount_failed = true;
 
-  esp_err_t ret = esp_vfs_spiffs_register(&spiffs_conf);
+  esp_err_t ret = esp_vfs_littlefs_register(&conf);
   if (ret == ESP_ERR_INVALID_STATE) {
-    // Already mounted — that's fine
-    ESP_LOGD(TAG, "SPIFFS already mounted");
+    // Already mounted by EleroStorage — that's expected
+    ESP_LOGD(TAG, "LittleFS already mounted");
   } else if (ret != ESP_OK) {
-    ESP_LOGE(TAG, "Failed to mount SPIFFS: %s", esp_err_to_name(ret));
+    ESP_LOGE(TAG, "Failed to mount LittleFS: %s", esp_err_to_name(ret));
     return false;
   } else {
-    ESP_LOGD(TAG, "SPIFFS mounted successfully");
+    ESP_LOGD(TAG, "LittleFS mounted for event log");
   }
-#endif  // ELERO_NO_ESP_SPIFFS
-#elif defined(USE_ARDUINO) && defined(USE_ESP32)
-  // Mount SPIFFS (Arduino API) — true = format on first use
-  if (!SPIFFS.begin(true)) {
-    ESP_LOGE(TAG, "Failed to mount SPIFFS");
-    return false;
-  }
-  ESP_LOGD(TAG, "SPIFFS mounted successfully");
 #else
   ESP_LOGW(TAG, "Persistent logging only supported on ESP32");
   return false;
