@@ -98,6 +98,20 @@ async def to_code(config):
         cg.add_platformio_option(
             "lib_deps", ["https://github.com/joltwallet/esp_littlefs.git"]
         )
+        # joltwallet/esp_littlefs expects Kconfig-generated CONFIG_LITTLEFS_*
+        # defines.  When pulled as a PlatformIO lib_dep the Kconfig system does
+        # not run, so we supply the defaults as build flags.
+        for flag in [
+            "-DCONFIG_LITTLEFS_MAX_PARTITIONS=3",
+            "-DCONFIG_LITTLEFS_PAGE_SIZE=256",
+            "-DCONFIG_LITTLEFS_READ_SIZE=128",
+            "-DCONFIG_LITTLEFS_WRITE_SIZE=128",
+            "-DCONFIG_LITTLEFS_LOOKAHEAD_SIZE=128",
+            "-DCONFIG_LITTLEFS_CACHE_SIZE=512",
+            "-DCONFIG_LITTLEFS_BLOCK_CYCLES=512",
+            "-DCONFIG_LITTLEFS_OBJ_NAME_LEN=64",
+        ]:
+            cg.add_build_flag(flag)
         # Generate a partition CSV with a SPIFFS partition next to the YAML and
         # point PlatformIO at it via an absolute path.
         csv_path = _ensure_elero_partitions_csv()
