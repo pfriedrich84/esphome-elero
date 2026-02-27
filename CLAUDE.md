@@ -575,7 +575,7 @@ Default frequency registers (`freq2=0x21, freq1=0x71, freq0=0x7a`) correspond to
 
 **LittleFS / partition table** — handled automatically by `__init__.py`:
 - **Arduino framework**: adds the `LittleFS` library and sets `board_build.partitions = default.csv` (bundled with arduino-esp32; provides a `spiffs` partition on standard 4 MB boards). For 8 MB / 16 MB flash boards override via `platformio_options: board_build.partitions: default_8MB.csv`.
-- **ESP-IDF framework**: adds `joltwallet/esp_littlefs@^1.10.2` as a lib dependency and generates `elero_partitions.csv` (4 MB OTA + SPIFFS layout) next to the user's YAML config, then sets `board_build.partitions` to its absolute path.
+- **ESP-IDF framework**: adds `https://github.com/joltwallet/esp_littlefs.git` as a lib dependency and generates `elero_partitions.csv` (4 MB OTA + SPIFFS layout) next to the user's YAML config, then sets `board_build.partitions` to its absolute path.
 - Users can always override the partition table with `platformio_options: board_build.partitions:` in their ESPHome YAML — user options are processed last and take precedence.
 
 SPI bus must be declared separately:

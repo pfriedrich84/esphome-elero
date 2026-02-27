@@ -96,7 +96,7 @@ async def to_code(config):
 
     if CORE.using_esp_idf:
         cg.add_platformio_option(
-            "lib_deps", ["joltwallet/esp_littlefs@^1.10.2"]
+            "lib_deps", ["https://github.com/joltwallet/esp_littlefs.git"]
         )
         # Generate a partition CSV with a SPIFFS partition next to the YAML and
         # point PlatformIO at it via an absolute path.
@@ -113,5 +113,5 @@ async def to_code(config):
                 cg.add_library("LittleFS", None)
             if CORE.using_esp_idf:
                 cg.add_platformio_option(
-                    "lib_deps", ["joltwallet/esp_littlefs@^1.14.8"]
+                    "lib_deps", ["https://github.com/joltwallet/esp_littlefs.git"]
                 )
