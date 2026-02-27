@@ -25,7 +25,7 @@ void EleroCover::dump_config() {
 
 void EleroCover::setup() {
   if (this->parent_ == nullptr) {
-    ESP_LOGE(TAG, "Elero parent not configured");
+    ESP_LOGE(TAG, "Elero parent not configured for cover '%s'", this->get_name().c_str());
     this->mark_failed();
     return;
   }
@@ -37,6 +37,11 @@ void EleroCover::setup() {
     if((this->open_duration_ > 0) && (this->close_duration_ > 0))
       this->position = 0.5f;
   }
+  // Publish initial state so Home Assistant has correct state on boot
+  this->publish_state(false);
+  ESP_LOGI(TAG, "Cover '%s' ready: blind=0x%06x, remote=0x%06x, ch=%d, poll=%dms",
+           this->get_name().c_str(), this->command_.blind_addr,
+           this->command_.remote_addr, this->command_.channel, this->poll_intvl_);
 }
 
 void EleroCover::loop() {
@@ -108,15 +113,17 @@ void EleroCover::handle_commands(uint32_t now) {
         this->send_packets_++;
         this->send_retries_ = 0;
         if(this->send_packets_ >= ELERO_SEND_PACKETS) {
+          ESP_LOGD(TAG, "Blind 0x%06x: command 0x%02x sent successfully",
+                   this->command_.blind_addr, this->commands_to_send_.front());
           this->commands_to_send_.pop();
           this->send_packets_ = 0;
           this->increase_counter();
         }
       } else {
-        ESP_LOGD(TAG, "Retry #%d for blind 0x%06x", this->send_retries_, this->command_.blind_addr);
+        ESP_LOGD(TAG, "TX busy, retry #%d for blind 0x%06x", this->send_retries_, this->command_.blind_addr);
         this->send_retries_++;
         if(this->send_retries_ > ELERO_SEND_RETRIES) {
-          ESP_LOGE(TAG, "Hit maximum number of retries, giving up.");
+          ESP_LOGE(TAG, "Blind 0x%06x: hit maximum retries, giving up", this->command_.blind_addr);
           this->send_retries_ = 0;
           this->commands_to_send_.pop();
         }
@@ -144,7 +151,7 @@ cover::CoverTraits EleroCover::get_traits() {
 void EleroCover::set_rx_state(uint8_t state) {
   uint8_t old_state = this->last_state_raw_;  // Capture before overwrite for logging
   this->last_state_raw_ = state;
-  ESP_LOGV(TAG, "Got state: 0x%02x (%s) for blind 0x%06x", state, elero_state_to_string(state), this->command_.blind_addr);
+  ESP_LOGD(TAG, "Blind 0x%06x state: 0x%02x (%s)", this->command_.blind_addr, state, elero_state_to_string(state));
   float pos = this->position;
   float current_tilt = this->tilt;
   CoverOperation op = this->current_operation;
@@ -211,6 +218,12 @@ void EleroCover::set_rx_state(uint8_t state) {
   }
 
   if((pos != this->position) || (op != this->current_operation) || (current_tilt != this->tilt)) {
+    ESP_LOGI(TAG, "Blind 0x%06x state change: %s -> %s (pos=%.0f%%, op=%s)",
+             this->command_.blind_addr,
+             elero_state_to_string(old_state), elero_state_to_string(state),
+             pos * 100.0f,
+             op == cover::COVER_OPERATION_IDLE ? "idle" :
+             op == cover::COVER_OPERATION_OPENING ? "opening" : "closing");
     // Log state transition to persistent log
     if (this->parent_->is_persistent_log_enabled()) {
       auto *log = this->parent_->get_event_log();
@@ -275,7 +288,7 @@ void EleroCover::control(const cover::CoverCall &call) {
 void EleroCover::start_movement(CoverOperation dir) {
   switch(dir) {
     case COVER_OPERATION_OPENING:
-      ESP_LOGV(TAG, "Sending OPEN command");
+      ESP_LOGD(TAG, "Blind 0x%06x: sending OPEN (cmd=0x%02x)", this->command_.blind_addr, this->command_up_);
       if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE) {
         this->commands_to_send_.push(this->command_up_);
         // Reset tilt state on movement
@@ -284,7 +297,7 @@ void EleroCover::start_movement(CoverOperation dir) {
       }
     break;
     case COVER_OPERATION_CLOSING:
-      ESP_LOGV(TAG, "Sending CLOSE command");
+      ESP_LOGD(TAG, "Blind 0x%06x: sending CLOSE (cmd=0x%02x)", this->command_.blind_addr, this->command_down_);
       if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE) {
         this->commands_to_send_.push(this->command_down_);
         // Reset tilt state on movement
@@ -293,6 +306,7 @@ void EleroCover::start_movement(CoverOperation dir) {
       }
     break;
     case COVER_OPERATION_IDLE:
+      ESP_LOGD(TAG, "Blind 0x%06x: sending STOP (cmd=0x%02x)", this->command_.blind_addr, this->command_stop_);
       // Clear any pending movement commands so STOP is sent immediately
       while (!this->commands_to_send_.empty())
         this->commands_to_send_.pop();
