@@ -53,7 +53,9 @@ static const uint8_t ELERO_STATE_MOVING_DOWN = 0x0b;
 static const uint8_t ELERO_STATE_STOPPED = 0x0d;
 static const uint8_t ELERO_STATE_TOP_TILT = 0x0e;
 static const uint8_t ELERO_STATE_BOTTOM_TILT = 0x0f;
-static const uint8_t ELERO_STATE_OFF = 0x0f;
+// Protocol uses 0x0f for both "bottom tilt" (covers) and "off" (lights).
+// Kept as explicit alias so the intent is clear in device-specific code.
+static const uint8_t ELERO_STATE_OFF = ELERO_STATE_BOTTOM_TILT;
 static const uint8_t ELERO_STATE_ON = 0x10;
 
 static const uint8_t ELERO_MAX_PACKET_SIZE = 57; // according to FCC documents
@@ -68,6 +70,10 @@ static const uint8_t ELERO_MAX_COMMAND_QUEUE = 10; // max commands per blind to 
 
 static const uint8_t ELERO_MAX_DISCOVERED = 20; // max discovered blinds to track
 static const uint8_t ELERO_MAX_RAW_PACKETS = 50; // max raw packets in dump ring buffer
+// Max destination addresses per RF packet. Protocol max is ~10 for 3-byte
+// addressing (57-byte packet limit), but 20 is a safe general-purpose cap
+// that also prevents uint8_t overflow in dests_len calculations.
+static const uint8_t ELERO_MAX_DESTINATIONS = 20;
 
 // RF protocol encoding/encryption constants (Elero protocol)
 static const uint8_t ELERO_MSG_LENGTH = 0x1d;             // Fixed message length for TX

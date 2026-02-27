@@ -44,7 +44,10 @@ static_assert(sizeof(PersistentLogHeader) == 64, "PersistentLogHeader must be 64
 
 class EleroEventLog {
  public:
+  ~EleroEventLog() { this->close(); }
+
   bool begin(uint16_t max_entries);
+  void close();
   void append(const PersistentLogEntry &entry);
   std::vector<PersistentLogEntry> read_all() const;
   std::vector<PersistentLogEntry> read_since(uint32_t since_seq) const;
