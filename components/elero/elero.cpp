@@ -163,16 +163,6 @@ void Elero::setup() {
     ESP_LOGW(TAG, "LittleFS mount failed — runtime blind persistence disabled");
   }
 
-  // Initialize persistent event log if enabled
-  if (this->persistent_log_enabled_) {
-    if (this->event_log_.begin(this->persistent_log_max_entries_)) {
-      ESP_LOGI(TAG, "Persistent event log enabled (max %d entries)", this->persistent_log_max_entries_);
-      this->event_log_.log_system("Elero hub started");
-    } else {
-      ESP_LOGW(TAG, "Persistent event log failed to initialize");
-    }
-  }
-
   ESP_LOGI(TAG, "Elero setup complete");
 }
 
@@ -703,11 +693,6 @@ void Elero::interpret_msg() {
     }
 #endif
 
-    // Log RF received event to persistent log
-    if (this->persistent_log_enabled_ && this->event_log_.is_ready()) {
-      this->event_log_.log_rf_received(src, payload[6], static_cast<int8_t>(rssi));
-    }
-
     // Check if we know the blind (configured ESPHome cover)
     auto search = this->address_to_cover_mapping_.find(src);
     if(search != this->address_to_cover_mapping_.end()) {
@@ -903,10 +888,6 @@ void Elero::track_discovered_blind(uint32_t src, uint32_t remote, uint8_t channe
 bool Elero::send_command(t_elero_command *cmd) {
   ESP_LOGD(TAG, "Sending command 0x%02x to blind 0x%06x (counter=%d)",
            cmd->payload[4], cmd->blind_addr, cmd->counter);
-  // Log command sent to persistent log
-  if (this->persistent_log_enabled_ && this->event_log_.is_ready()) {
-    this->event_log_.log_command_sent(cmd->blind_addr, cmd->payload[4]);
-  }
   uint16_t code = (0x00 - (cmd->counter * ELERO_CRYPTO_MULT)) & ELERO_CRYPTO_MASK;
   this->msg_tx_[0] = ELERO_MSG_LENGTH;
   this->msg_tx_[1] = cmd->counter; // message counter
@@ -1006,26 +987,6 @@ bool Elero::update_runtime_blind_settings(uint32_t addr, uint32_t open_dur_ms,
 
 bool Elero::is_blind_adopted(uint32_t addr) const {
   return this->runtime_blinds_.find(addr) != this->runtime_blinds_.end();
-}
-
-// ─── Log buffer ───────────────────────────────────────────────────────────
-
-void Elero::append_log(uint8_t level, const char *tag, const char *fmt, ...) {
-  if (!this->log_capture_) return;
-  LogEntry entry{};
-  entry.timestamp_ms = millis();
-  entry.level = level;
-  strncpy(entry.tag, tag, sizeof(entry.tag) - 1);
-  va_list args;
-  va_start(args, fmt);
-  vsnprintf(entry.message, sizeof(entry.message), fmt, args);
-  va_end(args);
-  if (this->log_entries_.size() < ELERO_LOG_BUFFER_SIZE) {
-    this->log_entries_.push_back(entry);
-  } else {
-    this->log_entries_[this->log_write_idx_] = entry;
-    this->log_write_idx_ = (this->log_write_idx_ + 1) % ELERO_LOG_BUFFER_SIZE;
-  }
 }
 
 // ─── LittleFS persistence helpers ─────────────────────────────────────────

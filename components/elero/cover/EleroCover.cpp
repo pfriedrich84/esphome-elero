@@ -224,14 +224,6 @@ void EleroCover::set_rx_state(uint8_t state) {
              pos * 100.0f,
              op == cover::COVER_OPERATION_IDLE ? "idle" :
              op == cover::COVER_OPERATION_OPENING ? "opening" : "closing");
-    // Log state transition to persistent log
-    if (this->parent_->is_persistent_log_enabled()) {
-      auto *log = this->parent_->get_event_log();
-      if (log && log->is_ready()) {
-        log->log_state_change(this->command_.blind_addr, old_state, state,
-                              static_cast<uint8_t>(op), pos);
-      }
-    }
     this->position = pos;
     this->tilt = current_tilt;
     this->current_operation = op;

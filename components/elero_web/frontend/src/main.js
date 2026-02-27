@@ -99,23 +99,6 @@ document.addEventListener('alpine:init', () => {
     // YAML modal
     yamlContent: null,
 
-    // Log
-    logCapture: false,
-    logPersistent: false,
-    logLevel: '3',
-    logFilter: 'all',
-    logAutoScroll: true,
-    logEntries: [],
-    logLastTs: 0,
-    logLastSeq: 0,
-    get filteredLog() {
-      if (this.logPersistent) {
-        if (this.logFilter === 'all') return this.logEntries
-        return this.logEntries.filter(e => e.type === this.logFilter)
-      }
-      return this.logEntries.filter(e => e.level <= parseInt(this.logLevel))
-    },
-
     // Config — frequency
     freq: { freq2: '', freq1: '', freq0: '' },
     freqStatus: '',
@@ -131,7 +114,6 @@ document.addEventListener('alpine:init', () => {
     // Polling intervals
     _pollCovers: null,
     _pollDisc: null,
-    _pollLog: null,
     _pollDump: null,
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -139,12 +121,9 @@ document.addEventListener('alpine:init', () => {
       await this.refreshInfo()
       await this.refreshCovers()
       await this.loadFrequency()
-      await this.checkLogStatus()
-      await this.refreshLog()
       this._pollCovers = setInterval(() => this.refreshCovers(), 3000)
       this._pollDisc   = setInterval(() => this.refreshDiscovered(), 3000)
       this._pollDump   = setInterval(() => this.refreshDump(), 2000)
-      this._pollLog    = setInterval(() => this.refreshLog(), 1500)
     },
 
     // ── Toast ─────────────────────────────────────────────────────────────────
@@ -288,90 +267,6 @@ document.addEventListener('alpine:init', () => {
         .catch(() => this.showToast('Copy failed', true))
     },
 
-    // ── Log ───────────────────────────────────────────────────────────────────
-    async checkLogStatus() {
-      try {
-        const d = await api('GET', '/elero/api/logs/status')
-        this.logPersistent = d.persistent === true
-      } catch (e) { console.warn('checkLogStatus failed:', e) }
-    },
-
-    async startCapture() {
-      try {
-        await api('POST', '/elero/api/logs/capture/start')
-        this.logCapture = true
-        this.showToast('Log capture started')
-      } catch (e) { this.showToast(`Failed: ${e.message}`, true) }
-    },
-
-    async stopCapture() {
-      try {
-        await api('POST', '/elero/api/logs/capture/stop')
-        this.logCapture = false
-        this.showToast('Log capture stopped')
-      } catch (e) { this.showToast(`Failed: ${e.message}`, true) }
-    },
-
-    async clearLog() {
-      try {
-        await api('POST', '/elero/api/logs/clear')
-        this.logEntries = []
-        this.logLastTs = 0
-        this.logLastSeq = 0
-        this.showToast('Log cleared')
-      } catch (e) { this.showToast(`Failed: ${e.message}`, true) }
-    },
-
-    async refreshLog() {
-      try {
-        if (this.logPersistent) {
-          const d = await api('GET', '/elero/api/logs', { since: this.logLastSeq })
-          if (d.entries && d.entries.length > 0) {
-            const newEntries = d.entries.map((e, i) => ({ ...e, idx: this.logEntries.length + i }))
-            this.logEntries.push(...newEntries)
-            if (this.logEntries.length > 1000) this.logEntries.splice(0, this.logEntries.length - 1000)
-            this.logLastSeq = newEntries[newEntries.length - 1].seq
-            if (this.logAutoScroll) {
-              this.$nextTick(() => {
-                const box = document.getElementById('log-box')
-                if (box) box.scrollTop = box.scrollHeight
-              })
-            }
-          }
-        } else {
-          const d = await api('GET', '/elero/api/logs', { since: this.logLastTs })
-          this.logCapture = d.capture_active
-          if (d.entries && d.entries.length > 0) {
-            const newEntries = d.entries.map((e, i) => ({ ...e, idx: this.logEntries.length + i }))
-            this.logEntries.push(...newEntries)
-            if (this.logEntries.length > 500) this.logEntries.splice(0, this.logEntries.length - 500)
-            this.logLastTs = newEntries[newEntries.length - 1].t
-            if (this.logAutoScroll) {
-              this.$nextTick(() => {
-                const box = document.getElementById('log-box')
-                if (box) box.scrollTop = box.scrollHeight
-              })
-            }
-          }
-        }
-      } catch (e) { console.warn('refreshLog failed:', e) }
-    },
-
-    // Replace 0xABCDEF hex addresses with linked name annotations
-    linkAddrs(msg) {
-      if (!msg) return ''
-      const addrMap = {}
-      for (const c of this.covers) addrMap[c.blind_address] = c.name
-      // Escape HTML first
-      const safe = msg.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-      return safe.replace(/0x[0-9a-fA-F]{6}/g, m => {
-        const name = addrMap[m.toLowerCase()] || addrMap[m]
-        if (!name) return m
-        const safeName = name.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')
-        return `${m}<span class="blind-ref">(${safeName})</span>`
-      })
-    },
-
     // ── Frequency ─────────────────────────────────────────────────────────────
     async loadFrequency() {
       try {
@@ -419,6 +314,20 @@ document.addEventListener('alpine:init', () => {
         this.dumpPackets = []
         this.showToast('Dump cleared')
       } catch (e) { this.showToast(`Failed: ${e.message}`, true) }
+    },
+
+    async downloadDump() {
+      try {
+        const resp = await fetch('/elero/api/packets/download')
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+        const blob = await resp.blob()
+        const url  = URL.createObjectURL(blob)
+        const a    = document.createElement('a')
+        a.href = url
+        a.download = `elero_packets_${Date.now()}.json`
+        a.click()
+        URL.revokeObjectURL(url)
+      } catch (e) { this.showToast(`Download failed: ${e.message}`, true) }
     },
 
     async refreshDump() {

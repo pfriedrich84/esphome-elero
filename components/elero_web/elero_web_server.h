@@ -48,12 +48,8 @@ class EleroWebServer : public Component, public AsyncWebHandler {
   void handle_runtime_command(AsyncWebServerRequest *request, uint32_t addr);
   void handle_runtime_remove(AsyncWebServerRequest *request, uint32_t addr);
   void handle_runtime_settings(AsyncWebServerRequest *request, uint32_t addr);
-  // Logs
-  void handle_get_logs(AsyncWebServerRequest *request);
-  void handle_clear_logs(AsyncWebServerRequest *request);
-  void handle_log_capture_start(AsyncWebServerRequest *request);
-  void handle_log_capture_stop(AsyncWebServerRequest *request);
-  void handle_get_log_status(AsyncWebServerRequest *request);
+  // Packet dump download
+  void handle_packets_download(AsyncWebServerRequest *request);
   // Web UI enable/disable (REST mirror of the HA switch)
   void handle_webui_status(AsyncWebServerRequest *request);
   void handle_webui_enable(AsyncWebServerRequest *request);

@@ -4,12 +4,10 @@
 #include "elero_storage.h"
 #include "esphome/components/spi/spi.h"
 #include "cc1101.h"
-#include "elero_log.h"
 #include <string>
 #include <vector>
 #include <map>
 #include <queue>
-#include <cstdarg>
 #include <atomic>
 
 // All encryption/decryption structures copied from https://github.com/QuadCorei8085/elero_protocol/ (MIT)
@@ -271,20 +269,6 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   const std::map<uint32_t, RuntimeBlind> &get_runtime_blinds() const { return runtime_blinds_; }
   bool is_blind_adopted(uint32_t addr) const;
 
-  // Log buffer
-  static const uint8_t ELERO_LOG_BUFFER_SIZE = 200;
-  struct LogEntry {
-    uint32_t timestamp_ms;
-    uint8_t level;
-    char tag[24];
-    char message[160];
-  };
-  void append_log(uint8_t level, const char *tag, const char *fmt, ...);
-  void clear_log_entries() { log_entries_.clear(); log_write_idx_ = 0; }
-  const std::vector<LogEntry> &get_log_entries() const { return log_entries_; }
-  void set_log_capture(bool en) { log_capture_ = en; }
-  bool is_log_capture_active() const { return log_capture_; }
-
   // LittleFS persistent storage
   EleroStorage &get_storage() { return storage_; }
   /// Save all runtime-adopted blinds to flash.
@@ -306,12 +290,6 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   uint8_t get_freq0() const { return freq0_; }
   uint8_t get_freq1() const { return freq1_; }
   uint8_t get_freq2() const { return freq2_; }
-
-  // Persistent event log (LittleFS)
-  void set_persistent_log_enabled(bool en) { persistent_log_enabled_ = en; }
-  void set_persistent_log_max_entries(uint16_t max) { persistent_log_max_entries_ = max; }
-  bool is_persistent_log_enabled() const { return persistent_log_enabled_; }
-  EleroEventLog *get_event_log() { return &event_log_; }
 
  private:
   void advance_tx_();
@@ -357,19 +335,11 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   // Non-blocking TX state machine
   TxPhase  tx_phase_{TxPhase::IDLE};
   uint32_t tx_deadline_ms_{0};
-  // Log buffer
-  bool log_capture_{false};
-  std::vector<LogEntry> log_entries_;
-  uint8_t log_write_idx_{0};
   // LittleFS persistent storage
   EleroStorage storage_;
   uint32_t last_state_save_ms_{0};
   static const uint32_t STATE_SAVE_INTERVAL_MS = 300000;  // save blind states every 5 min
   bool states_dirty_{false};
-  // Persistent event log
-  bool persistent_log_enabled_{false};
-  uint16_t persistent_log_max_entries_{1000};
-  EleroEventLog event_log_;
 };
 
 }  // namespace elero
