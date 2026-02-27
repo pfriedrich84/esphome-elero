@@ -145,6 +145,13 @@ void Elero::setup() {
     this->load_packet_log();
     this->load_blind_states();
   }
+
+  // Initialize persistent event log if enabled
+  if (this->persistent_log_enabled_) {
+    if (this->event_log_.begin(this->persistent_log_max_entries_)) {
+      this->event_log_.log_system("Elero hub started");
+    }
+  }
 }
 
 void Elero::reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0) {

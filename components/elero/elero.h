@@ -307,6 +307,12 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   uint8_t get_freq1() const { return freq1_; }
   uint8_t get_freq2() const { return freq2_; }
 
+  // Persistent event log (LittleFS)
+  void set_persistent_log_enabled(bool en) { persistent_log_enabled_ = en; }
+  void set_persistent_log_max_entries(uint16_t max) { persistent_log_max_entries_ = max; }
+  bool is_persistent_log_enabled() const { return persistent_log_enabled_; }
+  EleroEventLog *get_event_log() { return &event_log_; }
+
  private:
   void advance_tx_();
   uint8_t count_bits(uint8_t byte);
@@ -360,6 +366,10 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   uint32_t last_state_save_ms_{0};
   static const uint32_t STATE_SAVE_INTERVAL_MS = 300000;  // save blind states every 5 min
   bool states_dirty_{false};
+  // Persistent event log
+  bool persistent_log_enabled_{false};
+  uint16_t persistent_log_max_entries_{1000};
+  EleroEventLog event_log_;
 };
 
 }  // namespace elero

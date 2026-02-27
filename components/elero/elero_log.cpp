@@ -9,7 +9,13 @@
 #endif
 
 #ifdef USE_ESP_IDF
+#if __has_include("esp_littlefs.h")
 #include "esp_littlefs.h"
+#elif __has_include(<esp_littlefs.h>)
+#include <esp_littlefs.h>
+#else
+#define ELERO_NO_ESP_LITTLEFS
+#endif
 #endif
 
 namespace esphome {
@@ -29,6 +35,11 @@ bool EleroEventLog::begin(uint16_t max_entries) {
   }
   ESP_LOGD(TAG, "LittleFS available for event log");
 #elif defined(USE_ESP_IDF)
+#ifdef ELERO_NO_ESP_LITTLEFS
+  // esp_littlefs.h not available — assume LittleFS is already mounted
+  // by EleroStorage or externally.
+  ESP_LOGW(TAG, "esp_littlefs.h not found; assuming LittleFS is already mounted");
+#else
   // Try opening the log file directly — EleroStorage should have mounted
   // LittleFS already. If it hasn't, mount it here.
   esp_vfs_littlefs_conf_t conf = {};
@@ -47,6 +58,7 @@ bool EleroEventLog::begin(uint16_t max_entries) {
   } else {
     ESP_LOGD(TAG, "LittleFS mounted for event log");
   }
+#endif
 #else
   ESP_LOGW(TAG, "Persistent logging only supported on ESP32");
   return false;

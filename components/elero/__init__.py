@@ -61,3 +61,7 @@ async def to_code(config):
             # Ensure LittleFS library is available for persistent logging
             if CORE.using_arduino:
                 cg.add_library("LittleFS", None)
+            if CORE.using_esp_idf:
+                cg.add_platformio_option(
+                    "lib_deps", ["joltwallet/esp_littlefs@^1.10.2"]
+                )
