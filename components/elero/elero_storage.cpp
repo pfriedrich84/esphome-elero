@@ -48,7 +48,6 @@ bool EleroStorage::begin() {
   esp_vfs_littlefs_conf_t conf = {};
   conf.base_path = "/littlefs";
   conf.partition_label = "spiffs";
-  conf.max_files = 5;
   conf.format_if_mount_failed = true;
 
   esp_err_t ret = esp_vfs_littlefs_register(&conf);
