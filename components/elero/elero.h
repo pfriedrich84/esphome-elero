@@ -82,6 +82,12 @@ static const uint8_t ELERO_SEND_RETRIES = 3;
 static const uint8_t ELERO_SEND_PACKETS = 2;
 static const uint8_t ELERO_MAX_COMMAND_QUEUE = 10; // max commands per blind to prevent OOM
 
+// Auto-stop reliability: repeat stop commands, compensate for TX latency, verify motor stopped
+static const uint8_t  ELERO_STOP_REPEAT_COUNT = 2;              // stop commands queued on auto-stop (x2 RF packets each)
+static const uint32_t ELERO_TX_LATENCY_COMPENSATION_MS = 150;   // position check lead time for TX pipeline delay
+static const uint32_t ELERO_STOP_VERIFY_DELAY_MS = 500;         // delay before polling to verify motor stopped
+static const uint8_t  ELERO_STOP_VERIFY_MAX_RETRIES = 3;        // max stop-verify cycles before giving up
+
 static const uint8_t ELERO_MAX_DISCOVERED = 20; // max discovered blinds to track
 static const uint8_t ELERO_MAX_RAW_PACKETS = 50; // max raw packets in dump ring buffer
 
