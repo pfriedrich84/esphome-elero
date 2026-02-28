@@ -101,6 +101,9 @@ bool EleroCover::is_at_target() {
 }
 
 void EleroCover::handle_commands(uint32_t now) {
+  // Don't attempt TX while the radio is busy — try again next loop()
+  if (!this->parent_->is_tx_idle()) return;
+
   if((now - this->last_command_) > ELERO_DELAY_SEND_PACKETS) {
     if(this->commands_to_send_.size() > 0) {
       this->command_.payload[4] = this->commands_to_send_.front();
@@ -112,6 +115,7 @@ void EleroCover::handle_commands(uint32_t now) {
           this->send_packets_ = 0;
           this->increase_counter();
         }
+        this->last_command_ = now;
       } else {
         ESP_LOGD(TAG, "Retry #%d for blind 0x%06x", this->send_retries_, this->command_.blind_addr);
         this->send_retries_++;
@@ -120,8 +124,8 @@ void EleroCover::handle_commands(uint32_t now) {
           this->send_retries_ = 0;
           this->commands_to_send_.pop();
         }
+        this->last_command_ = now;
       }
-      this->last_command_ = now;
     }
   }
 }

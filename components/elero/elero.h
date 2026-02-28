@@ -16,6 +16,22 @@
 
 namespace esphome {
 
+namespace elero {
+
+/// Non-blocking TX state machine states.
+/// The radio is always in RX when IDLE; TX progresses one step per loop().
+enum class TxState : uint8_t {
+  IDLE,           ///< Radio in RX, ready for TX
+  GOING_IDLE,     ///< Sent SIDLE strobe, waiting for MARCSTATE=IDLE
+  LOADING,        ///< IDLE reached; flushing TX FIFO, loading data, issuing STX
+  FIRING,         ///< STX sent, waiting for MARCSTATE=TX
+  TRANSMITTING,   ///< In TX, waiting for MARCSTATE to leave TX (packet sent)
+  VERIFYING,      ///< TX finished, verifying TXBYTES==0
+  COOLDOWN,       ///< Brief pause before accepting next TX
+};
+
+}  // namespace elero
+
 #ifdef USE_SENSOR
 namespace sensor {
 class Sensor;
@@ -196,7 +212,6 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void loop() override;
 
   static void interrupt(Elero *arg);
-  void set_received();
   void dump_config() override;
   float get_setup_priority() const override { return setup_priority::DATA; }
   void reset();
@@ -204,16 +219,15 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void write_reg(uint8_t addr, uint8_t data);
   void write_burst(uint8_t addr, uint8_t *data, uint8_t len);
   void write_cmd(uint8_t cmd);
-  bool wait_rx();
-  bool wait_tx();
-  bool wait_tx_done();
-  bool wait_idle();
-  bool transmit();
   uint8_t read_reg(uint8_t addr);
   uint8_t read_status(uint8_t addr);
   void read_buf(uint8_t addr, uint8_t *buf, uint8_t len);
   void flush_and_rx();
+  void flush_rx();
   void interpret_msg();
+
+  /// True when the TX state machine is idle and ready for send_command().
+  bool is_tx_idle() const { return tx_state_ == TxState::IDLE; }
   void register_cover(EleroBlindBase *cover);
   void register_light(EleroLightBase *light);
   bool send_command(t_elero_command *cmd);
@@ -279,6 +293,15 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   uint8_t get_freq2() const { return freq2_; }
 
  private:
+  // Non-blocking TX state machine
+  void process_rx();
+  void advance_tx();
+  void drain_runtime_queues();
+  void tx_abort_();
+
+  bool wait_rx();
+  bool wait_idle();
+
   uint8_t count_bits(uint8_t byte);
   void calc_parity(uint8_t* msg);
   void add_r20_to_nibbles(uint8_t* msg, uint8_t r20, uint8_t start, uint8_t length);
@@ -296,7 +319,18 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void capture_raw_packet_(uint8_t fifo_len);
   void mark_last_raw_packet_(bool valid, const char *reason);
 
-  std::atomic<bool> received_{false};
+  // Dual interrupt flags: decouple RX-ready from TX-done detection.
+  // rx_ready_ is set by the ISR only when the radio is in RX (TxState::IDLE
+  // or COOLDOWN).  gdo0_fired_ is always set so the TX state machine can
+  // detect TX completion.
+  std::atomic<bool> rx_ready_{false};
+  std::atomic<bool> gdo0_fired_{false};
+
+  // TX state machine
+  TxState tx_state_{TxState::IDLE};
+  uint32_t tx_state_entered_ms_{0};
+  uint32_t last_tx_complete_ms_{0};
+
   uint8_t msg_rx_[CC1101_FIFO_LENGTH];
   uint8_t msg_tx_[CC1101_FIFO_LENGTH];
   uint8_t freq0_{0x7a};

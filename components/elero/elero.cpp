@@ -40,7 +40,184 @@ const char *elero_state_to_string(uint8_t state) {
 }
 
 void Elero::loop() {
-  // Drain command queues for runtime-adopted blinds
+  // 1. ALWAYS process pending RX packets first (highest priority).
+  //    Only safe when not mid-TX — during active TX states, gdo0_fired_
+  //    belongs to the TX completion path.
+  if (this->tx_state_ == TxState::IDLE || this->tx_state_ == TxState::COOLDOWN) {
+    this->process_rx();
+  }
+
+  // 2. Advance the non-blocking TX state machine (one step per loop).
+  if (this->tx_state_ != TxState::IDLE) {
+    this->advance_tx();
+  }
+
+  // 3. Drain runtime blind command queues (only when TX is idle).
+  if (this->tx_state_ == TxState::IDLE) {
+    this->drain_runtime_queues();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// process_rx — drain all available packets from the CC1101 RX FIFO
+// ---------------------------------------------------------------------------
+void Elero::process_rx() {
+  if (!this->rx_ready_)
+    return;
+  this->rx_ready_ = false;
+
+  // Drain up to 4 packets per call to prevent infinite loops if noise
+  // keeps triggering the interrupt.
+  for (uint8_t iter = 0; iter < 4; iter++) {
+    uint8_t len = this->read_status(CC1101_RXBYTES);
+
+    if (len & 0x80) {  // overflow bit set — FIFO data unreliable
+      ESP_LOGV(TAG, "Rx overflow, flushing RX FIFO");
+      this->flush_rx();
+      return;
+    }
+
+    uint8_t avail = len & 0x7F;
+    if (avail == 0)
+      return;  // FIFO empty — done
+
+    uint8_t fifo_count;
+    if (avail > CC1101_FIFO_LENGTH) {
+      ESP_LOGV(TAG, "Received more bytes than FIFO length");
+      this->read_buf(CC1101_RXFIFO, this->msg_rx_, CC1101_FIFO_LENGTH);
+      fifo_count = CC1101_FIFO_LENGTH;
+    } else {
+      fifo_count = avail;
+      this->read_buf(CC1101_RXFIFO, this->msg_rx_, fifo_count);
+    }
+
+    ESP_LOGV(TAG, "RAW RX %d bytes: %s", fifo_count,
+             format_hex_pretty(this->msg_rx_, fifo_count).c_str());
+
+    // Capture to ring buffer if dump mode is active
+    this->packet_dump_pending_update_ = false;
+    if (this->packet_dump_mode_) {
+      this->capture_raw_packet_(fifo_count);
+      this->packet_dump_pending_update_ = true;
+    }
+
+    // Sanity check: first byte is the payload length; we need at least
+    // payload + length byte + 2 appended status bytes (RSSI + LQI).
+    if (this->msg_rx_[0] + 3 <= fifo_count) {
+      this->interpret_msg();
+    } else if (this->packet_dump_pending_update_) {
+      this->mark_last_raw_packet_(false, "short_read");
+      this->packet_dump_pending_update_ = false;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// advance_tx — non-blocking TX state machine (one step per call)
+// ---------------------------------------------------------------------------
+static const uint32_t TX_STATE_TIMEOUT_MS = 50;  // per-state watchdog
+
+void Elero::advance_tx() {
+  uint32_t now = millis();
+  uint32_t elapsed = now - this->tx_state_entered_ms_;
+
+  switch (this->tx_state_) {
+
+    case TxState::GOING_IDLE: {
+      uint8_t marc = this->read_status(CC1101_MARCSTATE) & 0x1F;
+      if (marc == CC1101_MARCSTATE_IDLE) {
+        // Flush TX FIFO, load data, issue STX
+        this->write_cmd(CC1101_SFTX);
+        delay_microseconds_safe(100);
+        this->write_burst(CC1101_TXFIFO, this->msg_tx_, this->msg_tx_[0] + 1);
+        this->gdo0_fired_ = false;  // clear before STX so we detect TX-done cleanly
+        this->write_cmd(CC1101_STX);
+        this->tx_state_ = TxState::FIRING;
+        this->tx_state_entered_ms_ = now;
+      } else if (elapsed > TX_STATE_TIMEOUT_MS) {
+        ESP_LOGE(TAG, "TX timeout in GOING_IDLE (marc=0x%02x)", marc);
+        this->tx_abort_();
+      }
+      break;
+    }
+
+    case TxState::LOADING:
+      // Handled inline in GOING_IDLE → falls through to FIRING
+      break;
+
+    case TxState::FIRING: {
+      uint8_t marc = this->read_status(CC1101_MARCSTATE) & 0x1F;
+      if (marc == CC1101_MARCSTATE_TX) {
+        this->tx_state_ = TxState::TRANSMITTING;
+        this->tx_state_entered_ms_ = now;
+      } else if (elapsed > TX_STATE_TIMEOUT_MS) {
+        ESP_LOGE(TAG, "TX timeout in FIRING (marc=0x%02x)", marc);
+        this->tx_abort_();
+      }
+      break;
+    }
+
+    case TxState::TRANSMITTING: {
+      // TX completion: CC1101 auto-transitions to RX (MCSM1 TXOFF_MODE=0x3).
+      // Detect by checking if MARCSTATE has left TX.  Also accept the GDO0
+      // falling-edge interrupt as a fast-path indicator.
+      uint8_t marc = this->read_status(CC1101_MARCSTATE) & 0x1F;
+      if (marc != CC1101_MARCSTATE_TX || this->gdo0_fired_) {
+        this->tx_state_ = TxState::VERIFYING;
+        this->tx_state_entered_ms_ = now;
+      } else if (elapsed > TX_STATE_TIMEOUT_MS) {
+        ESP_LOGE(TAG, "TX timeout in TRANSMITTING (marc=0x%02x)", marc);
+        this->tx_abort_();
+      }
+      break;
+    }
+
+    case TxState::VERIFYING: {
+      uint8_t bytes = this->read_status(CC1101_TXBYTES) & 0x7F;
+      if (bytes == 0) {
+        // Success.  The CC1101 has already auto-transitioned to RX, so we
+        // only need to flush the TX FIFO — preserving any RX data that
+        // arrived during the ~3 ms TX window.
+        this->write_cmd(CC1101_SFTX);
+        ESP_LOGV(TAG, "Transmission successful");
+        this->tx_state_ = TxState::COOLDOWN;
+        this->tx_state_entered_ms_ = now;
+        this->last_tx_complete_ms_ = now;
+      } else {
+        ESP_LOGE(TAG, "TX verify failed: %d bytes left in TX FIFO", bytes);
+        this->tx_abort_();
+      }
+      break;
+    }
+
+    case TxState::COOLDOWN: {
+      // Brief 2 ms pause to let the CC1101 settle into RX before the next TX.
+      if (elapsed >= 2) {
+        this->tx_state_ = TxState::IDLE;
+        // Process any RX that arrived during the TX cycle
+        this->process_rx();
+      }
+      break;
+    }
+
+    case TxState::IDLE:
+    default:
+      break;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// tx_abort_ — force-reset radio to clean RX state after TX failure
+// ---------------------------------------------------------------------------
+void Elero::tx_abort_() {
+  this->flush_and_rx();
+  this->tx_state_ = TxState::IDLE;
+}
+
+// ---------------------------------------------------------------------------
+// drain_runtime_queues — send one pending command from runtime-adopted blinds
+// ---------------------------------------------------------------------------
+void Elero::drain_runtime_queues() {
   for (auto &entry : this->runtime_blinds_) {
     auto &rb = entry.second;
     if (!rb.command_queue.empty()) {
@@ -61,54 +238,19 @@ void Elero::loop() {
         rb.cmd_counter++;
         if (rb.cmd_counter > 255) rb.cmd_counter = 1;
       }
-    }
-  }
-
-  if(this->received_) {
-    ESP_LOGVV(TAG, "loop says \"received\"");
-    this->received_ = false;
-    uint8_t len = this->read_status(CC1101_RXBYTES);
-    if(len & 0x80) { // overflow - FIFO data unreliable
-      ESP_LOGV(TAG, "Rx overflow, flushing FIFOs");
-      this->flush_and_rx();
-      return;
-    }
-    if(len & 0x7F) { // bytes available
-      uint8_t fifo_count;
-      if((len & 0x7F) > CC1101_FIFO_LENGTH) {
-        ESP_LOGV(TAG, "Received more bytes than FIFO length - wtf?");
-        this->read_buf(CC1101_RXFIFO, this->msg_rx_, CC1101_FIFO_LENGTH);
-        fifo_count = CC1101_FIFO_LENGTH;
-      } else {
-        fifo_count = (len & 0x7f);
-        this->read_buf(CC1101_RXFIFO, this->msg_rx_, fifo_count);
-      }
-      // Log raw bytes at VERBOSE level for analysis
-      ESP_LOGV(TAG, "RAW RX %d bytes: %s", fifo_count,
-               format_hex_pretty(this->msg_rx_, fifo_count).c_str());
-      // Capture to ring buffer if dump mode is active
-      this->packet_dump_pending_update_ = false;
-      if (this->packet_dump_mode_) {
-        this->capture_raw_packet_(fifo_count);
-        this->packet_dump_pending_update_ = true;
-      }
-      // Sanity check
-      if(this->msg_rx_[0] + 3 <= fifo_count) {
-        this->interpret_msg();
-      } else if (this->packet_dump_pending_update_) {
-        this->mark_last_raw_packet_(false, "short_read");
-        this->packet_dump_pending_update_ = false;
-      }
+      break;  // Only one TX per loop iteration
     }
   }
 }
 
 void IRAM_ATTR Elero::interrupt(Elero *arg) {
-  arg->set_received();
-}
-
-void IRAM_ATTR Elero::set_received() {
-  this->received_ = true;
+  arg->gdo0_fired_ = true;
+  // GDO0 (IOCFG0=0x06) fires for both TX-done and RX-ready.
+  // Only flag rx_ready_ when the radio is actually in receive mode,
+  // so the TX state machine can use gdo0_fired_ without confusion.
+  if (arg->tx_state_ == TxState::IDLE || arg->tx_state_ == TxState::COOLDOWN) {
+    arg->rx_ready_ = true;
+  }
 }
 
 void Elero::dump_config() {
@@ -128,7 +270,9 @@ void Elero::setup() {
 }
 
 void Elero::reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
-  this->received_ = false;
+  this->rx_ready_ = false;
+  this->gdo0_fired_ = false;
+  this->tx_state_ = TxState::IDLE;
   this->freq2_ = freq2;
   this->freq1_ = freq1;
   this->freq0_ = freq0;
@@ -144,7 +288,17 @@ void Elero::flush_and_rx() {
   this->write_cmd(CC1101_SFRX);
   this->write_cmd(CC1101_SFTX);
   this->write_cmd(CC1101_SRX);
-  this->received_ = false;
+  this->rx_ready_ = false;
+  this->gdo0_fired_ = false;
+}
+
+void Elero::flush_rx() {
+  ESP_LOGVV(TAG, "flush_rx");
+  this->write_cmd(CC1101_SIDLE);
+  this->wait_idle();
+  this->write_cmd(CC1101_SFRX);
+  this->write_cmd(CC1101_SRX);
+  this->rx_ready_ = false;
 }
 
 void Elero::reset() {
@@ -257,80 +411,9 @@ bool Elero::wait_idle() {
   return false;
 }
 
-bool Elero::wait_tx() {
-  ESP_LOGVV(TAG, "wait_tx");
-  uint8_t timeout = 200;
-
-  while ((this->read_status(CC1101_MARCSTATE) != CC1101_MARCSTATE_TX) && (--timeout != 0)) {
-    delay_microseconds_safe(200);
-  }
-
-  if(timeout > 0)
-    return true;
-  ESP_LOGE(TAG, "Timed out waiting for TX: 0x%02x", this->read_status(CC1101_MARCSTATE));
-  return false;
-}
-
-bool Elero::wait_tx_done() {
-  ESP_LOGVV(TAG, "wait_tx_done");
-  uint8_t timeout = 200;
-
-  while((!this->received_) && (--timeout != 0)) {
-    delay_microseconds_safe(200);
-  }
-
-  if(timeout > 0)
-    return true;
-  ESP_LOGE(TAG, "Timed out waiting for TX Done: 0x%02x", this->read_status(CC1101_MARCSTATE));
-  return false;
-}
-
-bool Elero::transmit() {
-  ESP_LOGVV(TAG, "transmit called for %d data bytes", this->msg_tx_[0]);
-
-  // Go to IDLE first so the subsequent STX is not subject to CCA.
-  // (STX from RX with MCSM1 CCA_MODE=3 requires a clear channel, which
-  // fails when Elero motors are actively transmitting status replies.)
-  this->write_cmd(CC1101_SIDLE);
-  if (!this->wait_idle()) {
-    this->flush_and_rx();
-    return false;
-  }
-
-  // Flush TX FIFO before loading new data (required from IDLE state)
-  this->write_cmd(CC1101_SFTX);
-  delay_microseconds_safe(100);
-
-  // Load TX FIFO
-  this->write_burst(CC1101_TXFIFO, this->msg_tx_, this->msg_tx_[0] + 1);
-
-  // Clear received_ so wait_tx_done() waits for the actual TX-end GDO0
-  // falling edge, not a stale flag left over from a previously received packet.
-  this->received_ = false;
-
-  // Trigger TX — no CCA check when issuing STX from IDLE state
-  this->write_cmd(CC1101_STX);
-
-  if (!this->wait_tx()) {
-    this->flush_and_rx();
-    return false;
-  }
-  if (!this->wait_tx_done()) {
-    this->flush_and_rx();
-    return false;
-  }
-
-  uint8_t bytes = this->read_status(CC1101_TXBYTES) & 0x7f;
-  if (bytes != 0) {
-    ESP_LOGE(TAG, "Error transferring, %d bytes left in buffer", bytes);
-    this->flush_and_rx();
-    return false;
-  }
-
-  ESP_LOGV(TAG, "Transmission successful");
-  this->flush_and_rx();  // return chip to clean RX state and clear received_
-  return true;
-}
+// wait_tx() and wait_tx_done() have been replaced by the non-blocking
+// advance_tx() state machine.  transmit() is no longer needed — callers
+// use send_command() which kicks off the state machine instead.
 
 uint8_t Elero::read_reg(uint8_t addr) {
   uint8_t data;
@@ -845,6 +928,10 @@ void Elero::track_discovered_blind(uint32_t src, uint32_t remote, uint8_t channe
 }
 
 bool Elero::send_command(t_elero_command *cmd) {
+  // Reject if a TX is already in progress — caller should retry next loop.
+  if (this->tx_state_ != TxState::IDLE)
+    return false;
+
   ESP_LOGVV(TAG, "send_command called");
   uint16_t code = (0x00 - (cmd->counter * ELERO_CRYPTO_MULT)) & ELERO_CRYPTO_MASK;
   this->msg_tx_[0] = ELERO_MSG_LENGTH;
@@ -876,7 +963,13 @@ bool Elero::send_command(t_elero_command *cmd) {
   msg_encode(payload);
 
   ESP_LOGV(TAG, "send: len=%02d, cnt=%02d, typ=0x%02x, typ2=0x%02x, hop=0x%02x, syst=0x%02x, chl=%02d, src=0x%02x%02x%02x, bwd=0x%02x%02x%02x, fwd=0x%02x%02x%02x, #dst=%02d, dst=0x%02x%02x%02x, payload=[0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x]", this->msg_tx_[0], this->msg_tx_[1], this->msg_tx_[2], this->msg_tx_[3], this->msg_tx_[4], this->msg_tx_[5], this->msg_tx_[6], this->msg_tx_[7], this->msg_tx_[8], this->msg_tx_[9], this->msg_tx_[10], this->msg_tx_[11], this->msg_tx_[12], this->msg_tx_[13], this->msg_tx_[14], this->msg_tx_[15], this->msg_tx_[16], this->msg_tx_[17], this->msg_tx_[18], this->msg_tx_[19], this->msg_tx_[20], this->msg_tx_[21], this->msg_tx_[22], this->msg_tx_[23], this->msg_tx_[24], this->msg_tx_[25], this->msg_tx_[26], this->msg_tx_[27], this->msg_tx_[28], this->msg_tx_[29]);
-  return transmit();
+
+  // Kick off non-blocking TX state machine: go to IDLE first so STX is not
+  // subject to CCA (Elero motors actively transmit, causing CCA failures).
+  this->tx_state_ = TxState::GOING_IDLE;
+  this->tx_state_entered_ms_ = millis();
+  this->write_cmd(CC1101_SIDLE);
+  return true;
 }
 
 // ─── Runtime blind adoption ───────────────────────────────────────────────
