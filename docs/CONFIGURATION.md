@@ -27,43 +27,6 @@ elero:
 
 > Der Hub erweitert die ESPHome SPI-Konfiguration. `spi:` muss separat mit `clk_pin`, `mosi_pin` und `miso_pin` konfiguriert sein.
 
-### Persistentes Event-Logging
-
-Optionales LittleFS-basiertes Event-Logging das RF-Pakete, Zustandsübergänge und gesendete Befehle aufzeichnet. Die Einträge überleben einen Neustart.
-
-```yaml
-elero:
-  cs_pin: GPIO5
-  gdo0_pin: GPIO26
-  logging:
-    enable: true
-    max_entries: 1000
-```
-
-| Parameter | Typ | Pflicht | Standard | Beschreibung |
-|---|---|---|---|---|
-| `logging` | Schema | Nein | - | Persistentes Event-Logging aktivieren |
-| `logging.enable` | Boolean | Nein | `true` | Logging aktivieren/deaktivieren (wenn `logging:` Abschnitt vorhanden) |
-| `logging.max_entries` | Integer (100-5000) | Nein | `1000` | Maximale Anzahl der Einträge im Ringpuffer (~64 Bytes pro Eintrag) |
-
-**Aufgezeichnete Events:**
-- **RF empfangen** — Adresse, Zustandsbyte, RSSI
-- **Zustandsübergang** — Alter/neuer Zustand, Operation, Position
-- **Befehl gesendet** — Adresse, Befehlsbyte
-- **System** — Boot, Fehler
-
-**Speicherverbrauch:** 1000 Einträge ≈ 64 KB auf LittleFS. Die Einträge werden als Ringpuffer gespeichert — bei vollem Puffer werden die ältesten Einträge überschrieben.
-
-**Partition-Konfiguration:** Die Komponente richtet die LittleFS-Partition **automatisch** ein — eine manuelle Partition-Konfiguration ist für Standardboards (4 MB Flash) **nicht erforderlich**:
-- **Arduino-Framework**: `board_build.partitions = default.csv` (enthält SPIFFS-Partition, in arduino-esp32 enthalten)
-- **ESP-IDF-Framework**: Generiert `elero_partitions.csv` neben der YAML-Datei und setzt `board_build.partitions` automatisch
-
-Bei Boards mit **8 MB oder 16 MB Flash** muss die Partition-Tabelle überschrieben werden:
-```yaml
-platformio_options:
-  board_build.partitions: default_8MB.csv   # Arduino; oder eigene CSV für IDF
-```
-
 ### Frequenz-Varianten
 
 | Variante | freq0 | freq1 | freq2 | Hinweis |
@@ -350,9 +313,9 @@ Alle Endpoints unterstuetzen CORS (Cross-Origin Resource Sharing).
 
 | Endpoint | Methode | Beschreibung |
 |---|---|---|
-| `/elero/api/covers/0xADDRESS/command` | POST | Befehl an Rollladen/Licht senden (`?cmd=up\|down\|stop\|tilt`) |
-| `/elero/api/covers/0xADDRESS/settings` | POST | Einstellungen zur Laufzeit ändern (`?open_duration=<ms>&close_duration=<ms>&poll_interval=<ms>`) |
-| `/elero/api/discovered/0xADDRESS/adopt` | POST | Entdeckten Rollladen adoptieren (optional: `?name=<Anzeigename>`). Wird persistent auf LittleFS gespeichert. |
+| `/elero/api/covers/0xADDRESS/command` | POST | Befehl an Rollladen/Licht senden (Body: `{"cmd": "up"\|"down"\|"stop"\|"tilt"}`) |
+| `/elero/api/covers/0xADDRESS/settings` | POST | Einstellungen des Rollladens zur Laufzeit aendern (Body: JSON mit Timing/Poll-Einstellungen) |
+| `/elero/api/discovered/0xADDRESS/adopt` | POST | Entdeckten Rollladen in konfigurierte Covers aufnehmen |
 
 **Diagnose-Endpoints:**
 
@@ -360,11 +323,10 @@ Alle Endpoints unterstuetzen CORS (Cross-Origin Resource Sharing).
 |---|---|---|
 | `/elero/api/frequency` | GET | Aktuelle CC1101-Frequenzeinstellungen |
 | `/elero/api/frequency/set` | POST | CC1101-Frequenz aendern (Body: `{"freq0": 0x7a, "freq1": 0x71, "freq2": 0x21}`) |
-| `/elero/api/logs` | GET | Aktuelle Log-Eintraege (unterstützt `since`-Query-Parameter; bei persistentem Logging: `since` = Sequenznummer) |
+| `/elero/api/logs` | GET | Aktuelle Log-Eintraege (unterstützt `since`-Query-Parameter) |
 | `/elero/api/logs/clear` | POST | Erfasste Logs loeschen |
-| `/elero/api/logs/status` | GET | Log-Status: `{"persistent": bool, "entries": N, "max": N, "total_written": N}` |
-| `/elero/api/logs/capture/start` | POST | Log-Erfassung starten (bei persistentem Logging: No-Op) |
-| `/elero/api/logs/capture/stop` | POST | Log-Erfassung beenden (bei persistentem Logging: No-Op) |
+| `/elero/api/logs/capture/start` | POST | Log-Erfassung starten |
+| `/elero/api/logs/capture/stop` | POST | Log-Erfassung beenden |
 | `/elero/api/dump/start` | POST | RF-Paket-Dump starten |
 | `/elero/api/dump/stop` | POST | RF-Paket-Dump beenden |
 | `/elero/api/packets` | GET | Erfasste RF-Pakete |
@@ -382,39 +344,18 @@ Alle Endpoints unterstuetzen CORS (Cross-Origin Resource Sharing).
 | Code | Bedeutung | Wann |
 |---|---|---|
 | 200 | OK | Erfolgreiche Anfrage |
-| 400 | Bad Request | Fehlende oder ungueltige Parameter (z.B. fehlender `cmd`-Parameter, ungueltiger `since`-Wert) |
-| 404 | Not Found | Adresse nicht gefunden (weder konfiguriert noch adoptiert) |
 | 409 | Conflict | Scan starten wenn bereits laeuft, oder Scan stoppen wenn keiner laeuft |
-| 500 | Internal Server Error | Event-Log nicht bereit |
 | 503 | Service Unavailable | Wenn Web-UI via Switch deaktiviert ist |
 
 Fehlerantworten werden als JSON zurueckgegeben: `{"error": "Beschreibung"}`
-
-**Parameter-Format:**
-
-POST-Endpoints akzeptieren Parameter als URL-Query-Parameter (nicht als JSON-Body). Beispiel:
-```
-POST /elero/api/covers/0xa831e5/command?cmd=up
-POST /elero/api/covers/0xa831e5/settings?open_duration=25000&close_duration=22000&poll_interval=300000
-POST /elero/api/frequency/set?freq2=0x21&freq1=0x71&freq0=0x7a
-POST /elero/api/discovered/0xa831e5/adopt?name=Schlafzimmer
-POST /elero/api/ui/enable?enabled=true
-```
 
 **CORS-Unterstuetzung:**
 
 Alle API-Endpoints unterstuetzen Cross-Origin-Zugriff (CORS):
 - `Access-Control-Allow-Origin: *`
-- `Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS`
+- `Access-Control-Allow-Methods: GET, POST, OPTIONS`
 - `Access-Control-Allow-Headers: Content-Type`
 - Preflight-Requests (OPTIONS) werden auf allen API-Endpoints unterstuetzt
-
-**Sicherheitshinweis:**
-
-Die Web-API verfuegt ueber keine Authentifizierung. Jedes Geraet im lokalen Netzwerk kann Rolllaeden steuern, die Frequenz aendern und Logs einsehen. Dies ist fuer lokale IoT-Geraete ueblich, sollte aber beruecksichtigt werden:
-- Stellen Sie sicher, dass Ihr WLAN-Netzwerk gesichert ist
-- Verwenden Sie den optionalen `elero_web` Switch um die Web-UI bei Bedarf zu deaktivieren
-- Setzen Sie das Geraet nicht direkt dem Internet aus
 
 ---
 
@@ -458,9 +399,6 @@ spi:
 elero:
   cs_pin: GPIO5
   gdo0_pin: GPIO26
-  # logging:
-  #   enable: true
-  #   max_entries: 1000
 
 cover:
   - platform: elero

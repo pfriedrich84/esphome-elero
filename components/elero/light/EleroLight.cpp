@@ -182,9 +182,8 @@ void EleroLight::recompute_brightness() {
 }
 
 void EleroLight::set_rx_state(uint8_t state) {
-  ESP_LOGD(TAG, "Light 0x%06x state: 0x%02x (%s)",
-           this->command_.blind_addr, state,
-           elero_state_to_string(state, true));
+  ESP_LOGV(TAG, "Got state: 0x%02x for light 0x%06x",
+           state, this->command_.blind_addr);
 
   if (state == ELERO_STATE_ON) {
     if (!this->is_on_) {
@@ -212,15 +211,6 @@ void EleroLight::set_rx_state(uint8_t state) {
         this->ignore_write_state_ = false;
       }
     }
-  } else if (state == ELERO_STATE_BLOCKING || state == ELERO_STATE_OVERHEATED ||
-             state == ELERO_STATE_TIMEOUT) {
-    ESP_LOGW(TAG, "Light 0x%06x reports %s", this->command_.blind_addr,
-             elero_state_to_string(state, true));
-    // Flush pending commands — device is in error, don't send more
-    while (!this->commands_to_send_.empty()) this->commands_to_send_.pop();
-    this->send_packets_ = 0;
-    this->send_retries_ = 0;
-    this->is_dimming_ = false;
   }
 }
 

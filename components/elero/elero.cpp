@@ -2,6 +2,7 @@
 #include "esphome/core/log.h"
 #include "esphome/core/helpers.h"
 #include <cstring>
+#include <algorithm>
 
 #ifdef USE_SENSOR
 #include "esphome/components/sensor/sensor.h"
@@ -17,7 +18,7 @@ static const char *TAG = "elero";
 static const uint8_t flash_table_encode[] = {0x08, 0x02, 0x0d, 0x01, 0x0f, 0x0e, 0x07, 0x05, 0x09, 0x0c, 0x00, 0x0a, 0x03, 0x04, 0x0b, 0x06};
 static const uint8_t flash_table_decode[] = {0x0a, 0x03, 0x01, 0x0c, 0x0d, 0x07, 0x0f, 0x06, 0x00, 0x08, 0x0b, 0x0e, 0x09, 0x02, 0x05, 0x04};
 
-const char *elero_state_to_string(uint8_t state, bool is_light) {
+const char *elero_state_to_string(uint8_t state) {
   switch (state) {
     case ELERO_STATE_TOP: return "top";
     case ELERO_STATE_BOTTOM: return "bottom";
@@ -32,55 +33,39 @@ const char *elero_state_to_string(uint8_t state, bool is_light) {
     case ELERO_STATE_MOVING_DOWN: return "moving_down";
     case ELERO_STATE_STOPPED: return "stopped";
     case ELERO_STATE_TOP_TILT: return "top_tilt";
-    case ELERO_STATE_BOTTOM_TILT: // also ELERO_STATE_OFF (0x0f)
-      return is_light ? "off" : "bottom_tilt";
+    case ELERO_STATE_BOTTOM_TILT: return "bottom_tilt"; // also ELERO_STATE_OFF (0x0f)
     case ELERO_STATE_ON: return "on";
     default: return "unknown";
   }
 }
 
 void Elero::loop() {
-  // Advance non-blocking TX state machine (one SPI poll per loop call at most)
-  this->advance_tx_();
-
-  // Drain command queues for runtime-adopted blinds — only when TX is idle
-  if (this->tx_phase_ == TxPhase::IDLE) {
-    for (auto &entry : this->runtime_blinds_) {
-      if (this->tx_phase_ != TxPhase::IDLE) break;  // stop if a TX just started
-      auto &rb = entry.second;
-      if (!rb.command_queue.empty()) {
-        uint8_t cmd_byte = rb.command_queue.front();
-        t_elero_command cmd{};
-        cmd.counter = rb.cmd_counter;
-        cmd.blind_addr = rb.blind_address;
-        cmd.remote_addr = rb.remote_address;
-        cmd.channel = rb.channel;
-        cmd.pck_inf[0] = rb.pck_inf[0];
-        cmd.pck_inf[1] = rb.pck_inf[1];
-        cmd.hop = rb.hop;
-        cmd.payload[0] = rb.payload_1;
-        cmd.payload[1] = rb.payload_2;
-        cmd.payload[4] = cmd_byte;
-        if (this->send_command(&cmd)) {
-          rb.command_queue.pop();
-          rb.cmd_counter++;
-          if (rb.cmd_counter == 0) rb.cmd_counter = 1;
-        }
+  // Drain command queues for runtime-adopted blinds
+  for (auto &entry : this->runtime_blinds_) {
+    auto &rb = entry.second;
+    if (!rb.command_queue.empty()) {
+      uint8_t cmd_byte = rb.command_queue.front();
+      t_elero_command cmd{};
+      cmd.counter = rb.cmd_counter;
+      cmd.blind_addr = rb.blind_address;
+      cmd.remote_addr = rb.remote_address;
+      cmd.channel = rb.channel;
+      cmd.pck_inf[0] = rb.pck_inf[0];
+      cmd.pck_inf[1] = rb.pck_inf[1];
+      cmd.hop = rb.hop;
+      cmd.payload[0] = rb.payload_1;
+      cmd.payload[1] = rb.payload_2;
+      cmd.payload[4] = cmd_byte;
+      if (this->send_command(&cmd)) {
+        rb.command_queue.pop();
+        rb.cmd_counter++;
+        if (rb.cmd_counter > 255) rb.cmd_counter = 1;
       }
     }
   }
 
-  // Periodically save blind states to flash (every 5 min, only if dirty)
-  if (this->states_dirty_ && (millis() - this->last_state_save_ms_ > STATE_SAVE_INTERVAL_MS)) {
-    this->save_blind_states();
-    this->states_dirty_ = false;
-    this->last_state_save_ms_ = millis();
-  }
-
-  if(this->received_ && this->tx_phase_ == TxPhase::IDLE) {
-    // Clear the flag immediately so we don't re-enter on the next loop()
-    // if no new packet arrives.  The ISR will set it again if another
-    // packet arrives during processing.
+  if(this->received_) {
+    ESP_LOGVV(TAG, "loop says \"received\"");
     this->received_ = false;
     uint8_t len = this->read_status(CC1101_RXBYTES);
     if(len & 0x80) { // overflow - FIFO data unreliable
@@ -88,39 +73,32 @@ void Elero::loop() {
       this->flush_and_rx();
       return;
     }
-    if((len & 0x7F) == 0) {
-      // GDO0 fired but FIFO is empty — likely noise or residual CC1101
-      // state.  Flush FIFOs and re-enter RX to clear the GDO0 condition
-      // and prevent the interrupt from re-firing immediately.
-      this->flush_and_rx();
-      return;
-    }
-    // We have actual bytes — process the packet
-    ESP_LOGD(TAG, "RF packet received, reading FIFO (%d bytes)", len & 0x7F);
-    uint8_t fifo_count;
-    if((len & 0x7F) > CC1101_FIFO_LENGTH) {
-      ESP_LOGV(TAG, "Received more bytes than FIFO length - wtf?");
-      this->read_buf(CC1101_RXFIFO, this->msg_rx_, CC1101_FIFO_LENGTH);
-      fifo_count = CC1101_FIFO_LENGTH;
-    } else {
-      fifo_count = (len & 0x7f);
-      this->read_buf(CC1101_RXFIFO, this->msg_rx_, fifo_count);
-    }
-    // Log raw bytes at VERBOSE level for analysis
-    ESP_LOGV(TAG, "RAW RX %d bytes: %s", fifo_count,
-             format_hex_pretty(this->msg_rx_, fifo_count).c_str());
-    // Capture to ring buffer if dump mode is active
-    this->packet_dump_pending_update_ = false;
-    if (this->packet_dump_mode_) {
-      this->capture_raw_packet_(fifo_count);
-      this->packet_dump_pending_update_ = true;
-    }
-    // Sanity check
-    if(this->msg_rx_[0] + 3 <= fifo_count) {
-      this->interpret_msg();
-    } else if (this->packet_dump_pending_update_) {
-      this->mark_last_raw_packet_(false, "short_read");
+    if(len & 0x7F) { // bytes available
+      uint8_t fifo_count;
+      if((len & 0x7F) > CC1101_FIFO_LENGTH) {
+        ESP_LOGV(TAG, "Received more bytes than FIFO length - wtf?");
+        this->read_buf(CC1101_RXFIFO, this->msg_rx_, CC1101_FIFO_LENGTH);
+        fifo_count = CC1101_FIFO_LENGTH;
+      } else {
+        fifo_count = (len & 0x7f);
+        this->read_buf(CC1101_RXFIFO, this->msg_rx_, fifo_count);
+      }
+      // Log raw bytes at VERBOSE level for analysis
+      ESP_LOGV(TAG, "RAW RX %d bytes: %s", fifo_count,
+               format_hex_pretty(this->msg_rx_, fifo_count).c_str());
+      // Capture to ring buffer if dump mode is active
       this->packet_dump_pending_update_ = false;
+      if (this->packet_dump_mode_) {
+        this->capture_raw_packet_(fifo_count);
+        this->packet_dump_pending_update_ = true;
+      }
+      // Sanity check
+      if(this->msg_rx_[0] + 3 <= fifo_count) {
+        this->interpret_msg();
+      } else if (this->packet_dump_pending_update_) {
+        this->mark_last_raw_packet_(false, "short_read");
+        this->packet_dump_pending_update_ = false;
+      }
     }
   }
 }
@@ -147,32 +125,6 @@ void Elero::setup() {
   this->gdo0_pin_->attach_interrupt(Elero::interrupt, this, gpio::INTERRUPT_FALLING_EDGE);
   this->reset();
   this->init();
-
-  // Verify CC1101 is responding over SPI by reading back a known register
-  uint8_t freq2_readback = this->read_reg(CC1101_FREQ2);
-  if (freq2_readback == this->freq2_) {
-    ESP_LOGI(TAG, "CC1101 SPI communication verified (FREQ2=0x%02x)", freq2_readback);
-  } else {
-    ESP_LOGE(TAG, "CC1101 SPI verification FAILED: wrote FREQ2=0x%02x, read back 0x%02x — check SPI wiring and CS pin!",
-             this->freq2_, freq2_readback);
-  }
-  ESP_LOGI(TAG, "CC1101 frequency: freq2=0x%02x, freq1=0x%02x, freq0=0x%02x",
-           this->freq2_, this->freq1_, this->freq0_);
-
-  // Mount LittleFS and restore persisted data
-  if (this->storage_.begin()) {
-    ESP_LOGI(TAG, "LittleFS mounted, restoring persisted data");
-    this->storage_.load_runtime_blinds(this->runtime_blinds_);
-    this->load_packet_log();
-    this->load_blind_states();
-    if (!this->runtime_blinds_.empty()) {
-      ESP_LOGI(TAG, "Restored %d runtime-adopted blind(s)", this->runtime_blinds_.size());
-    }
-  } else {
-    ESP_LOGW(TAG, "LittleFS mount failed — runtime blind persistence disabled");
-  }
-
-  ESP_LOGI(TAG, "Elero setup complete");
 }
 
 void Elero::reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
@@ -186,7 +138,7 @@ void Elero::reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
 }
 
 void Elero::flush_and_rx() {
-  ESP_LOGV(TAG, "Flushing FIFOs and entering RX mode");
+  ESP_LOGVV(TAG, "flush_and_rx");
   this->write_cmd(CC1101_SIDLE);
   this->wait_idle();
   this->write_cmd(CC1101_SFRX);
@@ -281,10 +233,9 @@ void Elero::write_cmd(uint8_t cmd) {
 
 bool Elero::wait_rx() {
   ESP_LOGVV(TAG, "wait_rx");
-  uint16_t timeout = 500;
+  uint8_t timeout = 200;
   while ((this->read_status(CC1101_MARCSTATE) != CC1101_MARCSTATE_RX) && (--timeout != 0)) {
     delay_microseconds_safe(200);
-    if (timeout % 50 == 0) yield();  // prevent WDT reset on ESP32
   }
 
   if(timeout > 0)
@@ -295,10 +246,9 @@ bool Elero::wait_rx() {
 
 bool Elero::wait_idle() {
   ESP_LOGVV(TAG, "wait_idle");
-  uint16_t timeout = 500;
+  uint8_t timeout = 200;
   while ((this->read_status(CC1101_MARCSTATE) != CC1101_MARCSTATE_IDLE) && (--timeout != 0)) {
     delay_microseconds_safe(200);
-    if (timeout % 50 == 0) yield();
   }
 
   if(timeout > 0)
@@ -307,115 +257,79 @@ bool Elero::wait_idle() {
   return false;
 }
 
+bool Elero::wait_tx() {
+  ESP_LOGVV(TAG, "wait_tx");
+  uint8_t timeout = 200;
+
+  while ((this->read_status(CC1101_MARCSTATE) != CC1101_MARCSTATE_TX) && (--timeout != 0)) {
+    delay_microseconds_safe(200);
+  }
+
+  if(timeout > 0)
+    return true;
+  ESP_LOGE(TAG, "Timed out waiting for TX: 0x%02x", this->read_status(CC1101_MARCSTATE));
+  return false;
+}
+
+bool Elero::wait_tx_done() {
+  ESP_LOGVV(TAG, "wait_tx_done");
+  uint8_t timeout = 200;
+
+  while((!this->received_) && (--timeout != 0)) {
+    delay_microseconds_safe(200);
+  }
+
+  if(timeout > 0)
+    return true;
+  ESP_LOGE(TAG, "Timed out waiting for TX Done: 0x%02x", this->read_status(CC1101_MARCSTATE));
+  return false;
+}
+
 bool Elero::transmit() {
-  if (this->tx_phase_ != TxPhase::IDLE) {
-    ESP_LOGD(TAG, "TX busy, deferring transmit");
-    return false;
-  }
-  // Enforce minimum RX dwell time after the last TX so the CC1101
-  // remains in RX long enough for blinds to send status responses.
-  if (this->last_tx_completed_ms_ > 0 &&
-      (millis() - this->last_tx_completed_ms_) < ELERO_MIN_RX_DWELL_MS) {
-    return false;  // silently defer — caller will retry next loop
-  }
-  ESP_LOGD(TAG, "Starting TX (%d data bytes)", this->msg_tx_[0]);
+  ESP_LOGVV(TAG, "transmit called for %d data bytes", this->msg_tx_[0]);
+
   // Go to IDLE first so the subsequent STX is not subject to CCA.
   // (STX from RX with MCSM1 CCA_MODE=3 requires a clear channel, which
   // fails when Elero motors are actively transmitting status replies.)
   this->write_cmd(CC1101_SIDLE);
-  this->tx_deadline_ms_ = millis() + 40;
-  this->tx_phase_ = TxPhase::WAIT_CC_IDLE;
-  return true;
-}
-
-void Elero::start_flush_rx_() {
-  this->write_cmd(CC1101_SIDLE);
-  this->tx_deadline_ms_ = millis() + 100;
-  this->tx_phase_ = TxPhase::FLUSH_RX;
-}
-
-void Elero::advance_tx_() {
-  switch (this->tx_phase_) {
-    case TxPhase::IDLE:
-      return;
-
-    case TxPhase::WAIT_CC_IDLE:
-      if (this->read_status(CC1101_MARCSTATE) == CC1101_MARCSTATE_IDLE) {
-        // Flush TX FIFO before loading new data (required from IDLE state)
-        this->write_cmd(CC1101_SFTX);
-        delay_microseconds_safe(100);  // brief settle after SFTX (per datasheet)
-        // Load TX FIFO
-        this->write_burst(CC1101_TXFIFO, this->msg_tx_, this->msg_tx_[0] + 1);
-        // Clear received_ so WAIT_DONE waits for the actual TX-end GDO0
-        // falling edge, not a stale flag from a previously received packet.
-        this->received_ = false;
-        // Trigger TX — no CCA check when issuing STX from IDLE state
-        this->write_cmd(CC1101_STX);
-        this->tx_deadline_ms_ = millis() + 40;
-        this->tx_phase_ = TxPhase::WAIT_CC_TX;
-      } else if (millis() > this->tx_deadline_ms_) {
-        ESP_LOGE(TAG, "Timed out waiting for Idle: 0x%02x",
-                 this->read_status(CC1101_MARCSTATE));
-        this->start_flush_rx_();
-      }
-      break;
-
-    case TxPhase::WAIT_CC_TX:
-      if (this->read_status(CC1101_MARCSTATE) == CC1101_MARCSTATE_TX) {
-        this->tx_deadline_ms_ = millis() + 40;
-        this->tx_phase_ = TxPhase::WAIT_DONE;
-      } else if (this->received_) {
-        // TX completed before we observed MARCSTATE==TX.  The GDO0
-        // falling-edge interrupt already fired (end-of-packet), and
-        // the CC1101 transitioned to RX per TXOFF_MODE.  Treat as
-        // successful completion — same logic as WAIT_DONE.
-        uint8_t bytes = this->read_status(CC1101_TXBYTES) & 0x7f;
-        if (bytes != 0)
-          ESP_LOGE(TAG, "Error transferring, %d bytes left in buffer", bytes);
-        else
-          ESP_LOGD(TAG, "Transmission successful (fast)");
-        this->start_flush_rx_();
-      } else if (millis() > this->tx_deadline_ms_) {
-        ESP_LOGE(TAG, "Timed out waiting for TX: 0x%02x",
-                 this->read_status(CC1101_MARCSTATE));
-        this->start_flush_rx_();
-      }
-      break;
-
-    case TxPhase::WAIT_DONE:
-      if (this->received_) {
-        uint8_t bytes = this->read_status(CC1101_TXBYTES) & 0x7f;
-        if (bytes != 0)
-          ESP_LOGE(TAG, "Error transferring, %d bytes left in buffer", bytes);
-        else
-          ESP_LOGD(TAG, "Transmission successful");
-        this->start_flush_rx_();  // return chip to clean RX state
-      } else if (millis() > this->tx_deadline_ms_) {
-        ESP_LOGE(TAG, "Timed out waiting for TX Done: 0x%02x",
-                 this->read_status(CC1101_MARCSTATE));
-        this->start_flush_rx_();
-      }
-      break;
-
-    case TxPhase::FLUSH_RX:
-      if (this->read_status(CC1101_MARCSTATE) == CC1101_MARCSTATE_IDLE) {
-        this->write_cmd(CC1101_SFRX);
-        this->write_cmd(CC1101_SFTX);
-        this->write_cmd(CC1101_SRX);
-        this->received_ = false;
-        this->tx_phase_ = TxPhase::IDLE;
-        this->last_tx_completed_ms_ = millis();
-      } else if (millis() > this->tx_deadline_ms_) {
-        ESP_LOGE(TAG, "FLUSH_RX: timed out waiting for IDLE: 0x%02x",
-                 this->read_status(CC1101_MARCSTATE));
-        // Hard reset as last resort
-        this->write_cmd(CC1101_SRES);
-        this->received_ = false;
-        this->tx_phase_ = TxPhase::IDLE;
-        this->last_tx_completed_ms_ = millis();
-      }
-      break;
+  if (!this->wait_idle()) {
+    this->flush_and_rx();
+    return false;
   }
+
+  // Flush TX FIFO before loading new data (required from IDLE state)
+  this->write_cmd(CC1101_SFTX);
+  delay_microseconds_safe(100);
+
+  // Load TX FIFO
+  this->write_burst(CC1101_TXFIFO, this->msg_tx_, this->msg_tx_[0] + 1);
+
+  // Clear received_ so wait_tx_done() waits for the actual TX-end GDO0
+  // falling edge, not a stale flag left over from a previously received packet.
+  this->received_ = false;
+
+  // Trigger TX — no CCA check when issuing STX from IDLE state
+  this->write_cmd(CC1101_STX);
+
+  if (!this->wait_tx()) {
+    this->flush_and_rx();
+    return false;
+  }
+  if (!this->wait_tx_done()) {
+    this->flush_and_rx();
+    return false;
+  }
+
+  uint8_t bytes = this->read_status(CC1101_TXBYTES) & 0x7f;
+  if (bytes != 0) {
+    ESP_LOGE(TAG, "Error transferring, %d bytes left in buffer", bytes);
+    this->flush_and_rx();
+    return false;
+  }
+
+  ESP_LOGV(TAG, "Transmission successful");
+  this->flush_and_rx();  // return chip to clean RX state and clear received_
+  return true;
 }
 
 uint8_t Elero::read_reg(uint8_t addr) {
@@ -620,7 +534,7 @@ void Elero::interpret_msg() {
   uint8_t dests_len;
 
   // Validate destination count before multiplication to prevent overflow
-  if (num_dests > ELERO_MAX_DESTINATIONS) {
+  if (num_dests > 20) {
     ESP_LOGE(TAG, "Received invalid packet: too many destinations (%d)", num_dests);
     ESP_LOGD(TAG, "  Raw [%d bytes]: %s", length + 3,
              format_hex_pretty(this->msg_rx_, length + 3).c_str());
@@ -734,8 +648,7 @@ void Elero::interpret_msg() {
     {
       auto text_it = this->address_to_text_sensor_.find(src);
       if (text_it != this->address_to_text_sensor_.end()) {
-        bool light = this->is_light_configured(src);
-        text_it->second->publish_state(elero_state_to_string(payload[6], light));
+        text_it->second->publish_state(elero_state_to_string(payload[6]));
       }
     }
 #endif
@@ -760,17 +673,7 @@ void Elero::interpret_msg() {
       it->second.last_seen_ms = millis();
       it->second.last_rssi = rssi;
       it->second.last_state = payload[6];
-      // Flush command queue on error states to prevent stale commands
-      if (payload[6] == ELERO_STATE_BLOCKING ||
-          payload[6] == ELERO_STATE_OVERHEATED ||
-          payload[6] == ELERO_STATE_TIMEOUT) {
-        ESP_LOGW(TAG, "Runtime blind 0x%06x reports %s — flushing command queue",
-                 src, elero_state_to_string(payload[6]));
-        while (!it->second.command_queue.empty())
-          it->second.command_queue.pop();
-      }
     }
-    this->states_dirty_ = true;
   } else {
     // Non-status packets: still update RSSI/last_seen for any known blind
     auto search = this->address_to_cover_mapping_.find(src);
@@ -942,8 +845,7 @@ void Elero::track_discovered_blind(uint32_t src, uint32_t remote, uint8_t channe
 }
 
 bool Elero::send_command(t_elero_command *cmd) {
-  ESP_LOGD(TAG, "Sending command 0x%02x to blind 0x%06x (counter=%d)",
-           cmd->payload[4], cmd->blind_addr, cmd->counter);
+  ESP_LOGVV(TAG, "send_command called");
   uint16_t code = (0x00 - (cmd->counter * ELERO_CRYPTO_MULT)) & ELERO_CRYPTO_MASK;
   this->msg_tx_[0] = ELERO_MSG_LENGTH;
   this->msg_tx_[1] = cmd->counter; // message counter
@@ -997,11 +899,9 @@ bool Elero::adopt_blind(const DiscoveredBlind &discovered, const std::string &na
   rb.last_seen_ms = discovered.last_seen;
   rb.last_rssi = discovered.rssi;
   rb.last_state = discovered.last_state;
-  const std::string adopted_name = rb.name;
   this->runtime_blinds_.insert({discovered.blind_address, std::move(rb)});
   ESP_LOGI(TAG, "Adopted runtime blind 0x%06x as \"%s\"",
            discovered.blind_address, rb.name.c_str());
-  this->save_runtime_blinds();
   return true;
 }
 
@@ -1010,7 +910,6 @@ bool Elero::remove_runtime_blind(uint32_t addr) {
   if (it != this->runtime_blinds_.end()) {
     ESP_LOGI(TAG, "Removed runtime blind 0x%06x", addr);
     this->runtime_blinds_.erase(it);
-    this->save_runtime_blinds();
     return true;
   }
   return false;
@@ -1035,7 +934,6 @@ bool Elero::update_runtime_blind_settings(uint32_t addr, uint32_t open_dur_ms,
     it->second.open_duration_ms = open_dur_ms;
     it->second.close_duration_ms = close_dur_ms;
     it->second.poll_intvl_ms = poll_intvl_ms;
-    this->save_runtime_blinds();
     return true;
   }
   return false;
@@ -1045,59 +943,23 @@ bool Elero::is_blind_adopted(uint32_t addr) const {
   return this->runtime_blinds_.find(addr) != this->runtime_blinds_.end();
 }
 
-// ─── LittleFS persistence helpers ─────────────────────────────────────────
+// ─── Log buffer ───────────────────────────────────────────────────────────
 
-void Elero::save_runtime_blinds() {
-  this->storage_.save_runtime_blinds(this->runtime_blinds_);
-}
-
-void Elero::save_packet_log() {
-  this->storage_.save_packets(this->raw_packets_, this->raw_packet_write_idx_);
-}
-
-void Elero::load_packet_log() {
-  this->storage_.load_packets(this->raw_packets_, this->raw_packet_write_idx_);
-}
-
-void Elero::save_blind_states() {
-  std::vector<PersistedBlindState> states;
-
-  // Configured covers
-  for (const auto &entry : this->address_to_cover_mapping_) {
-    PersistedBlindState s{};
-    s.blind_address = entry.first;
-    s.last_state = entry.second->get_last_state_raw();
-    s.last_rssi = entry.second->get_last_rssi();
-    s.timestamp_ms = entry.second->get_last_seen_ms();
-    states.push_back(s);
-  }
-
-  // Runtime adopted blinds
-  for (const auto &entry : this->runtime_blinds_) {
-    PersistedBlindState s{};
-    s.blind_address = entry.first;
-    s.last_state = entry.second.last_state;
-    s.last_rssi = entry.second.last_rssi;
-    s.timestamp_ms = entry.second.last_seen_ms;
-    states.push_back(s);
-  }
-
-  this->storage_.save_blind_states(states);
-}
-
-void Elero::load_blind_states() {
-  std::vector<PersistedBlindState> states;
-  if (!this->storage_.load_blind_states(states))
-    return;
-
-  for (const auto &s : states) {
-    // Restore state for runtime blinds
-    auto rb_it = this->runtime_blinds_.find(s.blind_address);
-    if (rb_it != this->runtime_blinds_.end()) {
-      rb_it->second.last_state = s.last_state;
-      rb_it->second.last_rssi = s.last_rssi;
-      rb_it->second.last_seen_ms = s.timestamp_ms;
-    }
+void Elero::append_log(uint8_t level, const char *tag, const char *fmt, ...) {
+  if (!this->log_capture_) return;
+  LogEntry entry{};
+  entry.timestamp_ms = millis();
+  entry.level = level;
+  strncpy(entry.tag, tag, sizeof(entry.tag) - 1);
+  va_list args;
+  va_start(args, fmt);
+  vsnprintf(entry.message, sizeof(entry.message), fmt, args);
+  va_end(args);
+  if (this->log_entries_.size() < ELERO_LOG_BUFFER_SIZE) {
+    this->log_entries_.push_back(entry);
+  } else {
+    this->log_entries_[this->log_write_idx_] = entry;
+    this->log_write_idx_ = (this->log_write_idx_ + 1) % ELERO_LOG_BUFFER_SIZE;
   }
 }
 

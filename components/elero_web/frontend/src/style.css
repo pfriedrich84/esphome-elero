@@ -86,6 +86,8 @@ body {
   padding: 0 4px;
   font-weight: 700;
 }
+.tab-badge.log-badge { background: var(--amber); }
+
 .tab-content { min-height: 200px; }
 
 /* ─── Cards ──────────────────────────────────────────────────────────────── */
@@ -226,6 +228,46 @@ body {
 @keyframes pulse { 0%,100%{opacity:1}50%{opacity:.3} }
 
 .hint { font-size: .8em; color: var(--muted); margin-top: 8px; }
+
+/* ─── Log tab ────────────────────────────────────────────────────────────── */
+.log-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: .85em;
+}
+.level-select {
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  padding: 4px 6px;
+  font-size: .85em;
+}
+.check-label { display: flex; align-items: center; gap: 4px; font-size: .82em; }
+
+.log-box {
+  max-height: 420px;
+  overflow-y: auto;
+  font-family: 'Menlo', 'Consolas', monospace;
+  font-size: .78em;
+  line-height: 1.6;
+  padding: 8px;
+  background: #1e1e2e;
+  border-radius: 6px;
+  margin-top: 10px;
+}
+.log-line { display: flex; gap: 8px; padding: 1px 0; }
+.log-ts    { color: #888; min-width: 60px; }
+.log-level { min-width: 48px; font-weight: 700; }
+.log-tag   { color: #7dcfff; min-width: 96px; }
+.log-msg   { color: #cdd6f4; word-break: break-all; }
+.blind-ref { color: #a6e3a1; font-weight: 700; }
+
+.log-error .log-level  { color: #f38ba8; }
+.log-warn  .log-level  { color: #fab387; }
+.log-info  .log-level  { color: #a6e3a1; }
+.log-debug .log-level  { color: #89b4fa; }
+.log-verbose .log-level{ color: #6c7086; }
 
 /* ─── Configuration — frequency ──────────────────────────────────────────── */
 .freq-row { margin-bottom: 10px; }

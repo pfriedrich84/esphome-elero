@@ -8,7 +8,6 @@ from esphome.const import (
 from .. import elero_ns, elero, CONF_ELERO_ID
 
 DEPENDENCIES = ["elero"]
-CODEOWNERS = ["@andyboeh"]
 
 CONF_BLIND_ADDRESS = "blind_address"
 CONF_REMOTE_ADDRESS = "remote_address"
@@ -32,21 +31,21 @@ CONFIG_SCHEMA = (
         {
             cv.GenerateID(CONF_OUTPUT_ID): cv.declare_id(EleroLight),
             cv.GenerateID(CONF_ELERO_ID): cv.use_id(elero),
-            cv.Required(CONF_BLIND_ADDRESS): cv.hex_int_range(min=0x0, max=0xffffff),
+            cv.Required(CONF_BLIND_ADDRESS): cv.hex_int_range(min=0x0, max=0xFFFFFF),
             cv.Required(CONF_CHANNEL): cv.int_range(min=0, max=255),
-            cv.Required(CONF_REMOTE_ADDRESS): cv.hex_int_range(min=0x0, max=0xffffff),
+            cv.Required(CONF_REMOTE_ADDRESS): cv.hex_int_range(min=0x0, max=0xFFFFFF),
             cv.Optional(CONF_DIM_DURATION, default="0s"): cv.positive_time_period_milliseconds,
-            cv.Optional(CONF_PAYLOAD_1, default=0x00): cv.hex_int_range(min=0x0, max=0xff),
-            cv.Optional(CONF_PAYLOAD_2, default=0x04): cv.hex_int_range(min=0x0, max=0xff),
-            cv.Optional(CONF_PCKINF_1, default=0x6a): cv.hex_int_range(min=0x0, max=0xff),
-            cv.Optional(CONF_PCKINF_2, default=0x00): cv.hex_int_range(min=0x0, max=0xff),
-            cv.Optional(CONF_HOP, default=0x0a): cv.hex_int_range(min=0x0, max=0xff),
-            cv.Optional(CONF_COMMAND_ON, default=0x20): cv.hex_int_range(min=0x0, max=0xff),
-            cv.Optional(CONF_COMMAND_OFF, default=0x40): cv.hex_int_range(min=0x0, max=0xff),
-            cv.Optional(CONF_COMMAND_DIM_UP, default=0x20): cv.hex_int_range(min=0x0, max=0xff),
-            cv.Optional(CONF_COMMAND_DIM_DOWN, default=0x40): cv.hex_int_range(min=0x0, max=0xff),
-            cv.Optional(CONF_COMMAND_STOP, default=0x10): cv.hex_int_range(min=0x0, max=0xff),
-            cv.Optional(CONF_COMMAND_CHECK, default=0x00): cv.hex_int_range(min=0x0, max=0xff),
+            cv.Optional(CONF_PAYLOAD_1, default=0x00): cv.hex_int_range(min=0x0, max=0xFF),
+            cv.Optional(CONF_PAYLOAD_2, default=0x04): cv.hex_int_range(min=0x0, max=0xFF),
+            cv.Optional(CONF_PCKINF_1, default=0x6A): cv.hex_int_range(min=0x0, max=0xFF),
+            cv.Optional(CONF_PCKINF_2, default=0x00): cv.hex_int_range(min=0x0, max=0xFF),
+            cv.Optional(CONF_HOP, default=0x0A): cv.hex_int_range(min=0x0, max=0xFF),
+            cv.Optional(CONF_COMMAND_ON, default=0x20): cv.hex_int_range(min=0x0, max=0xFF),
+            cv.Optional(CONF_COMMAND_OFF, default=0x40): cv.hex_int_range(min=0x0, max=0xFF),
+            cv.Optional(CONF_COMMAND_DIM_UP, default=0x20): cv.hex_int_range(min=0x0, max=0xFF),
+            cv.Optional(CONF_COMMAND_DIM_DOWN, default=0x40): cv.hex_int_range(min=0x0, max=0xFF),
+            cv.Optional(CONF_COMMAND_STOP, default=0x10): cv.hex_int_range(min=0x0, max=0xFF),
+            cv.Optional(CONF_COMMAND_CHECK, default=0x00): cv.hex_int_range(min=0x0, max=0xFF),
         }
     )
     .extend(cv.COMPONENT_SCHEMA)
