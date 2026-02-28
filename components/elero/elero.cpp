@@ -78,11 +78,15 @@ void Elero::loop() {
   }
 
   if(this->received_ && this->tx_phase_ == TxPhase::IDLE) {
+    // Clear the flag immediately so we don't re-enter on the next loop()
+    // if no new packet arrives.  The ISR will set it again if another
+    // packet arrives during processing.
+    this->received_ = false;
     ESP_LOGD(TAG, "RF packet received, reading FIFO");
     uint8_t len = this->read_status(CC1101_RXBYTES);
     if(len & 0x80) { // overflow - FIFO data unreliable
       ESP_LOGV(TAG, "Rx overflow, flushing FIFOs");
-      this->start_flush_rx_();
+      this->flush_and_rx();
       return;
     }
     if(len & 0x7F) { // bytes available
@@ -302,6 +306,12 @@ bool Elero::transmit() {
     ESP_LOGD(TAG, "TX busy, deferring transmit");
     return false;
   }
+  // Enforce minimum RX dwell time after the last TX so the CC1101
+  // remains in RX long enough for blinds to send status responses.
+  if (this->last_tx_completed_ms_ > 0 &&
+      (millis() - this->last_tx_completed_ms_) < ELERO_MIN_RX_DWELL_MS) {
+    return false;  // silently defer — caller will retry next loop
+  }
   ESP_LOGD(TAG, "Starting TX (%d data bytes)", this->msg_tx_[0]);
   // Go to IDLE first so the subsequent STX is not subject to CCA.
   // (STX from RX with MCSM1 CCA_MODE=3 requires a clear channel, which
@@ -388,6 +398,7 @@ void Elero::advance_tx_() {
         this->write_cmd(CC1101_SRX);
         this->received_ = false;
         this->tx_phase_ = TxPhase::IDLE;
+        this->last_tx_completed_ms_ = millis();
       } else if (millis() > this->tx_deadline_ms_) {
         ESP_LOGE(TAG, "FLUSH_RX: timed out waiting for IDLE: 0x%02x",
                  this->read_status(CC1101_MARCSTATE));
@@ -395,6 +406,7 @@ void Elero::advance_tx_() {
         this->write_cmd(CC1101_SRES);
         this->received_ = false;
         this->tx_phase_ = TxPhase::IDLE;
+        this->last_tx_completed_ms_ = millis();
       }
       break;
   }
