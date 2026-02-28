@@ -65,12 +65,19 @@ void EleroCover::loop() {
 
   // Stop verification: poll motor to confirm it actually stopped
   if (this->stop_verify_at_ > 0 && now >= this->stop_verify_at_) {
-    this->stop_verify_at_ = 0;
     if (this->stop_verify_retries_ < ELERO_STOP_VERIFY_MAX_RETRIES) {
+      this->stop_verify_retries_++;
       ESP_LOGD(TAG, "Stop verify poll #%d for blind 0x%06x",
-               this->stop_verify_retries_ + 1, this->command_.blind_addr);
+               this->stop_verify_retries_, this->command_.blind_addr);
       if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE)
         this->commands_to_send_.push(this->command_check_);
+      // Reschedule in case no RF response arrives (prevents verification stall)
+      this->stop_verify_at_ = now + ELERO_STOP_VERIFY_DELAY_MS;
+    } else {
+      // Exhausted retries — give up verification
+      ESP_LOGW(TAG, "Stop verification exhausted %d retries for blind 0x%06x",
+               ELERO_STOP_VERIFY_MAX_RETRIES, this->command_.blind_addr);
+      this->stop_verify_at_ = 0;
     }
   }
 
@@ -340,10 +347,17 @@ void EleroCover::start_movement(CoverOperation dir) {
       }
     break;
     case COVER_OPERATION_IDLE:
+      ESP_LOGI(TAG, "Blind 0x%06x manual stop at position %.2f",
+               this->command_.blind_addr, this->position);
       // Clear any pending movement commands so STOP is sent immediately
       while (!this->commands_to_send_.empty())
         this->commands_to_send_.pop();
-      this->commands_to_send_.push(this->command_stop_);
+      // Send stop multiple times for RF reliability (mirrors auto-stop behavior)
+      for (uint8_t i = 0; i < ELERO_STOP_REPEAT_COUNT; i++)
+        this->commands_to_send_.push(this->command_stop_);
+      // Schedule verification to confirm motor actually stopped
+      this->stop_verify_at_ = millis() + ELERO_STOP_VERIFY_DELAY_MS;
+      this->stop_verify_retries_ = 0;
     break;
   }
 
