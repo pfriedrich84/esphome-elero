@@ -110,6 +110,8 @@ class EleroCover : public cover::Cover, public Component, public EleroBlindBase 
   uint8_t send_retries_{0};
   uint8_t send_packets_{0};
   cover::CoverOperation last_operation_{cover::COVER_OPERATION_OPENING};
+  uint32_t stop_verify_at_{0};          // millis() when to poll for stop confirmation (0 = inactive)
+  uint8_t  stop_verify_retries_{0};     // remaining stop-verify cycles
 };
 
 } // namespace elero
