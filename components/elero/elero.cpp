@@ -1,6 +1,9 @@
 #include "elero.h"
 #include "esphome/core/log.h"
 #include "esphome/core/helpers.h"
+#ifdef USE_LOGGER
+#include "esphome/components/logger/logger.h"
+#endif
 #include <cstring>
 #include <algorithm>
 
@@ -267,6 +270,35 @@ void Elero::setup() {
   this->gdo0_pin_->attach_interrupt(Elero::interrupt, this, gpio::INTERRUPT_FALLING_EDGE);
   this->reset();
   this->init();
+
+#ifdef USE_LOGGER
+  // Forward all ESP_LOG messages into the ring buffer so the web UI Log tab
+  // can display them when capture is enabled.
+  if (logger::global_logger != nullptr) {
+    logger::global_logger->add_on_log_callback(
+        [this](int level, const char *tag, const char *message) {
+          // Map ESPHome levels (1-7) to the 5-level scheme used by the web UI:
+          //   ESPHome 1 ERROR         → 1 error
+          //   ESPHome 2 WARN          → 2 warn
+          //   ESPHome 3 INFO          → 3 info
+          //   ESPHome 4 CONFIG        → 3 info
+          //   ESPHome 5 DEBUG         → 4 debug
+          //   ESPHome 6/7 VERBOSE+    → 5 verbose
+          uint8_t mapped;
+          if (level <= 1)
+            mapped = 1;
+          else if (level == 2)
+            mapped = 2;
+          else if (level <= 4)
+            mapped = 3;
+          else if (level == 5)
+            mapped = 4;
+          else
+            mapped = 5;
+          this->append_log(mapped, tag, "%s", message);
+        });
+  }
+#endif
 }
 
 void Elero::reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
