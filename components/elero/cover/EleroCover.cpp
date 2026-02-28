@@ -48,15 +48,39 @@ void EleroCover::loop() {
   uint32_t intvl = this->poll_intvl_;
   uint32_t now = millis();
   if(this->current_operation != COVER_OPERATION_IDLE) {
-    if(this->movement_start_ > 0 && (now - this->movement_start_) > ELERO_TIMEOUT_MOVEMENT) {
+    // Compute a tighter timeout when the travel duration is known:
+    // 3× the expected duration is generous enough to handle slow blinds
+    // but avoids the full 120 s hard timeout for typical 30 s movements.
+    uint32_t expected_dur_for_timeout = (this->current_operation == COVER_OPERATION_OPENING)
+                                            ? this->open_duration_
+                                            : this->close_duration_;
+    uint32_t effective_timeout = ELERO_TIMEOUT_MOVEMENT;  // default 120 s
+    if (expected_dur_for_timeout > 0) {
+      uint32_t travel_timeout = expected_dur_for_timeout * 3;
+      if (travel_timeout < effective_timeout)
+        effective_timeout = travel_timeout;
+    }
+    if(this->movement_start_ > 0 && (now - this->movement_start_) > effective_timeout) {
       // Force idle if movement timed out with no RF feedback
       ESP_LOGW(TAG, "Blind 0x%06x: movement timed out after %us with no RF feedback, forcing idle",
-               this->command_.blind_addr, ELERO_TIMEOUT_MOVEMENT / 1000);
+               this->command_.blind_addr, effective_timeout / 1000);
       this->current_operation = COVER_OPERATION_IDLE;
       this->movement_start_ = 0;
       this->publish_state();
     } else {
-      intvl = ELERO_POLL_INTERVAL_MOVING;  // Poll frequently while moving
+      // Determine expected travel duration for the current direction
+      uint32_t expected_dur = (this->current_operation == COVER_OPERATION_OPENING)
+                                  ? this->open_duration_
+                                  : this->close_duration_;
+      if (expected_dur > 0 &&
+          (now - this->movement_start_) > expected_dur + ELERO_POST_MOVEMENT_POLL_DELAY) {
+        // Travel time + post-movement poll already elapsed — blind should
+        // have responded by now.  Switch to a relaxed poll rate to reduce
+        // RF traffic while we wait for the 120 s movement timeout.
+        intvl = ELERO_POLL_INTERVAL_POST_TRAVEL;
+      } else {
+        intvl = ELERO_POLL_INTERVAL_MOVING;  // Poll frequently while moving
+      }
     }
   }
 
