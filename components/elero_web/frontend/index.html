@@ -31,6 +31,9 @@
     <button class="tab-btn" :class="{active: tab==='discovery'}"  @click="tab='discovery'">
       Discovery <span class="tab-badge" x-text="discoveredNew.length" x-show="discoveredNew.length>0"></span>
     </button>
+    <button class="tab-btn" :class="{active: tab==='log'}"        @click="tab='log'">
+      Log <span class="tab-badge log-badge" x-text="logEntries.length" x-show="logEntries.length>0"></span>
+    </button>
     <button class="tab-btn" :class="{active: tab==='config'}"     @click="tab='config'">Configuration</button>
   </nav>
 
@@ -166,6 +169,46 @@
       </div>
     </section>
 
+    <!-- ══════════════ LOG TAB ══════════════ -->
+    <section x-show="tab==='log'" x-cloak>
+      <div class="card">
+        <div class="card-header">
+          <div class="log-controls">
+            <span class="status-dot" :class="logCapture ? 'scanning' : 'idle'"></span>
+            <button class="btn btn-sm btn-primary" @click="startCapture()" :disabled="logCapture">Start</button>
+            <button class="btn btn-sm btn-danger"  @click="stopCapture()"  :disabled="!logCapture">Stop</button>
+            Level:
+            <select x-model="logLevel" class="level-select">
+              <option value="5">VERBOSE</option>
+              <option value="4">DEBUG</option>
+              <option value="3" selected>INFO</option>
+              <option value="2">WARN</option>
+              <option value="1">ERROR</option>
+            </select>
+          </div>
+          <div>
+            <label class="check-label">
+              <input type="checkbox" x-model="logAutoScroll"> Auto-scroll
+            </label>
+            <button class="btn btn-sm btn-outline" @click="clearLog()">Clear</button>
+          </div>
+        </div>
+        <div class="log-box" id="log-box">
+          <template x-if="filteredLog.length === 0">
+            <div class="empty">No log entries. <span x-show="!logCapture">Start capture first.</span></div>
+          </template>
+          <template x-for="e in filteredLog" :key="e.t+'_'+e.idx">
+            <div class="log-line" :class="'log-'+e.level_str">
+              <span class="log-ts" x-text="fmtTs(e.t)"></span>
+              <span class="log-level" x-text="e.level_str.toUpperCase().padEnd(5)"></span>
+              <span class="log-tag" x-text="e.tag"></span>
+              <span class="log-msg" x-html="linkAddrs(e.msg)"></span>
+            </div>
+          </template>
+        </div>
+      </div>
+    </section>
+
     <!-- ══════════════ CONFIGURATION TAB ══════════════ -->
     <section x-show="tab==='config'" x-cloak>
 
@@ -208,7 +251,6 @@
             <button class="btn btn-primary" @click="startDump()" :disabled="dumpActive">▶ Start Dump</button>
             <button class="btn btn-danger"  @click="stopDump()"  :disabled="!dumpActive">■ Stop</button>
             <button class="btn btn-outline" @click="clearDump()">Clear</button>
-            <button class="btn btn-outline" @click="downloadDump()" :disabled="dumpPackets.length===0">&#8595; Download</button>
           </div>
           <p class="hint">Records all received RF packets (max 50). Green = valid, red = rejected.</p>
           <div class="dump-wrap" x-show="dumpPackets.length>0">

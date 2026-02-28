@@ -99,6 +99,16 @@ document.addEventListener('alpine:init', () => {
     // YAML modal
     yamlContent: null,
 
+    // Log
+    logCapture: false,
+    logLevel: '3',
+    logAutoScroll: true,
+    logEntries: [],
+    logLastTs: 0,
+    get filteredLog() {
+      return this.logEntries.filter(e => e.level <= parseInt(this.logLevel))
+    },
+
     // Config — frequency
     freq: { freq2: '', freq1: '', freq0: '' },
     freqStatus: '',
@@ -114,6 +124,7 @@ document.addEventListener('alpine:init', () => {
     // Polling intervals
     _pollCovers: null,
     _pollDisc: null,
+    _pollLog: null,
     _pollDump: null,
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -124,6 +135,7 @@ document.addEventListener('alpine:init', () => {
       this._pollCovers = setInterval(() => this.refreshCovers(), 3000)
       this._pollDisc   = setInterval(() => this.refreshDiscovered(), 3000)
       this._pollDump   = setInterval(() => this.refreshDump(), 2000)
+      this._pollLog    = setInterval(() => this.refreshLog(), 1500)
     },
 
     // ── Toast ─────────────────────────────────────────────────────────────────
@@ -142,7 +154,7 @@ document.addEventListener('alpine:init', () => {
         this.freq.freq2 = d.freq2 || this.freq.freq2
         this.freq.freq1 = d.freq1 || this.freq.freq1
         this.freq.freq0 = d.freq0 || this.freq.freq0
-      } catch (e) { console.warn('refreshInfo failed:', e) }
+      } catch {}
     },
 
     // ── Covers ────────────────────────────────────────────────────────────────
@@ -159,7 +171,7 @@ document.addEventListener('alpine:init', () => {
         }))
         // Also pull uptime from info periodically
         this.uptimeMs += 3000  // rough increment
-      } catch (e) { console.warn('refreshCovers failed:', e) }
+      } catch {}
     },
 
     toggleSettings(c) {
@@ -196,7 +208,7 @@ document.addEventListener('alpine:init', () => {
         const d = await api('GET', '/elero/api/discovered')
         this.scanning = d.scanning
         this.allDiscovered = d.blinds || []
-      } catch (e) { console.warn('refreshDiscovered failed:', e) }
+      } catch {}
     },
 
     async startScan() {
@@ -267,12 +279,73 @@ document.addEventListener('alpine:init', () => {
         .catch(() => this.showToast('Copy failed', true))
     },
 
+    // ── Log ───────────────────────────────────────────────────────────────────
+    async startCapture() {
+      try {
+        await api('POST', '/elero/api/logs/capture/start')
+        this.logCapture = true
+        this.showToast('Log capture started')
+      } catch (e) { this.showToast(`Failed: ${e.message}`, true) }
+    },
+
+    async stopCapture() {
+      try {
+        await api('POST', '/elero/api/logs/capture/stop')
+        this.logCapture = false
+        this.showToast('Log capture stopped')
+      } catch (e) { this.showToast(`Failed: ${e.message}`, true) }
+    },
+
+    async clearLog() {
+      try {
+        await api('POST', '/elero/api/logs/clear')
+        this.logEntries = []
+        this.logLastTs = 0
+        this.showToast('Log cleared')
+      } catch (e) { this.showToast(`Failed: ${e.message}`, true) }
+    },
+
+    async refreshLog() {
+      try {
+        const d = await api('GET', '/elero/api/logs', { since: this.logLastTs })
+        this.logCapture = d.capture_active
+        if (d.entries && d.entries.length > 0) {
+          const newEntries = d.entries.map((e, i) => ({ ...e, idx: this.logEntries.length + i }))
+          this.logEntries.push(...newEntries)
+          // Keep buffer to 500 entries
+          if (this.logEntries.length > 500) this.logEntries.splice(0, this.logEntries.length - 500)
+          this.logLastTs = newEntries[newEntries.length - 1].t
+          if (this.logAutoScroll) {
+            this.$nextTick(() => {
+              const box = document.getElementById('log-box')
+              if (box) box.scrollTop = box.scrollHeight
+            })
+          }
+        }
+      } catch {}
+    },
+
+    // Replace 0xABCDEF hex addresses with linked name annotations
+    linkAddrs(msg) {
+      if (!msg) return ''
+      const addrMap = {}
+      for (const c of this.covers) addrMap[c.blind_address] = c.name
+      // Escape HTML first
+      const safe = msg.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      return safe.replace(/0x[0-9a-fA-F]{6}/g, m => {
+        const name = addrMap[m.toLowerCase()] || addrMap[m]
+        return name
+          ? `${m}<span class="blind-ref">(${name})</span>`
+          : m
+      })
+    },
+
     // ── Frequency ─────────────────────────────────────────────────────────────
     async loadFrequency() {
       try {
         const d = await api('GET', '/elero/api/frequency')
         this.freq = { freq2: d.freq2, freq1: d.freq1, freq0: d.freq0 }
-      } catch (e) { console.warn('loadFrequency failed:', e) }
+      } catch {}
     },
 
     applyPreset(v) {
@@ -316,26 +389,12 @@ document.addEventListener('alpine:init', () => {
       } catch (e) { this.showToast(`Failed: ${e.message}`, true) }
     },
 
-    async downloadDump() {
-      try {
-        const resp = await fetch('/elero/api/packets/download')
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
-        const blob = await resp.blob()
-        const url  = URL.createObjectURL(blob)
-        const a    = document.createElement('a')
-        a.href = url
-        a.download = `elero_packets_${Date.now()}.json`
-        a.click()
-        URL.revokeObjectURL(url)
-      } catch (e) { this.showToast(`Download failed: ${e.message}`, true) }
-    },
-
     async refreshDump() {
       try {
         const d = await api('GET', '/elero/api/packets')
         this.dumpActive  = d.dump_active
         this.dumpPackets = d.packets || []
-      } catch (e) { console.warn('refreshDump failed:', e) }
+      } catch {}
     },
 
     // ── Helpers exposed to template ───────────────────────────────────────────

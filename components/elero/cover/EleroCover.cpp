@@ -25,7 +25,7 @@ void EleroCover::dump_config() {
 
 void EleroCover::setup() {
   if (this->parent_ == nullptr) {
-    ESP_LOGE(TAG, "Elero parent not configured for cover '%s'", this->get_name().c_str());
+    ESP_LOGE(TAG, "Elero parent not configured");
     this->mark_failed();
     return;
   }
@@ -37,51 +37,14 @@ void EleroCover::setup() {
     if((this->open_duration_ > 0) && (this->close_duration_ > 0))
       this->position = 0.5f;
   }
-  // Publish initial state so Home Assistant has correct state on boot
-  this->publish_state(false);
-  ESP_LOGI(TAG, "Cover '%s' ready: blind=0x%06x, remote=0x%06x, ch=%d, poll=%dms",
-           this->get_name().c_str(), this->command_.blind_addr,
-           this->command_.remote_addr, this->command_.channel, this->poll_intvl_);
 }
 
 void EleroCover::loop() {
   uint32_t intvl = this->poll_intvl_;
   uint32_t now = millis();
   if(this->current_operation != COVER_OPERATION_IDLE) {
-    // Compute a tighter timeout when the travel duration is known:
-    // 3× the expected duration is generous enough to handle slow blinds
-    // but avoids the full 120 s hard timeout for typical 30 s movements.
-    uint32_t expected_dur_for_timeout = (this->current_operation == COVER_OPERATION_OPENING)
-                                            ? this->open_duration_
-                                            : this->close_duration_;
-    uint32_t effective_timeout = ELERO_TIMEOUT_MOVEMENT;  // default 120 s
-    if (expected_dur_for_timeout > 0) {
-      uint32_t travel_timeout = expected_dur_for_timeout * 3;
-      if (travel_timeout < effective_timeout)
-        effective_timeout = travel_timeout;
-    }
-    if(this->movement_start_ > 0 && (now - this->movement_start_) > effective_timeout) {
-      // Force idle if movement timed out with no RF feedback
-      ESP_LOGW(TAG, "Blind 0x%06x: movement timed out after %us with no RF feedback, forcing idle",
-               this->command_.blind_addr, effective_timeout / 1000);
-      this->current_operation = COVER_OPERATION_IDLE;
-      this->movement_start_ = 0;
-      this->publish_state();
-    } else {
-      // Determine expected travel duration for the current direction
-      uint32_t expected_dur = (this->current_operation == COVER_OPERATION_OPENING)
-                                  ? this->open_duration_
-                                  : this->close_duration_;
-      if (expected_dur > 0 &&
-          (now - this->movement_start_) > expected_dur + ELERO_POST_MOVEMENT_POLL_DELAY) {
-        // Travel time + post-movement poll already elapsed — blind should
-        // have responded by now.  Switch to a relaxed poll rate to reduce
-        // RF traffic while we wait for the 120 s movement timeout.
-        intvl = ELERO_POLL_INTERVAL_POST_TRAVEL;
-      } else {
-        intvl = ELERO_POLL_INTERVAL_MOVING;  // Poll frequently while moving
-      }
-    }
+    if((now - this->movement_start_) < ELERO_TIMEOUT_MOVEMENT)  // Poll frequently while moving (up to 2 min timeout)
+      intvl = ELERO_POLL_INTERVAL_MOVING;
   }
 
   if((now > this->poll_offset_) && (now - this->poll_offset_ - this->last_poll_) > intvl) {
@@ -109,19 +72,6 @@ void EleroCover::loop() {
         this->commands_to_send_.push(this->command_stop_);
         this->current_operation = COVER_OPERATION_IDLE;
         this->target_position_ = COVER_OPEN;
-      }
-    } else if ((this->current_operation == COVER_OPERATION_OPENING && this->position >= COVER_OPEN) ||
-               (this->current_operation == COVER_OPERATION_CLOSING && this->position <= COVER_CLOSED)) {
-      // Dead-reckoned position reached the physical limit — the motor stops
-      // itself at the end-stops, so transition to idle without sending STOP.
-      ESP_LOGD(TAG, "Blind 0x%06x: position reached limit (%.0f%%), transitioning to idle",
-               this->command_.blind_addr, this->position * 100.0f);
-      this->current_operation = COVER_OPERATION_IDLE;
-      this->movement_start_ = 0;
-      this->target_position_ = COVER_OPEN;
-      // Schedule a confirmation poll if none is already pending
-      if (this->post_movement_poll_at_ == 0 || now >= this->post_movement_poll_at_) {
-        this->post_movement_poll_at_ = now + ELERO_POST_MOVEMENT_POLL_DELAY;
       }
     }
 
@@ -158,17 +108,15 @@ void EleroCover::handle_commands(uint32_t now) {
         this->send_packets_++;
         this->send_retries_ = 0;
         if(this->send_packets_ >= ELERO_SEND_PACKETS) {
-          ESP_LOGD(TAG, "Blind 0x%06x: command 0x%02x sent successfully",
-                   this->command_.blind_addr, this->commands_to_send_.front());
           this->commands_to_send_.pop();
           this->send_packets_ = 0;
           this->increase_counter();
         }
       } else {
-        ESP_LOGD(TAG, "TX busy, retry #%d for blind 0x%06x", this->send_retries_, this->command_.blind_addr);
+        ESP_LOGD(TAG, "Retry #%d for blind 0x%06x", this->send_retries_, this->command_.blind_addr);
         this->send_retries_++;
         if(this->send_retries_ > ELERO_SEND_RETRIES) {
-          ESP_LOGE(TAG, "Blind 0x%06x: hit maximum retries, giving up", this->command_.blind_addr);
+          ESP_LOGE(TAG, "Hit maximum number of retries, giving up.");
           this->send_retries_ = 0;
           this->commands_to_send_.pop();
         }
@@ -188,15 +136,14 @@ cover::CoverTraits EleroCover::get_traits() {
   else
     traits.set_supports_position(false);
   traits.set_supports_toggle(true);
-  traits.set_is_assumed_state(false);
+  traits.set_is_assumed_state(true);
   traits.set_supports_tilt(this->supports_tilt_);
   return traits;
 }
 
 void EleroCover::set_rx_state(uint8_t state) {
-  uint8_t old_state = this->last_state_raw_;  // Capture before overwrite for logging
   this->last_state_raw_ = state;
-  ESP_LOGD(TAG, "Blind 0x%06x state: 0x%02x (%s)", this->command_.blind_addr, state, elero_state_to_string(state));
+  ESP_LOGV(TAG, "Got state: 0x%02x (%s) for blind 0x%06x", state, elero_state_to_string(state), this->command_.blind_addr);
   float pos = this->position;
   float current_tilt = this->tilt;
   CoverOperation op = this->current_operation;
@@ -246,19 +193,16 @@ void EleroCover::set_rx_state(uint8_t state) {
     current_tilt = 0.0;
     break;
   case ELERO_STATE_BLOCKING:
-  case ELERO_STATE_OVERHEATED:
-  case ELERO_STATE_TIMEOUT:
-    ESP_LOGW(TAG, "Blind 0x%06x reports %s", this->command_.blind_addr,
-             elero_state_to_string(state));
+    ESP_LOGW(TAG, "Blind 0x%06x reports BLOCKING", this->command_.blind_addr);
     op = COVER_OPERATION_IDLE;
-    // Flush pending commands — motor is in error, don't send more
-    while (!this->commands_to_send_.empty()) this->commands_to_send_.pop();
-    this->send_packets_ = 0;
-    this->send_retries_ = 0;
-    // Cancel movement tracking
-    this->movement_start_ = 0;
-    // Schedule recovery poll (10s later) to check if blind has recovered
-    this->post_movement_poll_at_ = millis() + 10000;
+    break;
+  case ELERO_STATE_OVERHEATED:
+    ESP_LOGW(TAG, "Blind 0x%06x reports OVERHEATED", this->command_.blind_addr);
+    op = COVER_OPERATION_IDLE;
+    break;
+  case ELERO_STATE_TIMEOUT:
+    ESP_LOGW(TAG, "Blind 0x%06x reports TIMEOUT", this->command_.blind_addr);
+    op = COVER_OPERATION_IDLE;
     break;
   default:
     op = COVER_OPERATION_IDLE;
@@ -266,22 +210,6 @@ void EleroCover::set_rx_state(uint8_t state) {
   }
 
   if((pos != this->position) || (op != this->current_operation) || (current_tilt != this->tilt)) {
-    ESP_LOGI(TAG, "Blind 0x%06x state change: %s -> %s (pos=%.0f%%, op=%s)",
-             this->command_.blind_addr,
-             elero_state_to_string(old_state), elero_state_to_string(state),
-             pos * 100.0f,
-             op == cover::COVER_OPERATION_IDLE ? "idle" :
-             op == cover::COVER_OPERATION_OPENING ? "opening" : "closing");
-    // If the operation direction changed (e.g. physical remote reversed the blind),
-    // restart dead-reckoning from the current position.
-    if (op != COVER_OPERATION_IDLE && op != this->current_operation) {
-      this->movement_start_ = millis();
-      this->last_recompute_time_ = millis();
-    }
-    // If movement just stopped, clear the tracking timestamp.
-    if (op == COVER_OPERATION_IDLE && this->current_operation != COVER_OPERATION_IDLE) {
-      this->movement_start_ = 0;
-    }
     this->position = pos;
     this->tilt = current_tilt;
     this->current_operation = op;
@@ -338,7 +266,7 @@ void EleroCover::control(const cover::CoverCall &call) {
 void EleroCover::start_movement(CoverOperation dir) {
   switch(dir) {
     case COVER_OPERATION_OPENING:
-      ESP_LOGD(TAG, "Blind 0x%06x: sending OPEN (cmd=0x%02x)", this->command_.blind_addr, this->command_up_);
+      ESP_LOGV(TAG, "Sending OPEN command");
       if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE) {
         this->commands_to_send_.push(this->command_up_);
         // Reset tilt state on movement
@@ -347,7 +275,7 @@ void EleroCover::start_movement(CoverOperation dir) {
       }
     break;
     case COVER_OPERATION_CLOSING:
-      ESP_LOGD(TAG, "Blind 0x%06x: sending CLOSE (cmd=0x%02x)", this->command_.blind_addr, this->command_down_);
+      ESP_LOGV(TAG, "Sending CLOSE command");
       if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE) {
         this->commands_to_send_.push(this->command_down_);
         // Reset tilt state on movement
@@ -356,7 +284,6 @@ void EleroCover::start_movement(CoverOperation dir) {
       }
     break;
     case COVER_OPERATION_IDLE:
-      ESP_LOGD(TAG, "Blind 0x%06x: sending STOP (cmd=0x%02x)", this->command_.blind_addr, this->command_stop_);
       // Clear any pending movement commands so STOP is sent immediately
       while (!this->commands_to_send_.empty())
         this->commands_to_send_.pop();
@@ -372,15 +299,9 @@ void EleroCover::start_movement(CoverOperation dir) {
   this->last_recompute_time_ = millis();
 
   if(dir == COVER_OPERATION_OPENING && this->open_duration_ > 0) {
-    float travel = this->target_position_ - this->position;
-    if (travel < 0.0f) travel = 1.0f;  // fallback to full duration
-    uint32_t travel_ms = static_cast<uint32_t>(travel * this->open_duration_);
-    this->post_movement_poll_at_ = this->movement_start_ + travel_ms + ELERO_POST_MOVEMENT_POLL_DELAY;
+    this->post_movement_poll_at_ = this->movement_start_ + this->open_duration_ + ELERO_POST_MOVEMENT_POLL_DELAY;
   } else if(dir == COVER_OPERATION_CLOSING && this->close_duration_ > 0) {
-    float travel = this->position - this->target_position_;
-    if (travel < 0.0f) travel = 1.0f;  // fallback to full duration
-    uint32_t travel_ms = static_cast<uint32_t>(travel * this->close_duration_);
-    this->post_movement_poll_at_ = this->movement_start_ + travel_ms + ELERO_POST_MOVEMENT_POLL_DELAY;
+    this->post_movement_poll_at_ = this->movement_start_ + this->close_duration_ + ELERO_POST_MOVEMENT_POLL_DELAY;
   } else {
     this->post_movement_poll_at_ = 0;
   }
