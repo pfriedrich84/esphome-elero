@@ -6,7 +6,7 @@ This file provides guidance for AI assistants working in this repository. It des
 
 ## Project Overview
 
-`esphome-elero` is a custom **ESPHome external component** that enables Home Assistant to control Elero wireless motor blinds (rollers, shutters, awnings) via a **CC1101 868 MHz (or 433 MHz) RF transceiver** connected to an ESP32 over SPI.
+`esphome-elero` is a custom **ESPHome external component** that enables Home Assistant to control Elero wireless motor blinds (rollers, shutters, awnings) and lights (dimmers) via a **CC1101 868 MHz (or 433 MHz) RF transceiver** connected to an ESP32 over SPI.
 
 The component is loaded directly from GitHub in an ESPHome YAML configuration:
 
@@ -17,11 +17,14 @@ external_components:
 
 **Key capabilities:**
 - Send open/close/stop/tilt commands to Elero blinds
+- On/off and brightness control for Elero wireless lights (dimmers)
 - Receive status feedback (top, bottom, moving, blocked, overheated, etc.)
-- Track cover position based on movement timing
+- Track cover position based on movement timing (dead-reckoning)
 - RSSI signal strength monitoring per blind
 - RF discovery scan to find nearby blinds (web UI and log-based)
-- Optional web UI served at `http://<device-ip>/elero` for discovery and YAML generation
+- Runtime blind adoption from web UI without reflashing
+- RF packet dump and log capture for diagnostics
+- Optional web UI served at `http://<device-ip>/elero` for discovery, control, and YAML generation
 
 **Upstream credits:**
 - Encryption/decryption: [QuadCorei8085/elero_protocol](https://github.com/QuadCorei8085/elero_protocol) (MIT)
@@ -34,36 +37,57 @@ external_components:
 
 ```
 esphome-elero/
+├── .github/
+│   └── FUNDING.yml                    # GitHub Sponsors config
+├── .gitignore                         # Python cache exclusions
 ├── CLAUDE.md                          # This file
 ├── README.md                          # Main documentation (German + English)
 ├── example.yaml                       # Complete ESPHome config example
 ├── docs/
 │   ├── INSTALLATION.md                # Step-by-step hardware and software setup
 │   ├── CONFIGURATION.md               # Full parameter reference
-│   └── examples/                      # Additional YAML examples
+│   └── examples/                      # Additional YAML examples (.gitkeep)
 └── components/
     ├── elero/                         # Main hub component
     │   ├── __init__.py                # ESPHome component schema & code-gen (hub)
-    │   ├── elero.h                    # C++ hub class header
-    │   ├── elero.cpp                  # C++ RF protocol implementation (~625 lines)
+    │   ├── elero.h                    # C++ hub class header (369 lines)
+    │   ├── elero.cpp                  # C++ RF protocol implementation (1060 lines)
     │   ├── cc1101.h                   # CC1101 register map & command strobes
     │   ├── cover/                     # Cover (blind) platform
-    │   │   ├── __init__.py            # Cover schema & code-gen
-    │   │   ├── EleroCover.h           # Cover class header
-    │   │   └── EleroCover.cpp         # Cover logic, position tracking (~307 lines)
+    │   │   ├── __init__.py            # Cover schema, auto-sensors, validation
+    │   │   ├── EleroCover.h           # Cover class header (120 lines)
+    │   │   └── EleroCover.cpp         # Cover logic, position tracking (405 lines)
+    │   ├── light/                     # Light (dimmer) platform
+    │   │   ├── __init__.py            # Light schema & code-gen
+    │   │   ├── EleroLight.h           # Light class header (101 lines)
+    │   │   └── EleroLight.cpp         # Light logic, brightness tracking (236 lines)
     │   ├── button/                    # Scan button platform
-    │   │   ├── __init__.py
-    │   │   ├── elero_button.h
-    │   │   └── elero_button.cpp
+    │   │   ├── __init__.py            # Button schema (scan + light command)
+    │   │   ├── elero_button.h         # Button class header
+    │   │   └── elero_button.cpp       # Button press handler (46 lines)
     │   ├── sensor/                    # RSSI sensor platform
-    │   │   └── __init__.py
+    │   │   └── __init__.py            # Registers sensor with hub by blind address
     │   └── text_sensor/               # Blind status text sensor platform
-    │       └── __init__.py
+    │       └── __init__.py            # Registers text sensor with hub by blind address
     └── elero_web/                     # Optional web UI component
-        ├── __init__.py
-        ├── elero_web_server.h
-        ├── elero_web_server.cpp       # REST API + CORS (~273 lines)
-        └── elero_web_ui.h             # Inline web UI HTML/JS
+        ├── __init__.py                # Web server schema & code-gen
+        ├── elero_web_server.h         # Web server class header
+        ├── elero_web_server.cpp       # REST API + CORS (878 lines)
+        ├── elero_web_ui.h             # AUTO-GENERATED: embedded HTML/JS/CSS
+        ├── switch/                    # Web UI enable/disable switch sub-platform
+        │   ├── __init__.py            # Switch schema (depends on elero_web)
+        │   ├── elero_web_switch.h     # Switch class header
+        │   └── elero_web_switch.cpp   # Switch logic (31 lines)
+        └── frontend/                  # Web UI source (Vite + Alpine.js build)
+            ├── package.json           # npm project (Vite + Alpine.js)
+            ├── package-lock.json      # Dependency lockfile
+            ├── vite.config.js         # Vite bundler config (single-file output)
+            ├── index.html             # HTML template (336 lines)
+            ├── scripts/
+            │   └── generate_header.mjs  # Post-build: HTML → elero_web_ui.h
+            └── src/
+                ├── main.js            # Frontend application logic (408 lines)
+                └── style.css          # Frontend styles (386 lines)
 ```
 
 ---
@@ -85,25 +109,44 @@ esphome-elero/
 
 ```
 Elero (hub, SPIDevice + Component)
-├── EleroBlindBase (abstract interface)
-│   ├── EleroCover (cover::Cover + Component + EleroBlindBase)
-│   └── EleroLight (light::LightOutput + Component + EleroBlindBase)
+├── EleroBlindBase (abstract interface for covers)
+│   └── EleroCover (cover::Cover + Component + EleroBlindBase)
+├── EleroLightBase (abstract interface for lights)
+│   └── EleroLight (light::LightOutput + Component + EleroLightBase)
 ├── EleroScanButton (button::Button + Component)
 ├── sensor::Sensor (RSSI, registered per blind address)
 ├── text_sensor::TextSensor (status, registered per blind address)
-├── EleroWebServer (Component, wraps web_server_base)
+├── EleroWebServer (Component + AsyncWebHandler, wraps web_server_base)
 │   └── EleroWebSwitch (switch::Switch + Component)
-└── Auto-registered sensors/text sensors per cover (optional)
+├── RuntimeBlind (adopted from web UI, stored in std::map)
+└── Auto-registered sensors/text sensors per cover (optional via auto_sensors)
 ```
 
-The `EleroBlindBase` abstract class decouples the hub (`Elero`) from the cover implementation so `elero.h` never needs to `#include` the cover header. All communication between hub and covers goes through virtual methods.
+The abstract base classes `EleroBlindBase` and `EleroLightBase` decouple the hub (`Elero`) from the cover/light implementations so `elero.h` never needs to `#include` the cover or light headers. All communication between hub and entities goes through virtual methods.
+
+### Non-blocking TX state machine
+
+The radio uses a non-blocking TX state machine that processes one step per `loop()` iteration, allowing RX to continue during TX operations:
+
+```
+IDLE → GOING_IDLE → LOADING → FIRING → TRANSMITTING → VERIFYING → COOLDOWN → IDLE
+```
+
+Each state corresponds to a phase of the CC1101 TX pipeline (see `TxState` enum in `elero.h:23–31`). The hub checks `is_tx_idle()` before accepting new commands.
+
+### Dual interrupt flags
+
+Two `std::atomic<bool>` flags decouple RX-ready detection from TX-done detection:
+- `rx_ready_` — set by ISR only when radio is in RX (`TxState::IDLE` or `COOLDOWN`)
+- `gdo0_fired_` — always set by ISR, used by TX state machine for TX completion detection
 
 ### Data flow
 
 1. `Elero::setup()` configures CC1101 registers over SPI and attaches a GPIO interrupt on `gdo0_pin`.
-2. When the CC1101 signals a received packet (GDO0 interrupt), `Elero::interrupt()` sets `received_ = true`.
-3. `Elero::loop()` detects `received_`, reads the FIFO, decodes and decrypts the packet, then dispatches the state to the matching `EleroBlindBase` via `set_rx_state()`.
-4. `EleroCover::loop()` handles polling timers, position recomputation, and drains the command queue by calling `parent_->send_command()`.
+2. When the CC1101 signals a received packet (GDO0 interrupt), the ISR sets `rx_ready_` and `gdo0_fired_`.
+3. `Elero::loop()` calls `process_rx()` when TX is idle, reads the FIFO, decodes and decrypts the packet, then dispatches the state to the matching `EleroBlindBase`/`EleroLightBase` via `set_rx_state()`.
+4. `Elero::loop()` calls `advance_tx()` to progress the TX state machine one step.
+5. `EleroCover::loop()` / `EleroLight::loop()` handle polling timers, position/brightness recomputation, and drain the command queue by calling `parent_->send_command()`.
 
 ---
 
@@ -116,61 +159,107 @@ The `EleroBlindBase` abstract class decouples the hub (`Elero`) from the cover i
 
 Critical public API:
 - `register_cover(EleroBlindBase*)` — called by each `EleroCover` at setup
-- `send_command(t_elero_command*)` — encodes, encrypts, and transmits a command
-- `start_scan()` / `stop_scan()` — toggle RF discovery mode
+- `register_light(EleroLightBase*)` — called by each `EleroLight` at setup
+- `send_command(t_elero_command*)` — encodes, encrypts, and transmits a command (returns false if TX busy)
+- `is_tx_idle()` — check if TX state machine is ready for a new command
+- `start_scan()` / `stop_scan()` / `is_scanning()` — toggle RF discovery mode
 - `register_rssi_sensor(uint32_t addr, sensor::Sensor*)` — link RSSI sensor to a blind address
 - `register_text_sensor(uint32_t addr, text_sensor::TextSensor*)` — link text sensor to a blind address
-- `interrupt(Elero *arg)` — static ISR, sets `received_` flag
+- `interrupt(Elero *arg)` — static ISR, sets interrupt flags
+
+Discovery and runtime:
+- `get_discovered_blinds()` / `get_discovered_count()` / `clear_discovered()` — manage discovered blinds
+- `adopt_blind(DiscoveredBlind&, name)` — adopt discovered blind for runtime control
+- `remove_runtime_blind(addr)` / `send_runtime_command(addr, cmd)` — manage runtime-adopted blinds
+- `update_runtime_blind_settings(addr, open, close, poll)` — update timing at runtime
+- `get_runtime_blinds()` / `is_blind_adopted(addr)` — query runtime blinds
+
+Diagnostics:
+- `start_packet_dump()` / `stop_packet_dump()` / `get_raw_packets()` — RF packet capture (ring buffer, max 50)
+- `append_log()` / `get_log_entries()` / `set_log_capture()` — persistent log buffer (max 200 entries)
+- `reinit_frequency(freq2, freq1, freq0)` — change CC1101 frequency at runtime
 
 Key constants (defined in `elero.h`):
 
 | Constant | Value | Purpose |
 |---|---|---|
 | `ELERO_MAX_PACKET_SIZE` | 57 | Maximum RF packet length (FCC spec) |
-| `ELERO_POLL_INTERVAL_MOVING` | 2000 ms | Status poll while blind is moving |
+| `ELERO_POLL_INTERVAL_MOVING` | 2 000 ms | Status poll while blind is moving |
 | `ELERO_TIMEOUT_MOVEMENT` | 120 000 ms | Give up movement tracking after 2 min |
+| `ELERO_POST_MOVEMENT_POLL_DELAY` | 5 000 ms | Poll delay after open/close duration elapses |
 | `ELERO_SEND_RETRIES` | 3 | Command retry count |
 | `ELERO_SEND_PACKETS` | 2 | Packets sent per command |
 | `ELERO_DELAY_SEND_PACKETS` | 50 ms | Delay between packet repeats |
+| `ELERO_MAX_COMMAND_QUEUE` | 10 | Max queued commands per blind (prevents OOM) |
 | `ELERO_MAX_DISCOVERED` | 20 | Max blinds tracked in scan mode |
+| `ELERO_MAX_RAW_PACKETS` | 50 | Max raw packets in dump ring buffer |
+| `ELERO_STOP_REPEAT_COUNT` | 2 | Stop commands queued on auto-stop (x2 RF packets each) |
+| `ELERO_TX_LATENCY_COMPENSATION_MS` | 150 ms | Position check lead time for TX pipeline delay |
+| `ELERO_STOP_VERIFY_DELAY_MS` | 500 ms | Delay before polling to verify motor stopped |
+| `ELERO_STOP_VERIFY_MAX_RETRIES` | 3 | Max stop-verify cycles before giving up |
+| `ELERO_MSG_LENGTH` | 0x1d (29) | Fixed message length for TX |
+| `ELERO_CRYPTO_MULT` | 0x708f | Encryption multiplier for counter-based code |
 
-State constants (`ELERO_STATE_*`): `UNKNOWN`, `TOP`, `BOTTOM`, `INTERMEDIATE`, `TILT`, `BLOCKING`, `OVERHEATED`, `TIMEOUT`, `START_MOVING_UP`, `START_MOVING_DOWN`, `MOVING_UP`, `MOVING_DOWN`, `STOPPED`, `TOP_TILT`, `BOTTOM_TILT`
+State constants (`ELERO_STATE_*`): `UNKNOWN`, `TOP`, `BOTTOM`, `INTERMEDIATE`, `TILT`, `BLOCKING`, `OVERHEATED`, `TIMEOUT`, `START_MOVING_UP`, `START_MOVING_DOWN`, `MOVING_UP`, `MOVING_DOWN`, `STOPPED`, `TOP_TILT`, `BOTTOM_TILT`, `OFF` (0x0f, same as `BOTTOM_TILT`), `ON` (0x10)
+
+Key structs:
+- `t_elero_command` — RF command parameters (counter, addresses, channel, pck_inf, hop, payload)
+- `DiscoveredBlind` — discovered blind data (address, remote, channel, RSSI, state, `params_from_command` flag)
+- `RuntimeBlind` — adopted blind data (extends discovered with name, timing config, command queue)
+- `RawPacket` — captured RF packet (timestamp, FIFO data, valid flag, reject reason)
+- `LogEntry` — captured log line (timestamp, level, tag, message)
 
 ### `components/elero/cover/EleroCover.h` / `EleroCover.cpp`
 
 **Class:** `EleroCover : public cover::Cover, public Component, public EleroBlindBase`
 
 Key behaviors:
-- Maintains an internal `std::queue<uint8_t> commands_to_send_` for reliable delivery
+- Maintains an internal `std::queue<uint8_t> commands_to_send_` for reliable delivery (capped at `ELERO_MAX_COMMAND_QUEUE`)
 - Polls blind status at a configurable interval (`poll_intvl_`, default 5 min); while moving, polls every `ELERO_POLL_INTERVAL_MOVING` (2 s)
 - Tracks cover `position` (0.0–1.0) by dead-reckoning against `open_duration_` / `close_duration_` timestamps
 - Supports tilt as a separate operation via `command_tilt_`
 - Staggered poll offsets (`poll_offset_`) prevent all covers from polling simultaneously
 - Auto-generates RSSI and status text sensors unless `auto_sensors: false` is set
+- Stop-verify loop: after auto-stop, verifies motor actually stopped (`stop_verify_at_`, `stop_verify_retries_`)
+- Runtime settings update via `apply_runtime_settings()` from the web API
+- `schedule_immediate_poll()` — triggers an immediate status check (called by hub when remote command detected)
 
 ### `components/elero/light/EleroLight.h` / `EleroLight.cpp`
 
-**Class:** `EleroLight : public light::LightOutput, public Component, public EleroBlindBase`
+**Class:** `EleroLight : public light::LightOutput, public Component, public EleroLightBase`
 
 Key behaviors:
 - Implements on/off and brightness control for Elero wireless lights (dimmers)
-- `dim_duration` parameter controls brightness range: `0s` = on/off only, `>0` = brightness control
+- `dim_duration_` parameter controls brightness range: `0` = on/off only, `>0` = brightness control with dead-reckoning
 - Shares the same RF protocol and command structure as covers
-- Supports optional status checking via `command_check`
+- Tracks brightness (0.0–1.0) by dead-reckoning during dimming operations
+- Configurable command bytes: `command_on_`, `command_off_`, `command_dim_up_`, `command_dim_down_`, `command_stop_`, `command_check_`
+- `ignore_write_state_` flag prevents feedback loops when `set_rx_state()` triggers `write_state()`
+- Supports optional status checking via `command_check_`
+
+### `components/elero/button/elero_button.h` / `elero_button.cpp`
+
+**Class:** `EleroScanButton : public button::Button, public Component`
+
+Key behaviors:
+- Pressing triggers `start_scan()` or `stop_scan()` on the hub depending on `scan_start_` flag
+- Optional: can be linked to an `EleroLightBase` via `light_id` to send a custom `command_byte` (default `0x44`) to a light on press
 
 ### `components/elero_web/elero_web_server.h` / `elero_web_server.cpp`
 
-**Class:** `EleroWebServer : public Component`
+**Class:** `EleroWebServer : public Component, public AsyncWebHandler`
 **Optional sub-platform:** `EleroWebSwitch : public switch::Switch, public Component`
 
 Key behaviors:
-- Hosts the web UI at `http://<device-ip>/elero`
-- Exposes REST API for RF scanning, blind discovery, control, and runtime diagnostics
+- Hosts the web UI at `http://<device-ip>/elero` (redirects `/` → `/elero`)
+- Exposes REST API for RF scanning, blind discovery, control, runtime adoption, and diagnostics
+- All endpoints support CORS via `add_cors_headers()`
 - `EleroWebSwitch` allows runtime enable/disable of all `/elero` endpoints (returns 503 when disabled)
+- URL parsing helper: `parse_addr_url()` extracts hex address from URLs like `/elero/api/covers/0xABCDEF/command`
 
 ### REST API Endpoints
 
-All endpoints are served at `http://<device-ip>/elero` and support CORS. A 503 response is returned if the optional `elero_web` switch is disabled.
+All endpoints are served at `http://<device-ip>/elero` and support CORS. A 503 response is returned if the optional `elero_web` switch is disabled. All POST endpoints also respond to OPTIONS for CORS preflight.
 
 **Core endpoints:**
 
@@ -184,22 +273,30 @@ All endpoints are served at `http://<device-ip>/elero` and support CORS. A 503 r
 | `/elero/api/configured` | GET | JSON array of configured covers with current state |
 | `/elero/api/yaml` | GET | YAML snippet ready to paste into ESPHome config |
 | `/elero/api/info` | GET | Device info (version, discovery count, etc.) |
-| `/elero/api/runtime` | GET | Runtime status (scan active, blinds count, etc.) |
+| `/elero/api/runtime` | GET | JSON array of runtime-adopted blinds |
 
 **Cover/Light control (requires address):**
 
 | Endpoint | Method | Description |
 |---|---|---|
-| `/elero/api/covers/0xADDRESS/command` | POST | Send command to cover/light (body: `{"cmd": "up"\|"down"\|"stop"\|"tilt"}`) |
-| `/elero/api/covers/0xADDRESS/settings` | POST | Update cover settings at runtime (body: JSON with timing/poll settings) |
-| `/elero/api/discovered/0xADDRESS/adopt` | POST | Adopt a discovered blind into configured covers |
+| `/elero/api/covers/0xADDRESS/command` | POST | Send command to cover/light (`{"cmd": "up"\|"down"\|"stop"\|"tilt"}`) |
+| `/elero/api/covers/0xADDRESS/settings` | POST | Update cover settings at runtime (timing/poll) |
+
+**Runtime blind adoption:**
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/elero/api/discovered/0xADDRESS/adopt` | POST | Adopt a discovered blind into runtime blinds |
+| `/elero/api/runtime/0xADDRESS/command` | POST | Send command to runtime-adopted blind |
+| `/elero/api/runtime/0xADDRESS/remove` | POST | Remove a runtime-adopted blind |
+| `/elero/api/runtime/0xADDRESS/settings` | POST | Update runtime blind settings |
 
 **Diagnostics:**
 
 | Endpoint | Method | Description |
 |---|---|---|
 | `/elero/api/frequency` | GET | Current CC1101 frequency settings |
-| `/elero/api/frequency/set` | POST | Update CC1101 frequency (body: `{"freq0": 0x7a, "freq1": 0x71, "freq2": 0x21}`) |
+| `/elero/api/frequency/set` | POST | Update CC1101 frequency (`{"freq0": 0x7a, "freq1": 0x71, "freq2": 0x21}`) |
 | `/elero/api/logs` | GET | Recent log entries (supports `since` query parameter) |
 | `/elero/api/logs/clear` | POST | Clear captured logs |
 | `/elero/api/logs/capture/start` | POST | Start capturing logs |
@@ -214,7 +311,7 @@ All endpoints are served at `http://<device-ip>/elero` and support CORS. A 503 r
 | Endpoint | Method | Description |
 |---|---|---|
 | `/elero/api/ui/status` | GET | Get web UI enabled/disabled state |
-| `/elero/api/ui/enable` | POST | Enable/disable web UI (body: `{"enabled": true\|false}`) |
+| `/elero/api/ui/enable` | POST | Enable/disable web UI (`{"enabled": true\|false}`) |
 
 **HTTP Error Codes:**
 
@@ -224,16 +321,27 @@ All endpoints are served at `http://<device-ip>/elero` and support CORS. A 503 r
 | 409 | Conflict (e.g., trying to start scan when one is already running) |
 | 503 | Service Unavailable (returned when web UI is disabled via switch) |
 
+### Web UI Frontend Build System
+
+The web UI is built from source files in `components/elero_web/frontend/` using **Vite** with the `vite-plugin-singlefile` plugin and **Alpine.js** for reactivity:
+
+- **Build command:** `cd components/elero_web/frontend && npm run build`
+- **Build pipeline:** `vite build` → produces `dist/index.html` (single file with inlined CSS/JS) → `scripts/generate_header.mjs` → writes `../elero_web_ui.h` (C++ raw string literal wrapped in `PROGMEM`)
+- **Output:** `elero_web_ui.h` is auto-generated and should not be edited by hand
+- **Dev server:** `npm run dev` starts Vite dev server for frontend development
+
 ---
 
 ## Naming Conventions
 
 | Item | Convention | Example |
 |---|---|---|
-| C++ classes | PascalCase | `EleroCover`, `EleroWebServer` |
+| C++ classes | PascalCase | `EleroCover`, `EleroWebServer`, `EleroLightBase` |
 | C++ namespaces | lowercase | `esphome::elero` |
-| C++ constants | `UPPER_SNAKE_CASE` with `ELERO_` prefix | `ELERO_COMMAND_COVER_UP` |
-| C++ private members | trailing underscore | `gdo0_pin_`, `scan_mode_` |
+| C++ constants | `UPPER_SNAKE_CASE` with `ELERO_` prefix | `ELERO_COMMAND_COVER_UP`, `ELERO_TX_LATENCY_COMPENSATION_MS` |
+| C++ enums | `PascalCase` enum class with `PascalCase` values | `TxState::GOING_IDLE` |
+| C++ private members | trailing underscore | `gdo0_pin_`, `scan_mode_`, `tx_state_` |
+| C++ structs | PascalCase | `DiscoveredBlind`, `RuntimeBlind`, `RawPacket` |
 | Python config keys | `snake_case` string constants | `"blind_address"`, `"gdo0_pin"` |
 | YAML keys | `snake_case` | `blind_address`, `open_duration` |
 
@@ -249,6 +357,7 @@ When adding a new platform sub-component (e.g., a new sensor type):
    - An `async def to_code(config)` that registers the component and connects it to the parent `Elero` hub
 2. Create the corresponding `.h` and `.cpp` files in the same directory.
 3. Add a `register_<platform>()` method to `Elero` in `elero.h` / `elero.cpp` if the hub needs to dispatch data to it.
+4. If the hub needs to dispatch to the new entity type, create an abstract base class (like `EleroBlindBase` or `EleroLightBase`) to avoid header circular dependencies.
 
 The `CONF_ELERO_ID` pattern is used throughout to resolve the parent hub:
 ```python
@@ -258,6 +367,25 @@ cv.GenerateID(CONF_ELERO_ID): cv.use_id(elero),
 parent = await cg.get_variable(config[CONF_ELERO_ID])
 cg.add(var.set_elero_parent(parent))
 ```
+
+### Component dependencies
+
+| Component | `DEPENDENCIES` | `AUTO_LOAD` |
+|---|---|---|
+| `elero` (hub) | `["spi"]` | — |
+| `elero` cover | `["elero"]` | `["sensor", "text_sensor"]` |
+| `elero` light | `["elero"]` | — |
+| `elero` button | `["elero"]` | — |
+| `elero` sensor | `["elero"]` | — |
+| `elero` text_sensor | `["elero"]` | — |
+| `elero_web` | `["elero"]` | `["web_server_base"]` |
+| `elero_web` switch | `["elero_web"]` | — |
+
+### Schema validation patterns
+
+- **Cover auto-sensors:** `_auto_sensor_validator()` injects RSSI and status sensor sub-configs at validation time when `auto_sensors: true` (default). This ensures `cv.declare_id()` is called in the correct ESPHome phase.
+- **Duration consistency:** `_validate_duration_consistency()` ensures position tracking has both `open_duration` AND `close_duration` set, or both at zero.
+- **Poll interval:** The `poll_interval()` function converts the string `"never"` to `uint32_t` max (4 294 967 295 ms).
 
 ---
 
@@ -288,24 +416,25 @@ spi:
 
 Required parameters:
 - `blind_address` — 3-byte hex address of the motor (e.g., `0xa831e5`)
-- `channel` — RF channel number of the blind
+- `channel` — RF channel number of the blind (0–255)
 - `remote_address` — 3-byte hex address of the remote control paired with the blind
 
 Optional parameters (with defaults):
 - `poll_interval` (default `5min`, or `never`) — how often to query blind status
-- `open_duration` / `close_duration` (default `0s`) — enables position tracking
+- `open_duration` / `close_duration` (default `0s`) — enables position tracking (both must be set or both zero)
 - `supports_tilt` (default `false`)
 - `auto_sensors` (default `true`) — auto-generate RSSI and status text sensors for this cover
+- `rssi_sensor` / `status_sensor` — explicit sensor config (overrides auto-generated ones)
 - `payload_1` (default `0x00`), `payload_2` (default `0x04`)
 - `pck_inf1` (default `0x6a`), `pck_inf2` (default `0x00`)
 - `hop` (default `0x0a`)
-- `command_up/down/stop/check/tilt` — override RF command bytes if non-standard
+- `command_up` (0x20) / `command_down` (0x40) / `command_stop` (0x10) / `command_check` (0x00) / `command_tilt` (0x24) — override RF command bytes
 
 ### Light (`light: platform: elero`)
 
 Required parameters:
 - `blind_address` — 3-byte hex address of the light receiver (e.g., `0xc41a2b`)
-- `channel` — RF channel number of the light
+- `channel` — RF channel number of the light (0–255)
 - `remote_address` — 3-byte hex address of the remote control paired with the light
 
 Optional parameters (with defaults):
@@ -313,7 +442,9 @@ Optional parameters (with defaults):
 - `payload_1` (default `0x00`), `payload_2` (default `0x04`)
 - `pck_inf1` (default `0x6a`), `pck_inf2` (default `0x00`)
 - `hop` (default `0x0a`)
-- `command_on/off/dim_up/dim_down/stop/check` — override RF command bytes if non-standard
+- `command_on` (0x20) / `command_off` (0x40) / `command_dim_up` (0x20) / `command_dim_down` (0x40) / `command_stop` (0x10) / `command_check` (0x00) — override RF command bytes
+
+Uses `light.BRIGHTNESS_ONLY_LIGHT_SCHEMA` (no RGB/color temperature support).
 
 ### Sensors
 
@@ -321,7 +452,7 @@ Optional parameters (with defaults):
 sensor:
   - platform: elero
     blind_address: 0xa831e5   # Required: which blind
-    name: "Blind RSSI"        # Unit: dBm
+    name: "Blind RSSI"        # Unit: dBm, device_class: signal_strength
 
 text_sensor:
   - platform: elero
@@ -329,16 +460,21 @@ text_sensor:
     name: "Blind Status"      # Values: see state constants above
 ```
 
-### Buttons (RF scan)
+### Buttons (RF scan + light commands)
 
 ```yaml
 button:
   - platform: elero
     name: "Start Scan"
-    scan_start: true
+    scan_start: true           # true = start scan, false = stop scan
   - platform: elero
     name: "Stop Scan"
     scan_start: false
+  # Optional: trigger a command on a light
+  - platform: elero
+    name: "Light Command"
+    light_id: my_light         # Reference to an EleroLight
+    command_byte: 0x44         # RF command byte to send (default 0x44)
 ```
 
 ### Web UI (`elero_web`)
@@ -378,6 +514,7 @@ When the switch is OFF, all `/elero` endpoints return HTTP 503 (Service Unavaila
 - ESPHome installed (`pip install esphome`)
 - An ESP32 with a CC1101 module wired to SPI pins + GDO0 GPIO
 - An existing Elero wireless blind system nearby for testing
+- Node.js (for web UI frontend development only)
 
 ### Local development
 
@@ -409,6 +546,18 @@ esphome logs my_device.yaml
 esphome logs --device <ip-address> my_device.yaml
 ```
 
+### Rebuilding the web UI
+
+When modifying frontend files in `components/elero_web/frontend/`:
+
+```bash
+cd components/elero_web/frontend
+npm install          # First time only
+npm run build        # Vite build → generate_header.mjs → elero_web_ui.h
+```
+
+The generated `elero_web_ui.h` must be committed. Do not edit it manually.
+
 ### Finding blind addresses
 
 The typical workflow for a new installation:
@@ -429,24 +578,31 @@ There are no automated tests in this repository. Validation is done manually on 
 1. Flash the firmware and verify the CC1101 initialises (check `esphome logs` for `[I][elero:...]` messages)
 2. Use the RF scan to confirm blind discovery
 3. Test each cover entity (open, close, stop) from Home Assistant
-4. Verify RSSI and status text sensors update correctly
+4. Test light entities (on, off, dim) if applicable
+5. Verify RSSI and status text sensors update correctly
+6. Test web UI discovery, adoption, and control workflows
+7. Verify position tracking accuracy with `open_duration`/`close_duration`
 
 ---
 
 ## Common Pitfalls
 
-- **Wrong frequency**: Most European Elero motors use 868.35 MHz (`freq0=0x7a`). Some use 868.95 MHz (`freq0=0xc0`). If discovery finds nothing, try the alternate frequency.
+- **Wrong frequency**: Most European Elero motors use 868.35 MHz (`freq0=0x7a`). Some use 868.95 MHz (`freq0=0xc0`). If discovery finds nothing, try the alternate frequency. Use the `/elero/api/frequency/set` endpoint to test at runtime.
 - **SPI conflicts**: The CC1101 CS pin must not be shared with any other SPI device.
 - **Using `web_server:` instead of `web_server_base:`**: Adding `web_server:` to your YAML re-enables the default ESPHome entity UI at `/`. Use `web_server_base:` (or rely on its auto-load via `elero_web`) to serve only the Elero UI at `/elero`. Navigating to `/` will redirect automatically to `/elero`.
-- **Position tracking**: Leave `open_duration` and `close_duration` at `0s` if you only need open/close without position — setting incorrect durations causes wrong position estimates.
+- **Position tracking**: Leave `open_duration` and `close_duration` at `0s` if you only need open/close without position — setting incorrect durations causes wrong position estimates. Both must be set or both zero (enforced by `_validate_duration_consistency`).
 - **Poll interval `never`**: Set `poll_interval: never` for blinds that reliably push state updates (avoids unnecessary RF traffic). Internally this maps to `uint32_t` max (4 294 967 295 ms).
+- **TX busy**: `send_command()` returns `false` when the TX state machine is not idle. Callers must check `is_tx_idle()` or handle the rejection.
+- **Command queue overflow**: Each blind's command queue is capped at `ELERO_MAX_COMMAND_QUEUE` (10) to prevent OOM on ESP32.
+- **Web UI `elero_web_ui.h`**: This file is auto-generated by the frontend build system. Always rebuild via `npm run build` in the `frontend/` directory — never edit by hand.
 
 ---
 
 ## Contributing
 
 - Follow the existing naming conventions for C++ and Python code.
-- Keep the `EleroBlindBase` interface minimal — the hub should not depend on cover internals.
+- Keep the `EleroBlindBase` and `EleroLightBase` interfaces minimal — the hub should not depend on cover/light internals.
 - Test changes on real hardware before opening a pull request.
 - Document new configuration parameters in both `README.md` and `docs/CONFIGURATION.md`.
+- When modifying the web UI, rebuild `elero_web_ui.h` and commit it alongside the source changes.
 - The primary development branch convention used by automation is `claude/<session-id>`.
