@@ -343,7 +343,12 @@ void EleroCover::start_movement(CoverOperation dir) {
       // Clear any pending movement commands so STOP is sent immediately
       while (!this->commands_to_send_.empty())
         this->commands_to_send_.pop();
-      this->commands_to_send_.push(this->command_stop_);
+      // Send stop multiple times for RF reliability (mirrors auto-stop behavior)
+      for (uint8_t i = 0; i < ELERO_STOP_REPEAT_COUNT; i++)
+        this->commands_to_send_.push(this->command_stop_);
+      // Schedule verification to confirm motor actually stopped
+      this->stop_verify_at_ = millis() + ELERO_STOP_VERIFY_DELAY_MS;
+      this->stop_verify_retries_ = 0;
     break;
   }
 
