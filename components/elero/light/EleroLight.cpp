@@ -51,7 +51,8 @@ void EleroLight::write_state(LightState *state) {
   float new_brightness = state->current_values.get_brightness();
 
   if (!new_on) {
-    this->commands_to_send_.push(this->command_off_);
+    if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE)
+      this->commands_to_send_.push(this->command_off_);
     this->is_on_ = false;
     this->is_dimming_ = false;
     this->brightness_ = 0.0f;
@@ -63,7 +64,8 @@ void EleroLight::write_state(LightState *state) {
 
   if (this->dim_duration_ == 0) {
     // No brightness support: just toggle on
-    this->commands_to_send_.push(this->command_on_);
+    if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE)
+      this->commands_to_send_.push(this->command_on_);
     this->brightness_ = 1.0f;
     return;
   }
@@ -74,14 +76,16 @@ void EleroLight::write_state(LightState *state) {
 
   if (new_brightness >= 1.0f) {
     // Full brightness shortcut
-    this->commands_to_send_.push(this->command_on_);
+    if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE)
+      this->commands_to_send_.push(this->command_on_);
     this->brightness_ = 1.0f;
     return;
   }
 
   if (this->brightness_ < 0.01f) {
     // Currently off; turn on to full first, then dim down
-    this->commands_to_send_.push(this->command_on_);
+    if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE)
+      this->commands_to_send_.push(this->command_on_);
     this->brightness_ = 1.0f;
     // Now fall through and initiate dim-down
   }
@@ -89,7 +93,8 @@ void EleroLight::write_state(LightState *state) {
   if (new_brightness > this->brightness_ + 0.01f) {
     ESP_LOGD(TAG, "Dimming up 0x%06x from %.2f to %.2f",
              this->command_.blind_addr, this->brightness_, new_brightness);
-    this->commands_to_send_.push(this->command_dim_up_);
+    if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE)
+      this->commands_to_send_.push(this->command_dim_up_);
     this->is_dimming_ = true;
     this->dim_up_ = true;
     this->dimming_start_ = millis();
@@ -97,7 +102,8 @@ void EleroLight::write_state(LightState *state) {
   } else if (new_brightness < this->brightness_ - 0.01f) {
     ESP_LOGD(TAG, "Dimming down 0x%06x from %.2f to %.2f",
              this->command_.blind_addr, this->brightness_, new_brightness);
-    this->commands_to_send_.push(this->command_dim_down_);
+    if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE)
+      this->commands_to_send_.push(this->command_dim_down_);
     this->is_dimming_ = true;
     this->dim_up_ = false;
     this->dimming_start_ = millis();
@@ -122,7 +128,8 @@ void EleroLight::loop() {
     }
 
     if (at_target) {
-      this->commands_to_send_.push(this->command_stop_);
+      if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE)
+        this->commands_to_send_.push(this->command_stop_);
       this->brightness_ = this->target_brightness_;
       this->is_dimming_ = false;
     }
@@ -137,6 +144,9 @@ void EleroLight::loop() {
 }
 
 void EleroLight::handle_commands(uint32_t now) {
+  // Don't attempt TX while the radio is busy — try again next loop()
+  if (!this->parent_->is_tx_idle()) return;
+
   if ((now - this->last_command_) > ELERO_DELAY_SEND_PACKETS) {
     if (!this->commands_to_send_.empty()) {
       this->command_.payload[4] = this->commands_to_send_.front();
@@ -148,6 +158,7 @@ void EleroLight::handle_commands(uint32_t now) {
           this->send_packets_ = 0;
           this->increase_counter();
         }
+        this->last_command_ = now;
       } else {
         ESP_LOGD(TAG, "Retry #%d for light 0x%06x",
                  this->send_retries_, this->command_.blind_addr);
@@ -158,8 +169,8 @@ void EleroLight::handle_commands(uint32_t now) {
           this->send_retries_ = 0;
           this->commands_to_send_.pop();
         }
+        this->last_command_ = now;
       }
-      this->last_command_ = now;
     }
   }
 }
