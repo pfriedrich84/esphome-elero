@@ -110,6 +110,19 @@ void EleroCover::loop() {
         this->current_operation = COVER_OPERATION_IDLE;
         this->target_position_ = COVER_OPEN;
       }
+    } else if ((this->current_operation == COVER_OPERATION_OPENING && this->position >= COVER_OPEN) ||
+               (this->current_operation == COVER_OPERATION_CLOSING && this->position <= COVER_CLOSED)) {
+      // Dead-reckoned position reached the physical limit — the motor stops
+      // itself at the end-stops, so transition to idle without sending STOP.
+      ESP_LOGD(TAG, "Blind 0x%06x: position reached limit (%.0f%%), transitioning to idle",
+               this->command_.blind_addr, this->position * 100.0f);
+      this->current_operation = COVER_OPERATION_IDLE;
+      this->movement_start_ = 0;
+      this->target_position_ = COVER_OPEN;
+      // Schedule a confirmation poll if none is already pending
+      if (this->post_movement_poll_at_ == 0 || now >= this->post_movement_poll_at_) {
+        this->post_movement_poll_at_ = now + ELERO_POST_MOVEMENT_POLL_DELAY;
+      }
     }
 
     // Publish position every second
@@ -259,6 +272,16 @@ void EleroCover::set_rx_state(uint8_t state) {
              pos * 100.0f,
              op == cover::COVER_OPERATION_IDLE ? "idle" :
              op == cover::COVER_OPERATION_OPENING ? "opening" : "closing");
+    // If the operation direction changed (e.g. physical remote reversed the blind),
+    // restart dead-reckoning from the current position.
+    if (op != COVER_OPERATION_IDLE && op != this->current_operation) {
+      this->movement_start_ = millis();
+      this->last_recompute_time_ = millis();
+    }
+    // If movement just stopped, clear the tracking timestamp.
+    if (op == COVER_OPERATION_IDLE && this->current_operation != COVER_OPERATION_IDLE) {
+      this->movement_start_ = 0;
+    }
     this->position = pos;
     this->tilt = current_tilt;
     this->current_operation = op;
@@ -349,9 +372,15 @@ void EleroCover::start_movement(CoverOperation dir) {
   this->last_recompute_time_ = millis();
 
   if(dir == COVER_OPERATION_OPENING && this->open_duration_ > 0) {
-    this->post_movement_poll_at_ = this->movement_start_ + this->open_duration_ + ELERO_POST_MOVEMENT_POLL_DELAY;
+    float travel = this->target_position_ - this->position;
+    if (travel < 0.0f) travel = 1.0f;  // fallback to full duration
+    uint32_t travel_ms = static_cast<uint32_t>(travel * this->open_duration_);
+    this->post_movement_poll_at_ = this->movement_start_ + travel_ms + ELERO_POST_MOVEMENT_POLL_DELAY;
   } else if(dir == COVER_OPERATION_CLOSING && this->close_duration_ > 0) {
-    this->post_movement_poll_at_ = this->movement_start_ + this->close_duration_ + ELERO_POST_MOVEMENT_POLL_DELAY;
+    float travel = this->position - this->target_position_;
+    if (travel < 0.0f) travel = 1.0f;  // fallback to full duration
+    uint32_t travel_ms = static_cast<uint32_t>(travel * this->close_duration_);
+    this->post_movement_poll_at_ = this->movement_start_ + travel_ms + ELERO_POST_MOVEMENT_POLL_DELAY;
   } else {
     this->post_movement_poll_at_ = 0;
   }
