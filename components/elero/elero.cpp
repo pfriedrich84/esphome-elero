@@ -82,39 +82,45 @@ void Elero::loop() {
     // if no new packet arrives.  The ISR will set it again if another
     // packet arrives during processing.
     this->received_ = false;
-    ESP_LOGD(TAG, "RF packet received, reading FIFO");
     uint8_t len = this->read_status(CC1101_RXBYTES);
     if(len & 0x80) { // overflow - FIFO data unreliable
       ESP_LOGV(TAG, "Rx overflow, flushing FIFOs");
       this->flush_and_rx();
       return;
     }
-    if(len & 0x7F) { // bytes available
-      uint8_t fifo_count;
-      if((len & 0x7F) > CC1101_FIFO_LENGTH) {
-        ESP_LOGV(TAG, "Received more bytes than FIFO length - wtf?");
-        this->read_buf(CC1101_RXFIFO, this->msg_rx_, CC1101_FIFO_LENGTH);
-        fifo_count = CC1101_FIFO_LENGTH;
-      } else {
-        fifo_count = (len & 0x7f);
-        this->read_buf(CC1101_RXFIFO, this->msg_rx_, fifo_count);
-      }
-      // Log raw bytes at VERBOSE level for analysis
-      ESP_LOGV(TAG, "RAW RX %d bytes: %s", fifo_count,
-               format_hex_pretty(this->msg_rx_, fifo_count).c_str());
-      // Capture to ring buffer if dump mode is active
+    if((len & 0x7F) == 0) {
+      // GDO0 fired but FIFO is empty — likely noise or residual CC1101
+      // state.  Flush FIFOs and re-enter RX to clear the GDO0 condition
+      // and prevent the interrupt from re-firing immediately.
+      this->flush_and_rx();
+      return;
+    }
+    // We have actual bytes — process the packet
+    ESP_LOGD(TAG, "RF packet received, reading FIFO (%d bytes)", len & 0x7F);
+    uint8_t fifo_count;
+    if((len & 0x7F) > CC1101_FIFO_LENGTH) {
+      ESP_LOGV(TAG, "Received more bytes than FIFO length - wtf?");
+      this->read_buf(CC1101_RXFIFO, this->msg_rx_, CC1101_FIFO_LENGTH);
+      fifo_count = CC1101_FIFO_LENGTH;
+    } else {
+      fifo_count = (len & 0x7f);
+      this->read_buf(CC1101_RXFIFO, this->msg_rx_, fifo_count);
+    }
+    // Log raw bytes at VERBOSE level for analysis
+    ESP_LOGV(TAG, "RAW RX %d bytes: %s", fifo_count,
+             format_hex_pretty(this->msg_rx_, fifo_count).c_str());
+    // Capture to ring buffer if dump mode is active
+    this->packet_dump_pending_update_ = false;
+    if (this->packet_dump_mode_) {
+      this->capture_raw_packet_(fifo_count);
+      this->packet_dump_pending_update_ = true;
+    }
+    // Sanity check
+    if(this->msg_rx_[0] + 3 <= fifo_count) {
+      this->interpret_msg();
+    } else if (this->packet_dump_pending_update_) {
+      this->mark_last_raw_packet_(false, "short_read");
       this->packet_dump_pending_update_ = false;
-      if (this->packet_dump_mode_) {
-        this->capture_raw_packet_(fifo_count);
-        this->packet_dump_pending_update_ = true;
-      }
-      // Sanity check
-      if(this->msg_rx_[0] + 3 <= fifo_count) {
-        this->interpret_msg();
-      } else if (this->packet_dump_pending_update_) {
-        this->mark_last_raw_packet_(false, "short_read");
-        this->packet_dump_pending_update_ = false;
-      }
     }
   }
 }
