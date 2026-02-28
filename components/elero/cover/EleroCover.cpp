@@ -175,7 +175,7 @@ cover::CoverTraits EleroCover::get_traits() {
   else
     traits.set_supports_position(false);
   traits.set_supports_toggle(true);
-  traits.set_is_assumed_state(true);
+  traits.set_is_assumed_state(false);
   traits.set_supports_tilt(this->supports_tilt_);
   return traits;
 }
