@@ -1,11 +1,14 @@
 /**
  * generate_header.mjs
- * Reads dist/index.html produced by Vite and writes ../elero_web_ui.h
- * which embeds the UI as a C raw-string literal for the ESP32 firmware.
+ * Reads dist/index.html produced by Vite, gzip-compresses it,
+ * and writes ../elero_web_ui.h as a C byte array for the ESP32 firmware.
+ *
+ * Serving gzipped content saves ~60% flash vs raw string literals.
  */
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
+import { gzipSync } from 'zlib'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const distDir   = path.resolve(__dirname, '..', 'dist')
@@ -17,16 +20,25 @@ if (!fs.existsSync(htmlFile)) {
   process.exit(1)
 }
 
-const html = fs.readFileSync(htmlFile, 'utf8')
+const html = fs.readFileSync(htmlFile)
+const compressed = gzipSync(html, { level: 9 })
 
-// We use R"rawliteral(...)rawliteral" so no escaping is needed inside the HTML.
-// Just verify there is no rawliteral delimiter in the content (extremely unlikely).
-if (html.includes(')rawliteral"')) {
-  console.error('ERROR: HTML contains the C raw-string end delimiter — cannot embed safely')
-  process.exit(1)
+// Format as C byte array
+const bytes = []
+for (let i = 0; i < compressed.length; i++) {
+  bytes.push(`0x${compressed[i].toString(16).padStart(2, '0')}`)
+}
+
+// Wrap lines at 16 bytes for readability
+const lines = []
+for (let i = 0; i < bytes.length; i += 16) {
+  lines.push('    ' + bytes.slice(i, i + 16).join(', '))
 }
 
 const header = `#pragma once
+
+#include <cstdint>
+#include <cstddef>
 
 #ifdef __AVR__
 #include <pgmspace.h>
@@ -40,11 +52,16 @@ const header = `#pragma once
 namespace esphome {
 namespace elero {
 
-const char ELERO_WEB_UI_HTML[] PROGMEM = R"rawliteral(${html})rawliteral";
+// gzip-compressed HTML (${html.length} bytes raw → ${compressed.length} bytes gzipped)
+const uint8_t ELERO_WEB_UI_GZ[] PROGMEM = {
+${lines.join(',\n')}
+};
+
+const size_t ELERO_WEB_UI_GZ_SIZE = sizeof(ELERO_WEB_UI_GZ);
 
 }  // namespace elero
 }  // namespace esphome
 `
 
 fs.writeFileSync(outFile, header, 'utf8')
-console.log(`Written ${Buffer.byteLength(html)} bytes of HTML → ${outFile}`)
+console.log(`Written ${html.length} bytes HTML → ${compressed.length} bytes gzipped → ${outFile}`)

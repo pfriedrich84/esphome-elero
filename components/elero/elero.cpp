@@ -2,7 +2,6 @@
 #include "esphome/core/log.h"
 #include "esphome/core/helpers.h"
 #include <cstring>
-#include <algorithm>
 
 #ifdef USE_SENSOR
 #include "esphome/components/sensor/sensor.h"
@@ -593,8 +592,8 @@ void Elero::interpret_msg() {
   // Sanity check
   if(length > ELERO_MAX_PACKET_SIZE) {
     uint8_t dump_len = (length <= (uint8_t)(CC1101_FIFO_LENGTH - 3)) ? (length + 3) : CC1101_FIFO_LENGTH;
-    ESP_LOGE(TAG, "Received invalid packet: too long (%d)", length);
-    ESP_LOGD(TAG, "  Raw [%d bytes]: %s", dump_len,
+    ESP_LOGE(TAG, "Invalid packet: too long (%d)", length);
+    ESP_LOGV(TAG, "  Raw [%d]: %s", dump_len,
              format_hex_pretty(this->msg_rx_, dump_len).c_str());
     if (this->packet_dump_pending_update_) {
       this->mark_last_raw_packet_(false, "too_long");
@@ -603,14 +602,11 @@ void Elero::interpret_msg() {
     return;
   }
 
-  uint8_t cnt = this->msg_rx_[1];
   uint8_t typ = this->msg_rx_[2];
   uint8_t typ2 = this->msg_rx_[3];
   uint8_t hop = this->msg_rx_[4];
-  uint8_t syst = this->msg_rx_[5];
   uint8_t chl = this->msg_rx_[6];
   uint32_t src = ((uint32_t)this->msg_rx_[7] << 16) | ((uint32_t)this->msg_rx_[8] << 8) | (this->msg_rx_[9]);
-  uint32_t bwd = ((uint32_t)this->msg_rx_[10] << 16) | ((uint32_t)this->msg_rx_[11] << 8) | (this->msg_rx_[12]);
   uint32_t fwd = ((uint32_t)this->msg_rx_[13] << 16) | ((uint32_t)this->msg_rx_[14] << 8) | (this->msg_rx_[15]);
   uint8_t num_dests = this->msg_rx_[16];
   uint32_t dst;
@@ -618,8 +614,8 @@ void Elero::interpret_msg() {
 
   // Validate destination count before multiplication to prevent overflow
   if (num_dests > 20) {
-    ESP_LOGE(TAG, "Received invalid packet: too many destinations (%d)", num_dests);
-    ESP_LOGD(TAG, "  Raw [%d bytes]: %s", length + 3,
+    ESP_LOGE(TAG, "Invalid packet: too many dests (%d)", num_dests);
+    ESP_LOGV(TAG, "  Raw [%d]: %s", length + 3,
              format_hex_pretty(this->msg_rx_, length + 3).c_str());
     if (this->packet_dump_pending_update_) {
       this->mark_last_raw_packet_(false, "too_many_dests");
@@ -640,8 +636,8 @@ void Elero::interpret_msg() {
   // so the highest index touched is 26 + dests_len. This must be within both
   // the packet (length) and the FIFO buffer.
   if(26 + dests_len > length || 26 + dests_len >= CC1101_FIFO_LENGTH) {
-    ESP_LOGE(TAG, "Received invalid packet: dests_len too long (%d) for length %d", dests_len, length);
-    ESP_LOGD(TAG, "  Raw [%d bytes]: %s", length + 3,
+    ESP_LOGE(TAG, "Invalid packet: dests_len %d > length %d", dests_len, length);
+    ESP_LOGV(TAG, "  Raw [%d]: %s", length + 3,
              format_hex_pretty(this->msg_rx_, length + 3).c_str());
     if (this->packet_dump_pending_update_) {
       this->mark_last_raw_packet_(false, "dests_len_too_long");
@@ -652,8 +648,8 @@ void Elero::interpret_msg() {
 
   // RSSI and LQI are appended by CC1101 after packet data at indices length+1 and length+2
   if (length + 2 >= CC1101_FIFO_LENGTH) {
-    ESP_LOGE(TAG, "Received invalid packet: RSSI/LQI out of buffer bounds (length=%d)", length);
-    ESP_LOGD(TAG, "  Raw [%d bytes]: %s", CC1101_FIFO_LENGTH,
+    ESP_LOGE(TAG, "Invalid packet: RSSI/LQI OOB (len=%d)", length);
+    ESP_LOGV(TAG, "  Raw [%d]: %s", CC1101_FIFO_LENGTH,
              format_hex_pretty(this->msg_rx_, CC1101_FIFO_LENGTH).c_str());
     if (this->packet_dump_pending_update_) {
       this->mark_last_raw_packet_(false, "rssi_oob");
@@ -664,8 +660,6 @@ void Elero::interpret_msg() {
 
   uint8_t payload1 = this->msg_rx_[17 + dests_len];
   uint8_t payload2 = this->msg_rx_[18 + dests_len];
-  uint8_t crc = this->msg_rx_[length + 2] >> 7;
-  uint8_t lqi = this->msg_rx_[length + 2] & 0x7f;
 
   // Calculate RSSI in dBm (CC1101 transmits as two's complement encoded value)
   float rssi;
@@ -683,7 +677,9 @@ void Elero::interpret_msg() {
     this->mark_last_raw_packet_(true, nullptr);
     this->packet_dump_pending_update_ = false;
   }
-  ESP_LOGD(TAG, "rcv'd: len=%02d, cnt=%02d, typ=0x%02x, typ2=0x%02x, hop=0x%02x, syst=0x%02x, chl=%02d, src=0x%06x, bwd=0x%06x, fwd=0x%06x, #dst=%02d, dst=0x%06x, rssi=%2.1f, lqi=%2d, crc=%2d, payload=[0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x]", length, cnt, typ, typ2, hop, syst, chl, src, bwd, fwd, num_dests, dst, rssi, lqi, crc, payload1, payload2, payload[0], payload[1], payload[2], payload[3], payload[4], payload[5], payload[6], payload[7]);
+  ESP_LOGD(TAG, "rx: t=%02x/%02x h=%02x ch=%02d src=%06x fwd=%06x dst=%06x rssi=%.1f p=[%02x %02x %02x %02x %02x %02x %02x %02x %02x %02x]",
+           typ, typ2, hop, chl, src, fwd, dst, rssi,
+           payload1, payload2, payload[0], payload[1], payload[2], payload[3], payload[4], payload[5], payload[6], payload[7]);
 
   // Update RSSI sensor for any message from a known blind
 #ifdef USE_SENSOR
@@ -803,7 +799,7 @@ void Elero::interpret_msg() {
 void Elero::register_cover(EleroBlindBase *cover) {
   uint32_t address = cover->get_blind_address();
   if(this->address_to_cover_mapping_.find(address) != this->address_to_cover_mapping_.end()) {
-    ESP_LOGE(TAG, "A blind with this address is already registered - this is currently not supported");
+    ESP_LOGE(TAG, "Duplicate blind address 0x%06x", address);
     return;
   }
   this->address_to_cover_mapping_.insert({address, cover});
@@ -813,7 +809,7 @@ void Elero::register_cover(EleroBlindBase *cover) {
 void Elero::register_light(EleroLightBase *light) {
   uint32_t address = light->get_blind_address();
   if(this->address_to_light_mapping_.find(address) != this->address_to_light_mapping_.end()) {
-    ESP_LOGE(TAG, "A light with this address is already registered - this is currently not supported");
+    ESP_LOGE(TAG, "Duplicate light address 0x%06x", address);
     return;
   }
   this->address_to_light_mapping_.insert({address, light});
@@ -962,7 +958,13 @@ bool Elero::send_command(t_elero_command *cmd) {
   uint8_t *payload = &this->msg_tx_[22];
   msg_encode(payload);
 
-  ESP_LOGV(TAG, "send: len=%02d, cnt=%02d, typ=0x%02x, typ2=0x%02x, hop=0x%02x, syst=0x%02x, chl=%02d, src=0x%02x%02x%02x, bwd=0x%02x%02x%02x, fwd=0x%02x%02x%02x, #dst=%02d, dst=0x%02x%02x%02x, payload=[0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x]", this->msg_tx_[0], this->msg_tx_[1], this->msg_tx_[2], this->msg_tx_[3], this->msg_tx_[4], this->msg_tx_[5], this->msg_tx_[6], this->msg_tx_[7], this->msg_tx_[8], this->msg_tx_[9], this->msg_tx_[10], this->msg_tx_[11], this->msg_tx_[12], this->msg_tx_[13], this->msg_tx_[14], this->msg_tx_[15], this->msg_tx_[16], this->msg_tx_[17], this->msg_tx_[18], this->msg_tx_[19], this->msg_tx_[20], this->msg_tx_[21], this->msg_tx_[22], this->msg_tx_[23], this->msg_tx_[24], this->msg_tx_[25], this->msg_tx_[26], this->msg_tx_[27], this->msg_tx_[28], this->msg_tx_[29]);
+  ESP_LOGV(TAG, "tx: ch=%02d src=%02x%02x%02x dst=%02x%02x%02x p=[%02x %02x %02x %02x %02x %02x %02x %02x %02x %02x]",
+           this->msg_tx_[6],
+           this->msg_tx_[7], this->msg_tx_[8], this->msg_tx_[9],
+           this->msg_tx_[17], this->msg_tx_[18], this->msg_tx_[19],
+           this->msg_tx_[20], this->msg_tx_[21], this->msg_tx_[22], this->msg_tx_[23],
+           this->msg_tx_[24], this->msg_tx_[25], this->msg_tx_[26], this->msg_tx_[27],
+           this->msg_tx_[28], this->msg_tx_[29]);
 
   // Kick off non-blocking TX state machine: go to IDLE first so STX is not
   // subject to CCA (Elero motors actively transmit, causing CCA failures).

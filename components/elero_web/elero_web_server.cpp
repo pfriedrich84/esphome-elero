@@ -202,7 +202,12 @@ void EleroWebServer::handleRequest(AsyncWebServerRequest *request) {
 // ─── Index ────────────────────────────────────────────────────────────────────
 
 void EleroWebServer::handle_index(AsyncWebServerRequest *request) {
-  request->send(200, "text/html", ELERO_WEB_UI_HTML);
+  // Serve gzip-compressed web UI — saves ~55KB flash vs raw HTML.
+  // beginResponse_P streams directly from flash (no heap copy).
+  auto *response = request->beginResponse_P(200, "text/html", ELERO_WEB_UI_GZ, ELERO_WEB_UI_GZ_SIZE);
+  response->addHeader("Content-Encoding", "gzip");
+  this->add_cors_headers(response);
+  request->send(response);
 }
 
 // ─── Scan ─────────────────────────────────────────────────────────────────────

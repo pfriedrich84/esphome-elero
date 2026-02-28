@@ -89,7 +89,7 @@ static const uint32_t ELERO_STOP_VERIFY_DELAY_MS = 500;         // delay before 
 static const uint8_t  ELERO_STOP_VERIFY_MAX_RETRIES = 3;        // max stop-verify cycles before giving up
 
 static const uint8_t ELERO_MAX_DISCOVERED = 20; // max discovered blinds to track
-static const uint8_t ELERO_MAX_RAW_PACKETS = 50; // max raw packets in dump ring buffer
+static const uint8_t ELERO_MAX_RAW_PACKETS = 20; // max raw packets in dump ring buffer
 
 // RF protocol encoding/encryption constants (Elero protocol)
 static const uint8_t ELERO_MSG_LENGTH = 0x1d;             // Fixed message length for TX
@@ -276,12 +276,12 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   bool is_blind_adopted(uint32_t addr) const;
 
   // Log buffer
-  static const uint8_t ELERO_LOG_BUFFER_SIZE = 200;
+  static const uint8_t ELERO_LOG_BUFFER_SIZE = 50;
   struct LogEntry {
     uint32_t timestamp_ms;
     uint8_t level;
     char tag[24];
-    char message[160];
+    char message[128];
   };
   void append_log(uint8_t level, const char *tag, const char *fmt, ...);
   void clear_log_entries() { log_entries_.clear(); log_write_idx_ = 0; }
