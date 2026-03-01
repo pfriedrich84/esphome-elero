@@ -62,8 +62,12 @@ class EleroCover : public cover::Cover, public Component, public EleroBlindBase 
   bool get_supports_tilt() const override { return this->supports_tilt_; }
   // EleroBlindBase web API commands
   void enqueue_command(uint8_t cmd_byte) override {
-    if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE)
+    if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE) {
       this->commands_to_send_.push(cmd_byte);
+    } else {
+      ESP_LOGW("elero.cover", "Command queue full for blind 0x%06x, dropping cmd 0x%02x",
+               this->command_.blind_addr, cmd_byte);
+    }
   }
   void apply_runtime_settings(uint32_t open_dur_ms, uint32_t close_dur_ms,
                               uint32_t poll_intvl_ms) override {

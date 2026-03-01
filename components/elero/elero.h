@@ -233,7 +233,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void interpret_msg();
 
   /// True when the TX state machine is idle and ready for send_command().
-  bool is_tx_idle() const { return tx_state_ == TxState::IDLE; }
+  bool is_tx_idle() const { return tx_state_.load(std::memory_order_relaxed) == TxState::IDLE; }
   void register_cover(EleroBlindBase *cover);
   void register_light(EleroLightBase *light);
   bool send_command(t_elero_command *cmd);
@@ -333,8 +333,9 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   std::atomic<bool> rx_ready_{false};
   std::atomic<bool> gdo0_fired_{false};
 
-  // TX state machine
-  TxState tx_state_{TxState::IDLE};
+  // TX state machine — atomic because the ISR reads tx_state_ to decide
+  // whether to set rx_ready_ (see interrupt()).
+  std::atomic<TxState> tx_state_{TxState::IDLE};
   uint32_t tx_state_entered_ms_{0};
   uint32_t last_tx_complete_ms_{0};
 
@@ -357,7 +358,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   bool packet_dump_mode_{false};
   bool packet_dump_pending_update_{false};
   std::vector<RawPacket> raw_packets_;
-  uint8_t raw_packet_write_idx_{0};
+  uint16_t raw_packet_write_idx_{0};
   std::map<uint32_t, RuntimeBlind> runtime_blinds_;
   // Log buffer
   uint32_t last_radio_check_ms_{0};
