@@ -324,6 +324,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
                               float rssi, uint8_t state, bool from_command);
   void capture_raw_packet_(uint8_t fifo_len);
   void mark_last_raw_packet_(bool valid, const char *reason);
+  void check_radio_state_();
 
   // Dual interrupt flags: decouple RX-ready from TX-done detection.
   // rx_ready_ is set by the ISR only when the radio is in RX (TxState::IDLE
@@ -359,6 +360,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   uint8_t raw_packet_write_idx_{0};
   std::map<uint32_t, RuntimeBlind> runtime_blinds_;
   // Log buffer
+  uint32_t last_radio_check_ms_{0};
   bool log_capture_{false};
   std::vector<LogEntry> log_entries_;
   uint8_t log_write_idx_{0};

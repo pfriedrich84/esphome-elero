@@ -58,6 +58,8 @@ void Elero::loop() {
   // 3. Drain runtime blind command queues (only when TX is idle).
   if (this->tx_state_ == TxState::IDLE) {
     this->drain_runtime_queues();
+    // 4. Periodic radio health check — detect stuck CC1101 states.
+    this->check_radio_state_();
   }
 }
 
@@ -75,7 +77,7 @@ void Elero::process_rx() {
     uint8_t len = this->read_status(CC1101_RXBYTES);
 
     if (len & 0x80) {  // overflow bit set — FIFO data unreliable
-      ESP_LOGV(TAG, "Rx overflow, flushing RX FIFO");
+      ESP_LOGW(TAG, "RX FIFO overflow in process_rx, flushing");
       this->flush_rx();
       return;
     }
@@ -118,7 +120,9 @@ void Elero::process_rx() {
 // ---------------------------------------------------------------------------
 // advance_tx — non-blocking TX state machine (one step per call)
 // ---------------------------------------------------------------------------
-static const uint32_t TX_STATE_TIMEOUT_MS = 50;  // per-state watchdog
+static const uint32_t TX_STATE_TIMEOUT_MS = 50;   // per-state watchdog
+static const uint32_t TX_COOLDOWN_MS = 10;         // settle time after TX before next TX
+static const uint32_t RADIO_WATCHDOG_MS = 5000;    // radio health check interval
 
 void Elero::advance_tx() {
   uint32_t now = millis();
@@ -129,8 +133,12 @@ void Elero::advance_tx() {
     case TxState::GOING_IDLE: {
       uint8_t marc = this->read_status(CC1101_MARCSTATE) & 0x1F;
       if (marc == CC1101_MARCSTATE_IDLE) {
-        // Flush TX FIFO, load data, issue STX
+        // Flush both FIFOs: TX for a clean slate, RX to discard any
+        // partial packet data left over from the reception that SIDLE
+        // interrupted.  Both flushes are valid in IDLE state per CC1101 spec.
         this->write_cmd(CC1101_SFTX);
+        this->write_cmd(CC1101_SFRX);
+        this->rx_ready_ = false;  // invalidate stale RX flag
         delay_microseconds_safe(100);
         this->write_burst(CC1101_TXFIFO, this->msg_tx_, this->msg_tx_[0] + 1);
         this->gdo0_fired_ = false;  // clear before STX so we detect TX-done cleanly
@@ -178,10 +186,10 @@ void Elero::advance_tx() {
     case TxState::VERIFYING: {
       uint8_t bytes = this->read_status(CC1101_TXBYTES) & 0x7F;
       if (bytes == 0) {
-        // Success.  The CC1101 has already auto-transitioned to RX, so we
-        // only need to flush the TX FIFO — preserving any RX data that
-        // arrived during the ~3 ms TX window.
-        this->write_cmd(CC1101_SFTX);
+        // Success.  The CC1101 has already auto-transitioned to RX
+        // (MCSM1 TXOFF_MODE=RX).  Do NOT issue SFTX here — the radio is
+        // in RX mode, and the CC1101 spec says SFTX is only valid in IDLE
+        // or TXFIFO_UNDERFLOW.  The TX FIFO is confirmed empty anyway.
         ESP_LOGV(TAG, "Transmission successful");
         this->tx_state_ = TxState::COOLDOWN;
         this->tx_state_entered_ms_ = now;
@@ -194,10 +202,20 @@ void Elero::advance_tx() {
     }
 
     case TxState::COOLDOWN: {
-      // Brief 2 ms pause to let the CC1101 settle into RX before the next TX.
-      if (elapsed >= 2) {
+      // Allow the CC1101 time to settle into RX before accepting the next TX.
+      if (elapsed >= TX_COOLDOWN_MS) {
         this->tx_state_ = TxState::IDLE;
-        // Process any RX that arrived during the TX cycle
+        // Check for RX FIFO issues that may have occurred during the TX cycle.
+        // During TX, the ISR doesn't set rx_ready_, so overflow or pending
+        // data would go unnoticed without this explicit check.
+        uint8_t rxbytes = this->read_status(CC1101_RXBYTES);
+        if (rxbytes & 0x80) {
+          ESP_LOGW(TAG, "RX FIFO overflow detected after TX, flushing");
+          this->flush_rx();
+        } else if ((rxbytes & 0x7F) > 0) {
+          // Data arrived during TX — make sure process_rx() sees it
+          this->rx_ready_ = true;
+        }
         this->process_rx();
       }
       break;
@@ -215,6 +233,47 @@ void Elero::advance_tx() {
 void Elero::tx_abort_() {
   this->flush_and_rx();
   this->tx_state_ = TxState::IDLE;
+}
+
+// ---------------------------------------------------------------------------
+// check_radio_state_ — periodic watchdog to detect and recover stuck CC1101
+// ---------------------------------------------------------------------------
+void Elero::check_radio_state_() {
+  uint32_t now = millis();
+  if (now - this->last_radio_check_ms_ < RADIO_WATCHDOG_MS)
+    return;
+  this->last_radio_check_ms_ = now;
+
+  uint8_t marc = this->read_status(CC1101_MARCSTATE) & 0x1F;
+
+  // RX is the expected state when tx_state_ is IDLE
+  if (marc == CC1101_MARCSTATE_RX)
+    return;
+
+  // Transient calibration / synthesizer states — let them complete
+  if (marc >= CC1101_MARCSTATE_VCOON_MC && marc <= CC1101_MARCSTATE_ENDCAL)
+    return;
+  // RX wind-down states are also transient
+  if (marc == CC1101_MARCSTATE_RX_END || marc == CC1101_MARCSTATE_RX_RST)
+    return;
+
+  // RXFIFO_OVERFLOW — flush and restart RX
+  if (marc == CC1101_MARCSTATE_RXFIFO_OFLOW) {
+    ESP_LOGW(TAG, "Radio watchdog: RX FIFO overflow, flushing");
+    this->flush_rx();
+    return;
+  }
+
+  // IDLE — radio stopped listening, restart RX
+  if (marc == CC1101_MARCSTATE_IDLE) {
+    ESP_LOGW(TAG, "Radio watchdog: stuck in IDLE, restarting RX");
+    this->write_cmd(CC1101_SRX);
+    return;
+  }
+
+  // Any other unexpected state — full reinitialize
+  ESP_LOGW(TAG, "Radio watchdog: unexpected state 0x%02x, reinitializing", marc);
+  this->flush_and_rx();
 }
 
 // ---------------------------------------------------------------------------
