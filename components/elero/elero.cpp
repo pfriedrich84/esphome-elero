@@ -223,15 +223,32 @@ void Elero::advance_tx() {
       if (marc == CC1101_MARCSTATE_TX) {
         this->tx_state_ = TxState::TRANSMITTING;
         this->tx_state_entered_ms_ = now;
+        this->gdo0_miss_count_ = 0;
       } else if (this->gdo0_fired_) {
         // GDO0 falling edge means the TX packet has been fully sent.  The
         // entire TX cycle (calibration + packet) completed before we could
         // observe MARCSTATE=TX — the radio already auto-transitioned to RX
         // (MCSM1 TXOFF_MODE=RX).  Skip straight to verification.
-        ESP_LOGD(TAG, "TX fast-path: completed during FIRING (marc=%s (0x%02x), %lums)",
+        ESP_LOGD(TAG, "TX fast-path: GDO0 fired during FIRING (marc=%s (0x%02x), %lums)",
                  marcstate_to_string(marc), marc, (unsigned long) elapsed);
         this->tx_state_ = TxState::VERIFYING;
         this->tx_state_entered_ms_ = now;
+        this->gdo0_miss_count_ = 0;
+      } else if (marc == CC1101_MARCSTATE_RX || marc == CC1101_MARCSTATE_TX_END) {
+        // The entire TX cycle completed before we could observe MARCSTATE=TX,
+        // and the GDO0 interrupt did not fire.  The radio already auto-
+        // transitioned to RX (MCSM1 TXOFF_MODE=RX).  Proceed to VERIFYING
+        // which confirms TXBYTES==0 for safety.
+        ESP_LOGD(TAG, "TX completed (no GDO0) during FIRING (marc=%s (0x%02x), %lums)",
+                 marcstate_to_string(marc), marc, (unsigned long) elapsed);
+        this->tx_state_ = TxState::VERIFYING;
+        this->tx_state_entered_ms_ = now;
+        if (++this->gdo0_miss_count_ == 10) {
+          ESP_LOGW(TAG, "GDO0 interrupt not firing during TX — check GDO0 pin wiring/configuration");
+        }
+      } else if (marc == CC1101_MARCSTATE_TXFIFO_UFLOW) {
+        ESP_LOGE(TAG, "TX FIFO underflow in FIRING");
+        this->tx_abort_();
       } else if (elapsed > TX_STATE_TIMEOUT_MS) {
         ESP_LOGE(TAG, "TX timeout in FIRING (marc=%s (0x%02x))", marcstate_to_string(marc), marc);
         this->tx_abort_();
