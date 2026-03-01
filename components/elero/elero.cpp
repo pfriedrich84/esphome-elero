@@ -334,8 +334,9 @@ void Elero::setup() {
   // Forward all ESP_LOG messages into the ring buffer so the web UI Log tab
   // can display them when capture is enabled.
   if (logger::global_logger != nullptr) {
-    logger::global_logger->add_on_log_callback(
-        [this](int level, const char *tag, const char *message) {
+    logger::global_logger->add_log_callback(
+        this,
+        [](void *self, uint8_t level, const char *tag, const char *message, size_t message_len) {
           // Map ESPHome levels (1-7) to the 5-level scheme used by the web UI:
           //   ESPHome 1 ERROR         → 1 error
           //   ESPHome 2 WARN          → 2 warn
@@ -354,7 +355,7 @@ void Elero::setup() {
             mapped = 4;
           else
             mapped = 5;
-          this->append_log(mapped, tag, "%s", message);
+          static_cast<Elero *>(self)->append_log(mapped, tag, "%s", message);
         });
   }
 #endif
