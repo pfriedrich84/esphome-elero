@@ -338,6 +338,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   std::atomic<TxState> tx_state_{TxState::IDLE};
   uint32_t tx_state_entered_ms_{0};
   uint32_t last_tx_complete_ms_{0};
+  uint8_t gdo0_miss_count_{0};  // consecutive TX completions without GDO0
 
   uint8_t msg_rx_[CC1101_FIFO_LENGTH];
   uint8_t msg_tx_[CC1101_FIFO_LENGTH];
