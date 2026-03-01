@@ -50,8 +50,8 @@ esphome-elero/
 └── components/
     ├── elero/                         # Main hub component
     │   ├── __init__.py                # ESPHome component schema & code-gen (hub)
-    │   ├── elero.h                    # C++ hub class header (369 lines)
-    │   ├── elero.cpp                  # C++ RF protocol implementation (1060 lines)
+    │   ├── elero.h                    # C++ hub class header (370 lines)
+    │   ├── elero.cpp                  # C++ RF protocol implementation (1151 lines)
     │   ├── cc1101.h                   # CC1101 register map & command strobes
     │   ├── cover/                     # Cover (blind) platform
     │   │   ├── __init__.py            # Cover schema, auto-sensors, validation
@@ -140,11 +140,21 @@ Two `std::atomic<bool>` flags decouple RX-ready detection from TX-done detection
 - `rx_ready_` — set by ISR only when radio is in RX (`TxState::IDLE` or `COOLDOWN`)
 - `gdo0_fired_` — always set by ISR, used by TX state machine for TX completion detection
 
+### Radio health and FIFO recovery
+
+The CC1101 can enter unrecoverable states (RXFIFO_OVERFLOW, stuck IDLE) during TX operations when the ISR cannot set `rx_ready_`. Several mechanisms prevent and recover from these:
+
+- **RX FIFO flush before TX** — When `GOING_IDLE` issues SIDLE to begin TX, any in-progress RX leaves partial corrupt data in the FIFO. The code flushes RX FIFO (SFRX) after entering IDLE to prevent `process_rx()` from misinterpreting stale data after TX completes.
+- **No SFTX after TX completion** — The CC1101 auto-transitions to RX via MCSM1 TXOFF_MODE after TX. Issuing SFTX in this state is invalid per the CC1101 datasheet (only valid in IDLE or TXFIFO_UNDERFLOW) and can corrupt radio state.
+- **Post-TX FIFO health check** — After COOLDOWN, before resuming normal RX, the code reads RXBYTES to detect overflow or pending data that arrived during TX (when `rx_ready_` was not being set by the ISR).
+- **Radio watchdog** (`check_radio_state_()`, every 5 s) — Reads CC1101 MARCSTATE register and recovers from: RXFIFO_OVERFLOW (flush + restart RX), stuck IDLE (restart RX), or any other unexpected state (full radio reinit). Only runs when TX is idle.
+- **TX cooldown** — 10 ms settling time after TX before resuming RX, allowing the CC1101 PLL to stabilize.
+
 ### Data flow
 
 1. `Elero::setup()` configures CC1101 registers over SPI and attaches a GPIO interrupt on `gdo0_pin`.
 2. When the CC1101 signals a received packet (GDO0 interrupt), the ISR sets `rx_ready_` and `gdo0_fired_`.
-3. `Elero::loop()` calls `process_rx()` when TX is idle, reads the FIFO, decodes and decrypts the packet, then dispatches the state to the matching `EleroBlindBase`/`EleroLightBase` via `set_rx_state()`.
+3. `Elero::loop()` calls `check_radio_state_()` for periodic health monitoring, then calls `process_rx()` when TX is idle, reads the FIFO, decodes and decrypts the packet, then dispatches the state to the matching `EleroBlindBase`/`EleroLightBase` via `set_rx_state()`.
 4. `Elero::loop()` calls `advance_tx()` to progress the TX state machine one step.
 5. `EleroCover::loop()` / `EleroLight::loop()` handle polling timers, position/brightness recomputation, and drain the command queue by calling `parent_->send_command()`.
 
@@ -174,6 +184,11 @@ Discovery and runtime:
 - `update_runtime_blind_settings(addr, open, close, poll)` — update timing at runtime
 - `get_runtime_blinds()` / `is_blind_adopted(addr)` — query runtime blinds
 
+Radio health:
+- `check_radio_state_()` — periodic watchdog (every 5 s); recovers RXFIFO_OVERFLOW, stuck IDLE, and unexpected MARCSTATE
+- RX FIFO flush in `GOING_IDLE` state — prevents stale data from corrupting post-TX RX
+- Post-TX FIFO health check in `COOLDOWN→IDLE` transition — detects overflow/pending data missed during TX
+
 Diagnostics:
 - `start_packet_dump()` / `stop_packet_dump()` / `get_raw_packets()` — RF packet capture (ring buffer, max 50)
 - `append_log()` / `get_log_entries()` / `set_log_capture()` — persistent log buffer (max 200 entries)
@@ -199,6 +214,8 @@ Key constants (defined in `elero.h`):
 | `ELERO_STOP_VERIFY_MAX_RETRIES` | 3 | Max stop-verify cycles before giving up |
 | `ELERO_MSG_LENGTH` | 0x1d (29) | Fixed message length for TX |
 | `ELERO_CRYPTO_MULT` | 0x708f | Encryption multiplier for counter-based code |
+| `TX_STATE_TIMEOUT_MS` | 50 ms | Per-state watchdog timeout for TX state machine |
+| `RADIO_WATCHDOG_MS` | 5 000 ms | Periodic radio health check interval |
 
 State constants (`ELERO_STATE_*`): `UNKNOWN`, `TOP`, `BOTTOM`, `INTERMEDIATE`, `TILT`, `BLOCKING`, `OVERHEATED`, `TIMEOUT`, `START_MOVING_UP`, `START_MOVING_DOWN`, `MOVING_UP`, `MOVING_DOWN`, `STOPPED`, `TOP_TILT`, `BOTTOM_TILT`, `OFF` (0x0f, same as `BOTTOM_TILT`), `ON` (0x10)
 
@@ -593,6 +610,9 @@ There are no automated tests in this repository. Validation is done manually on 
 - **Position tracking**: Leave `open_duration` and `close_duration` at `0s` if you only need open/close without position — setting incorrect durations causes wrong position estimates. Both must be set or both zero (enforced by `_validate_duration_consistency`).
 - **Poll interval `never`**: Set `poll_interval: never` for blinds that reliably push state updates (avoids unnecessary RF traffic). Internally this maps to `uint32_t` max (4 294 967 295 ms).
 - **TX busy**: `send_command()` returns `false` when the TX state machine is not idle. Callers must check `is_tx_idle()` or handle the rejection.
+- **CC1101 SFTX/SFRX validity**: SFTX is only valid in IDLE or TXFIFO_UNDERFLOW states; SFRX is only valid in IDLE or RXFIFO_OVERFLOW states (per CC1101 datasheet). Issuing these strobes in other states silently corrupts radio state. The TX state machine must respect this.
+- **RX FIFO stale data after TX**: When SIDLE interrupts an in-progress packet reception, partial data remains in the RX FIFO. This must be flushed before TX to prevent `process_rx()` from misinterpreting it after TX completes.
+- **RXFIFO_OVERFLOW during TX**: While TX is active, the ISR skips setting `rx_ready_`, so RX FIFO overflow goes undetected until the radio watchdog catches it. The post-TX FIFO health check and 5-second watchdog handle this.
 - **Command queue overflow**: Each blind's command queue is capped at `ELERO_MAX_COMMAND_QUEUE` (10) to prevent OOM on ESP32.
 - **Web UI `elero_web_ui.h`**: This file is auto-generated by the frontend build system. Always rebuild via `npm run build` in the `frontend/` directory — never edit by hand.
 
