@@ -389,6 +389,20 @@ document.addEventListener('alpine:init', () => {
       } catch (e) { this.showToast(`Failed: ${e.message}`, true) }
     },
 
+    async downloadDump() {
+      try {
+        const resp = await fetch('/elero/api/packets/download')
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+        const blob = await resp.blob()
+        const url  = URL.createObjectURL(blob)
+        const a    = document.createElement('a')
+        a.href = url
+        a.download = `elero_packets_${Date.now()}.json`
+        a.click()
+        URL.revokeObjectURL(url)
+      } catch (e) { this.showToast(`Download failed: ${e.message}`, true) }
+    },
+
     async refreshDump() {
       try {
         const d = await api('GET', '/elero/api/packets')

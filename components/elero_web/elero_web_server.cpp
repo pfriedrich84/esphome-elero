@@ -176,8 +176,9 @@ void EleroWebServer::handleRequest(AsyncWebServerRequest *request) {
   // ── Packet dump ──
   if (url == "/elero/api/dump/start"   && method == HTTP_POST) { handle_packet_dump_start(request); return; }
   if (url == "/elero/api/dump/stop"    && method == HTTP_POST) { handle_packet_dump_stop(request); return; }
-  if (url == "/elero/api/packets"      && method == HTTP_GET)  { handle_get_packets(request); return; }
-  if (url == "/elero/api/packets/clear"&& method == HTTP_POST) { handle_clear_packets(request); return; }
+  if (url == "/elero/api/packets"         && method == HTTP_GET)  { handle_get_packets(request); return; }
+  if (url == "/elero/api/packets/clear"  && method == HTTP_POST) { handle_clear_packets(request); return; }
+  if (url == "/elero/api/packets/download" && method == HTTP_GET) { handle_packets_download(request); return; }
 
   // ── Frequency ──
   if (url == "/elero/api/frequency"     && method == HTTP_GET)  { handle_get_frequency(request); return; }
@@ -708,6 +709,73 @@ void EleroWebServer::handle_clear_packets(AsyncWebServerRequest *request) {
   this->parent_->clear_raw_packets();
   AsyncWebServerResponse *response =
       request->beginResponse(200, "application/json", "{\"status\":\"cleared\"}");
+  this->add_cors_headers(response);
+  request->send(response);
+}
+
+// ─── Packet dump download ─────────────────────────────────────────────────────
+
+void EleroWebServer::handle_packets_download(AsyncWebServerRequest *request) {
+  const auto &packets = this->parent_->get_raw_packets();
+
+  std::string json;
+  json.reserve(256 + packets.size() * 320);
+
+  std::string esc_name = json_escape(App.get_name());
+  char meta[256];
+  snprintf(meta, sizeof(meta),
+    "{\"device_name\":\"%s\","
+    "\"uptime_ms\":%lu,"
+    "\"freq2\":\"0x%02x\","
+    "\"freq1\":\"0x%02x\","
+    "\"freq0\":\"0x%02x\","
+    "\"dump_active\":%s,"
+    "\"exported_at_ms\":%lu,"
+    "\"count\":%d,"
+    "\"packets\":[",
+    esc_name.c_str(),
+    (unsigned long)millis(),
+    this->parent_->get_freq2(),
+    this->parent_->get_freq1(),
+    this->parent_->get_freq0(),
+    this->parent_->is_packet_dump_active() ? "true" : "false",
+    (unsigned long)millis(),
+    (int)packets.size());
+  json += meta;
+
+  bool first = true;
+  for (const auto &pkt : packets) {
+    if (!first) json += ",";
+    first = false;
+
+    char hex_buf[CC1101_FIFO_LENGTH * 3 + 1];
+    hex_buf[0] = '\0';
+    for (int i = 0; i < pkt.fifo_len && i < CC1101_FIFO_LENGTH; i++) {
+      char byte_buf[4];
+      snprintf(byte_buf, sizeof(byte_buf), i == 0 ? "%02x" : " %02x", pkt.data[i]);
+      strncat(hex_buf, byte_buf, sizeof(hex_buf) - strlen(hex_buf) - 1);
+    }
+
+    std::string reason_esc = json_escape(pkt.reject_reason);
+    char entry_buf[384];
+    snprintf(entry_buf, sizeof(entry_buf),
+      "{\"t\":%lu,\"len\":%d,\"valid\":%s,\"reason\":\"%s\",\"hex\":\"%s\"}",
+      (unsigned long)pkt.timestamp_ms,
+      pkt.fifo_len,
+      pkt.valid ? "true" : "false",
+      reason_esc.c_str(),
+      hex_buf);
+    json += entry_buf;
+  }
+  json += "]}";
+
+  char disp[64];
+  snprintf(disp, sizeof(disp), "attachment; filename=\"elero_packets_%lu.json\"",
+           (unsigned long)millis());
+
+  AsyncWebServerResponse *response =
+      request->beginResponse(200, "application/json", json.c_str());
+  response->addHeader("Content-Disposition", disp);
   this->add_cors_headers(response);
   request->send(response);
 }

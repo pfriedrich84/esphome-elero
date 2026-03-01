@@ -251,6 +251,7 @@
             <button class="btn btn-primary" @click="startDump()" :disabled="dumpActive">▶ Start Dump</button>
             <button class="btn btn-danger"  @click="stopDump()"  :disabled="!dumpActive">■ Stop</button>
             <button class="btn btn-outline" @click="clearDump()">Clear</button>
+            <button class="btn btn-outline" @click="downloadDump()" :disabled="dumpPackets.length===0">&#8595; Download</button>
           </div>
           <p class="hint">Records all received RF packets (max 50). Green = valid, red = rejected.</p>
           <div class="dump-wrap" x-show="dumpPackets.length>0">
