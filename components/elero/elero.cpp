@@ -54,6 +54,35 @@ static const char *TAG = "elero";
 static const uint8_t flash_table_encode[] = {0x08, 0x02, 0x0d, 0x01, 0x0f, 0x0e, 0x07, 0x05, 0x09, 0x0c, 0x00, 0x0a, 0x03, 0x04, 0x0b, 0x06};
 static const uint8_t flash_table_decode[] = {0x0a, 0x03, 0x01, 0x0c, 0x0d, 0x07, 0x0f, 0x06, 0x00, 0x08, 0x0b, 0x0e, 0x09, 0x02, 0x05, 0x04};
 
+static const char *marcstate_to_string(uint8_t marc) {
+  switch (marc) {
+    case CC1101_MARCSTATE_SLEEP: return "SLEEP";
+    case CC1101_MARCSTATE_IDLE: return "IDLE";
+    case CC1101_MARCSTATE_XOFF: return "XOFF";
+    case CC1101_MARCSTATE_VCOON_MC: return "VCOON_MC";
+    case CC1101_MARCSTATE_REGON_MC: return "REGON_MC";
+    case CC1101_MARCSTATE_MANCAL: return "MANCAL";
+    case CC1101_MARCSTATE_VCOON: return "VCOON";
+    case CC1101_MARCSTATE_REGON: return "REGON";
+    case CC1101_MARCSTATE_STARTCAL: return "STARTCAL";
+    case CC1101_MARCSTATE_BWBOOST: return "BWBOOST";
+    case CC1101_MARCSTATE_FS_LOCK: return "FS_LOCK";
+    case CC1101_MARCSTATE_IFADCON: return "IFADCON";
+    case CC1101_MARCSTATE_ENDCAL: return "ENDCAL";
+    case CC1101_MARCSTATE_RX: return "RX";
+    case CC1101_MARCSTATE_RX_END: return "RX_END";
+    case CC1101_MARCSTATE_RX_RST: return "RX_RST";
+    case CC1101_MARCSTATE_TXRX_SWITCH: return "TXRX_SWITCH";
+    case CC1101_MARCSTATE_RXFIFO_OFLOW: return "RXFIFO_OFLOW";
+    case CC1101_MARCSTATE_FSTXON: return "FSTXON";
+    case CC1101_MARCSTATE_TX: return "TX";
+    case CC1101_MARCSTATE_TX_END: return "TX_END";
+    case CC1101_MARCSTATE_RXTX_SWITCH: return "RXTX_SWITCH";
+    case CC1101_MARCSTATE_TXFIFO_UFLOW: return "TXFIFO_UFLOW";
+    default: return "UNKNOWN";
+  }
+}
+
 const char *elero_state_to_string(uint8_t state) {
   switch (state) {
     case ELERO_STATE_TOP: return "top";
@@ -179,7 +208,7 @@ void Elero::advance_tx() {
         this->tx_state_ = TxState::FIRING;
         this->tx_state_entered_ms_ = now;
       } else if (elapsed > TX_STATE_TIMEOUT_MS) {
-        ESP_LOGE(TAG, "TX timeout in GOING_IDLE (marc=0x%02x)", marc);
+        ESP_LOGE(TAG, "TX timeout in GOING_IDLE (marc=%s (0x%02x))", marcstate_to_string(marc), marc);
         this->tx_abort_();
       }
       break;
@@ -194,8 +223,17 @@ void Elero::advance_tx() {
       if (marc == CC1101_MARCSTATE_TX) {
         this->tx_state_ = TxState::TRANSMITTING;
         this->tx_state_entered_ms_ = now;
+      } else if (this->gdo0_fired_) {
+        // GDO0 falling edge means the TX packet has been fully sent.  The
+        // entire TX cycle (calibration + packet) completed before we could
+        // observe MARCSTATE=TX — the radio already auto-transitioned to RX
+        // (MCSM1 TXOFF_MODE=RX).  Skip straight to verification.
+        ESP_LOGD(TAG, "TX fast-path: completed during FIRING (marc=%s (0x%02x), %lums)",
+                 marcstate_to_string(marc), marc, (unsigned long) elapsed);
+        this->tx_state_ = TxState::VERIFYING;
+        this->tx_state_entered_ms_ = now;
       } else if (elapsed > TX_STATE_TIMEOUT_MS) {
-        ESP_LOGE(TAG, "TX timeout in FIRING (marc=0x%02x)", marc);
+        ESP_LOGE(TAG, "TX timeout in FIRING (marc=%s (0x%02x))", marcstate_to_string(marc), marc);
         this->tx_abort_();
       }
       break;
@@ -210,7 +248,7 @@ void Elero::advance_tx() {
         this->tx_state_ = TxState::VERIFYING;
         this->tx_state_entered_ms_ = now;
       } else if (elapsed > TX_STATE_TIMEOUT_MS) {
-        ESP_LOGE(TAG, "TX timeout in TRANSMITTING (marc=0x%02x)", marc);
+        ESP_LOGE(TAG, "TX timeout in TRANSMITTING (marc=%s (0x%02x))", marcstate_to_string(marc), marc);
         this->tx_abort_();
       }
       break;
@@ -223,7 +261,7 @@ void Elero::advance_tx() {
         // (MCSM1 TXOFF_MODE=RX).  Do NOT issue SFTX here — the radio is
         // in RX mode, and the CC1101 spec says SFTX is only valid in IDLE
         // or TXFIFO_UNDERFLOW.  The TX FIFO is confirmed empty anyway.
-        ESP_LOGV(TAG, "Transmission successful");
+        ESP_LOGD(TAG, "TX verified: packet sent successfully");
         this->tx_state_ = TxState::COOLDOWN;
         this->tx_state_entered_ms_ = now;
         this->last_tx_complete_ms_ = now;
