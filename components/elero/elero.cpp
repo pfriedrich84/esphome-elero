@@ -17,6 +17,39 @@
 namespace esphome {
 namespace elero {
 
+#ifdef USE_LOGGER
+// Small adapter that implements the LogListener interface so the Elero hub
+// can forward ESPHome log messages into its ring buffer for the web UI.
+class EleroLogListener : public logger::LogListener {
+ public:
+  explicit EleroLogListener(Elero *parent) : parent_(parent) {}
+  void on_log(uint8_t level, const char *tag, const char *message, size_t message_len) override {
+    // Map ESPHome levels (1-7) to the 5-level scheme used by the web UI:
+    //   ESPHome 1 ERROR         → 1 error
+    //   ESPHome 2 WARN          → 2 warn
+    //   ESPHome 3 INFO          → 3 info
+    //   ESPHome 4 CONFIG        → 3 info
+    //   ESPHome 5 DEBUG         → 4 debug
+    //   ESPHome 6/7 VERBOSE+    → 5 verbose
+    uint8_t mapped;
+    if (level <= 1)
+      mapped = 1;
+    else if (level == 2)
+      mapped = 2;
+    else if (level <= 4)
+      mapped = 3;
+    else if (level == 5)
+      mapped = 4;
+    else
+      mapped = 5;
+    this->parent_->append_log(mapped, tag, "%s", message);
+  }
+
+ protected:
+  Elero *parent_;
+};
+#endif
+
 static const char *TAG = "elero";
 static const uint8_t flash_table_encode[] = {0x08, 0x02, 0x0d, 0x01, 0x0f, 0x0e, 0x07, 0x05, 0x09, 0x0c, 0x00, 0x0a, 0x03, 0x04, 0x0b, 0x06};
 static const uint8_t flash_table_decode[] = {0x0a, 0x03, 0x01, 0x0c, 0x0d, 0x07, 0x0f, 0x06, 0x00, 0x08, 0x0b, 0x0e, 0x09, 0x02, 0x05, 0x04};
@@ -334,29 +367,7 @@ void Elero::setup() {
   // Forward all ESP_LOG messages into the ring buffer so the web UI Log tab
   // can display them when capture is enabled.
   if (logger::global_logger != nullptr) {
-    logger::global_logger->add_log_callback(
-        this,
-        [](void *self, uint8_t level, const char *tag, const char *message, size_t message_len) {
-          // Map ESPHome levels (1-7) to the 5-level scheme used by the web UI:
-          //   ESPHome 1 ERROR         → 1 error
-          //   ESPHome 2 WARN          → 2 warn
-          //   ESPHome 3 INFO          → 3 info
-          //   ESPHome 4 CONFIG        → 3 info
-          //   ESPHome 5 DEBUG         → 4 debug
-          //   ESPHome 6/7 VERBOSE+    → 5 verbose
-          uint8_t mapped;
-          if (level <= 1)
-            mapped = 1;
-          else if (level == 2)
-            mapped = 2;
-          else if (level <= 4)
-            mapped = 3;
-          else if (level == 5)
-            mapped = 4;
-          else
-            mapped = 5;
-          static_cast<Elero *>(self)->append_log(mapped, tag, "%s", message);
-        });
+    logger::global_logger->add_log_listener(new EleroLogListener(this));
   }
 #endif
 }

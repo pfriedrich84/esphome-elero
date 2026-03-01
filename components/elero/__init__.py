@@ -40,3 +40,11 @@ async def to_code(config):
     cg.add(var.set_freq0(config[CONF_FREQ0]))
     cg.add(var.set_freq1(config[CONF_FREQ1]))
     cg.add(var.set_freq2(config[CONF_FREQ2]))
+
+    # Reserve a log listener slot so add_log_listener() works at runtime.
+    # Required for ESPHome 2026.1.0+ (StaticVector migration).
+    try:
+        from esphome.components.logger import request_log_listener
+        request_log_listener()
+    except ImportError:
+        pass  # Older ESPHome without StaticVector migration
