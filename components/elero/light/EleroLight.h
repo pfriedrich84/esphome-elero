@@ -28,8 +28,12 @@ class EleroLight : public light::LightOutput, public Component, public EleroLigh
     this->last_rssi_ = rssi;
   }
   void enqueue_command(uint8_t cmd_byte) override {
-    if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE)
+    if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE) {
       this->commands_to_send_.push(cmd_byte);
+    } else {
+      ESP_LOGW("elero.light", "Command queue full for light 0x%06x, dropping cmd 0x%02x",
+               this->command_.blind_addr, cmd_byte);
+    }
   }
   void schedule_immediate_poll() override;
 

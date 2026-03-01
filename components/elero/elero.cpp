@@ -377,12 +377,13 @@ void Elero::drain_runtime_queues() {
 }
 
 void IRAM_ATTR Elero::interrupt(Elero *arg) {
-  arg->gdo0_fired_ = true;
+  arg->gdo0_fired_.store(true, std::memory_order_relaxed);
   // GDO0 (IOCFG0=0x06) fires for both TX-done and RX-ready.
   // Only flag rx_ready_ when the radio is actually in receive mode,
   // so the TX state machine can use gdo0_fired_ without confusion.
-  if (arg->tx_state_ == TxState::IDLE || arg->tx_state_ == TxState::COOLDOWN) {
-    arg->rx_ready_ = true;
+  TxState state = arg->tx_state_.load(std::memory_order_relaxed);
+  if (state == TxState::IDLE || state == TxState::COOLDOWN) {
+    arg->rx_ready_.store(true, std::memory_order_relaxed);
   }
 }
 
@@ -757,8 +758,11 @@ void Elero::interpret_msg() {
   uint32_t dst;
   uint8_t dests_len;
 
-  // Validate destination count before multiplication to prevent overflow
-  if (num_dests > 20) {
+  // Validate destination count before multiplication to prevent overflow.
+  // Max safe value: destinations start at byte 17, followed by payload accessed
+  // up to byte 26 + dests_len.  For 3-byte dests: max = (ELERO_MAX_PACKET_SIZE - 27) / 3 = 10.
+  static const uint8_t MAX_SAFE_DESTS = (ELERO_MAX_PACKET_SIZE - 27) / 3;
+  if (num_dests > MAX_SAFE_DESTS) {
     ESP_LOGE(TAG, "Received invalid packet: too many destinations (%d)", num_dests);
     ESP_LOGD(TAG, "  Raw [%d bytes]: %s", length + 3,
              format_hex_pretty(this->msg_rx_, length + 3).c_str());
@@ -998,7 +1002,7 @@ void Elero::capture_raw_packet_(uint8_t fifo_len) {
 
   if (raw_packets_.size() < ELERO_MAX_RAW_PACKETS) {
     raw_packets_.push_back(pkt);
-    raw_packet_write_idx_ = (uint8_t)(raw_packets_.size() - 1);
+    raw_packet_write_idx_ = (uint16_t)(raw_packets_.size() - 1);
   } else {
     raw_packet_write_idx_ = (raw_packet_write_idx_ + 1) % ELERO_MAX_RAW_PACKETS;
     raw_packets_[raw_packet_write_idx_] = pkt;
