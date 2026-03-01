@@ -1,5 +1,6 @@
 #include "EleroCover.h"
 #include "esphome/core/log.h"
+#include <cmath>
 
 namespace esphome {
 namespace elero {
@@ -99,6 +100,11 @@ void EleroCover::loop() {
       // Schedule verification poll to confirm motor actually stopped
       this->stop_verify_at_ = now + ELERO_STOP_VERIFY_DELAY_MS;
       this->stop_verify_retries_ = 0;
+      // Publish final position immediately — the 1-second throttle below may
+      // skip this, and the next loop() won't enter this block (operation is IDLE),
+      // leaving HA stuck showing "opening/closing" with a stale position.
+      this->publish_state(false);
+      this->last_publish_ = now;
     }
 
     // Publish position every second
@@ -290,7 +296,15 @@ void EleroCover::control(const cover::CoverCall &call) {
   if (call.get_position().has_value()) {
     auto pos = *call.get_position();
     this->target_position_ = pos;
-    if((pos > this->position) || (pos == COVER_OPEN)) {
+    // Dead-zone: if already within 1% of target (and not requesting fully
+    // open/closed), skip movement.  Without this, requesting the exact
+    // current position would incorrectly start closing because
+    // (pos > this->position) is false when they're equal.
+    if (pos != COVER_OPEN && pos != COVER_CLOSED &&
+        (this->open_duration_ > 0) && (this->close_duration_ > 0) &&
+        std::abs(pos - this->position) < 0.01f) {
+      // Already at target — no movement needed
+    } else if((pos > this->position) || (pos == COVER_OPEN)) {
       this->start_movement(COVER_OPERATION_OPENING);
     } else {
       this->start_movement(COVER_OPERATION_CLOSING);
@@ -326,6 +340,17 @@ void EleroCover::start_movement(CoverOperation dir) {
   // Cancel any pending stop verification — a new movement command supersedes it
   this->stop_verify_at_ = 0;
   this->stop_verify_retries_ = ELERO_STOP_VERIFY_MAX_RETRIES;
+
+  // When reversing direction while moving, clear the queue so the old
+  // direction command isn't sent before the new one.  Without this, a
+  // pending UP in the queue would be transmitted before the new DOWN,
+  // causing a brief wrong-direction movement and position desync.
+  if (dir != COVER_OPERATION_IDLE &&
+      this->current_operation != COVER_OPERATION_IDLE &&
+      dir != this->current_operation) {
+    while (!this->commands_to_send_.empty())
+      this->commands_to_send_.pop();
+  }
 
   switch(dir) {
     case COVER_OPERATION_OPENING:
