@@ -135,6 +135,33 @@ CONFIG_SCHEMA = cv.All(
 )
 
 
+def _final_validate(config):
+    """Cross-component validation: detect duplicate blind_address across all covers."""
+    from esphome.core import CORE
+
+    seen_addresses = {}
+    # Iterate all cover configs in the full ESPHome config
+    full_config = CORE.config.get("cover", [])
+    for entry in full_config:
+        if entry.get("platform") != "elero":
+            continue
+        addr = entry.get(CONF_BLIND_ADDRESS)
+        name = entry.get(CONF_NAME, "unnamed")
+        if addr is None:
+            continue
+        if addr in seen_addresses:
+            raise cv.Invalid(
+                f"Duplicate blind_address 0x{addr:06x}: used by both "
+                f"'{seen_addresses[addr]}' and '{name}'. "
+                f"Each Elero cover must have a unique blind_address."
+            )
+        seen_addresses[addr] = name
+    return config
+
+
+FINAL_VALIDATE_SCHEMA = _final_validate
+
+
 async def to_code(config):
     var = await cover.new_cover(config)
     await cg.register_component(var, config)

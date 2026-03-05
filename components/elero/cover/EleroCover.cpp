@@ -31,6 +31,9 @@ void EleroCover::setup() {
     return;
   }
   this->parent_->register_cover(this);
+  // Apply stagger offset: shift initial last_poll_ backwards so the first poll
+  // is delayed by poll_offset_ milliseconds relative to other covers.
+  this->last_poll_ = millis() - this->poll_intvl_ + this->poll_offset_;
   auto restore = this->restore_state_();
   if (restore.has_value()) {
     restore->apply(this);
@@ -48,10 +51,10 @@ void EleroCover::loop() {
       intvl = ELERO_POLL_INTERVAL_MOVING;
   }
 
-  if((now > this->poll_offset_) && (now - this->poll_offset_ - this->last_poll_) > intvl) {
+  if ((now - this->last_poll_) > intvl) {
     if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE) {
       this->commands_to_send_.push(this->command_check_);
-      this->last_poll_ = now - this->poll_offset_;
+      this->last_poll_ = now;
     }
   }
 
@@ -60,7 +63,7 @@ void EleroCover::loop() {
     if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE) {
       ESP_LOGD(TAG, "Post-movement status poll for blind 0x%06x", this->command_.blind_addr);
       this->commands_to_send_.push(this->command_check_);
-      this->last_poll_ = now - this->poll_offset_;
+      this->last_poll_ = now;
     }
   }
 

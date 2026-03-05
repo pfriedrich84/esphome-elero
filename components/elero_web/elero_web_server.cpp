@@ -15,14 +15,20 @@ static const char *const TAG = "elero.web_server";
 
 static std::string json_escape(const std::string &s) {
   std::string out;
-  out.reserve(s.size());
-  for (char c : s) {
+  out.reserve(s.size() + 8);
+  for (unsigned char c : s) {
     if      (c == '"')  { out += "\\\""; }
     else if (c == '\\') { out += "\\\\"; }
     else if (c == '\n') { out += "\\n";  }
     else if (c == '\r') { out += "\\r";  }
     else if (c == '\t') { out += "\\t";  }
-    else { out += c; }
+    else if (c < 0x20)  {
+      // Escape control characters as \u00XX for valid JSON
+      char buf[8];
+      snprintf(buf, sizeof(buf), "\\u%04x", c);
+      out += buf;
+    }
+    else { out += static_cast<char>(c); }
   }
   return out;
 }
@@ -58,7 +64,7 @@ bool EleroWebServer::parse_addr_url(const std::string &url, const char *prefix,
   // Build expected start: /elero/api/<prefix>/
   std::string base = std::string("/elero/api/") + prefix + "/";
   if (url.size() <= base.size()) return false;
-  if (url.substr(0, base.size()) != base) return false;
+  if (url.compare(0, base.size(), base) != 0) return false;
 
   // Find next slash after the address
   size_t addr_start = base.size();
@@ -74,6 +80,7 @@ bool EleroWebServer::parse_addr_url(const std::string &url, const char *prefix,
   char *end;
   unsigned long v = strtoul(addr_str.c_str(), &end, 0);
   if (end == addr_str.c_str()) return false;
+  if (v > 0xFFFFFF) return false;  // Elero addresses are 3 bytes max
   addr_out = (uint32_t)v;
   return true;
 }
@@ -117,7 +124,7 @@ void EleroWebServer::dump_config() {
 bool EleroWebServer::canHandle(AsyncWebServerRequest *request) const {
   if (!this->enabled_) return false;
   const std::string &url = request->url();
-  return url == "/" || (url.size() >= 6 && url.substr(0, 6) == "/elero");
+  return url == "/" || (url.size() >= 6 && url.compare(0, 6, "/elero") == 0);
 }
 
 void EleroWebServer::handleRequest(AsyncWebServerRequest *request) {
@@ -236,11 +243,12 @@ void EleroWebServer::handle_scan_stop(AsyncWebServerRequest *request) {
 // ─── Discovered blinds ────────────────────────────────────────────────────────
 
 void EleroWebServer::handle_get_discovered(AsyncWebServerRequest *request) {
-  std::string json = "{\"scanning\":";
+  const auto &blinds = this->parent_->get_discovered_blinds();
+  std::string json;
+  json.reserve(64 + blinds.size() * 400);
+  json += "{\"scanning\":";
   json += this->parent_->is_scanning() ? "true" : "false";
   json += ",\"blinds\":[";
-
-  const auto &blinds = this->parent_->get_discovered_blinds();
   bool first = true;
   for (const auto &blind : blinds) {
     if (!first) json += ",";
@@ -292,7 +300,10 @@ void EleroWebServer::handle_get_discovered(AsyncWebServerRequest *request) {
 // ─── Configured covers ────────────────────────────────────────────────────────
 
 void EleroWebServer::handle_get_configured(AsyncWebServerRequest *request) {
-  std::string json = "{\"covers\":[";
+  std::string json;
+  json.reserve(64 + this->parent_->get_configured_covers().size() * 400
+                   + this->parent_->get_runtime_blinds().size() * 400);
+  json += "{\"covers\":[";
 
   bool first = true;
 
@@ -392,13 +403,13 @@ void EleroWebServer::handle_cover_command(AsyncWebServerRequest *request, uint32
   }
   const std::string cmd_str = cmd_param->value().c_str();
 
-  // Map command string to byte
-  auto get_cmd_byte = [&](EleroBlindBase *blind) -> int {
-    if (cmd_str == "up"    || cmd_str == "open")  return 0x20;
-    if (cmd_str == "down"  || cmd_str == "close") return 0x40;
-    if (cmd_str == "stop")  return 0x10;
-    if (cmd_str == "check") return 0x00;
-    if (cmd_str == "tilt")  return 0x24;
+  // Map command string to byte — use configured values for covers, defaults for runtime blinds
+  auto get_cmd_byte_for_cover = [&](EleroBlindBase *blind) -> int {
+    if (cmd_str == "up"    || cmd_str == "open")  return blind->get_command_up();
+    if (cmd_str == "down"  || cmd_str == "close") return blind->get_command_down();
+    if (cmd_str == "stop")  return blind->get_command_stop();
+    if (cmd_str == "check") return blind->get_command_check();
+    if (cmd_str == "tilt")  return blind->get_command_tilt();
     if (cmd_str == "int")   return 0x44;
     return -1;
   };
@@ -407,7 +418,7 @@ void EleroWebServer::handle_cover_command(AsyncWebServerRequest *request, uint32
   const auto &covers = this->parent_->get_configured_covers();
   auto it = covers.find(addr);
   if (it != covers.end()) {
-    int cmd_byte = get_cmd_byte(it->second);
+    int cmd_byte = get_cmd_byte_for_cover(it->second);
     if (cmd_byte < 0) { this->send_json_error(request, 400, "Unknown cmd"); return; }
     it->second->enqueue_command((uint8_t)cmd_byte);
     char buf[96];
@@ -679,12 +690,13 @@ void EleroWebServer::handle_get_packets(AsyncWebServerRequest *request) {
     first = false;
 
     char hex_buf[CC1101_FIFO_LENGTH * 3 + 1];
-    hex_buf[0] = '\0';
+    int hex_pos = 0;
     for (int i = 0; i < pkt.fifo_len && i < CC1101_FIFO_LENGTH; i++) {
-      char byte_buf[4];
-      snprintf(byte_buf, sizeof(byte_buf), i == 0 ? "%02x" : " %02x", pkt.data[i]);
-      strncat(hex_buf, byte_buf, sizeof(hex_buf) - strlen(hex_buf) - 1);
+      int remaining = (int)sizeof(hex_buf) - hex_pos;
+      if (remaining <= 0) break;
+      hex_pos += snprintf(hex_buf + hex_pos, remaining, i == 0 ? "%02x" : " %02x", pkt.data[i]);
     }
+    hex_buf[sizeof(hex_buf) - 1] = '\0';
 
     char entry_buf[320];
     snprintf(entry_buf, sizeof(entry_buf),
@@ -749,12 +761,13 @@ void EleroWebServer::handle_packets_download(AsyncWebServerRequest *request) {
     first = false;
 
     char hex_buf[CC1101_FIFO_LENGTH * 3 + 1];
-    hex_buf[0] = '\0';
+    int hex_pos = 0;
     for (int i = 0; i < pkt.fifo_len && i < CC1101_FIFO_LENGTH; i++) {
-      char byte_buf[4];
-      snprintf(byte_buf, sizeof(byte_buf), i == 0 ? "%02x" : " %02x", pkt.data[i]);
-      strncat(hex_buf, byte_buf, sizeof(hex_buf) - strlen(hex_buf) - 1);
+      int remaining = (int)sizeof(hex_buf) - hex_pos;
+      if (remaining <= 0) break;
+      hex_pos += snprintf(hex_buf + hex_pos, remaining, i == 0 ? "%02x" : " %02x", pkt.data[i]);
     }
+    hex_buf[sizeof(hex_buf) - 1] = '\0';
 
     std::string reason_esc = json_escape(pkt.reject_reason);
     char entry_buf[384];
@@ -837,7 +850,7 @@ void EleroWebServer::handle_get_logs(AsyncWebServerRequest *request) {
       since_ms = (uint32_t)strtoul(since_param->value().c_str(), nullptr, 10);
   }
 
-  const auto &entries = this->parent_->get_log_entries();
+  const auto entries = this->parent_->get_log_entries_copy();
 
   std::string json = "{\"capture_active\":";
   json += this->parent_->is_log_capture_active() ? "true" : "false";

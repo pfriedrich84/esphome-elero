@@ -108,17 +108,18 @@ void Elero::loop() {
   // 1. ALWAYS process pending RX packets first (highest priority).
   //    Only safe when not mid-TX — during active TX states, gdo0_fired_
   //    belongs to the TX completion path.
-  if (this->tx_state_ == TxState::IDLE || this->tx_state_ == TxState::COOLDOWN) {
+  TxState cur_tx = this->tx_state_.load(std::memory_order_acquire);
+  if (cur_tx == TxState::IDLE || cur_tx == TxState::COOLDOWN) {
     this->process_rx();
   }
 
   // 2. Advance the non-blocking TX state machine (one step per loop).
-  if (this->tx_state_ != TxState::IDLE) {
+  if (cur_tx != TxState::IDLE) {
     this->advance_tx();
   }
 
   // 3. Drain runtime blind command queues (only when TX is idle).
-  if (this->tx_state_ == TxState::IDLE) {
+  if (this->tx_state_.load(std::memory_order_acquire) == TxState::IDLE) {
     this->drain_runtime_queues();
     // 4. Periodic radio health check — detect stuck CC1101 states.
     this->check_radio_state_();
@@ -129,17 +130,17 @@ void Elero::loop() {
 // process_rx — drain all available packets from the CC1101 RX FIFO
 // ---------------------------------------------------------------------------
 void Elero::process_rx() {
-  if (!this->rx_ready_)
+  if (!this->rx_ready_.load(std::memory_order_acquire))
     return;
-  this->rx_ready_ = false;
+  this->rx_ready_.store(false, std::memory_order_release);
 
-  // Drain up to 4 packets per call to prevent infinite loops if noise
-  // keeps triggering the interrupt.
-  for (uint8_t iter = 0; iter < 4; iter++) {
+  // Drain up to ELERO_MAX_RX_PER_LOOP packets per call to prevent infinite
+  // loops if noise keeps triggering the interrupt.
+  for (uint8_t iter = 0; iter < ELERO_MAX_RX_PER_LOOP; iter++) {
     uint8_t len = this->read_status(CC1101_RXBYTES);
 
     if (len & 0x80) {  // overflow bit set — FIFO data unreliable
-      ESP_LOGW(TAG, "RX FIFO overflow in process_rx, flushing");
+      ESP_LOGW(TAG, "RX FIFO overflow in process_rx, flushing (recoverable)");
       this->flush_rx();
       return;
     }
@@ -200,38 +201,34 @@ void Elero::advance_tx() {
         // interrupted.  Both flushes are valid in IDLE state per CC1101 spec.
         this->write_cmd(CC1101_SFTX);
         this->write_cmd(CC1101_SFRX);
-        this->rx_ready_ = false;  // invalidate stale RX flag
+        this->rx_ready_.store(false, std::memory_order_release);  // invalidate stale RX flag
         delay_microseconds_safe(100);
         this->write_burst(CC1101_TXFIFO, this->msg_tx_, this->msg_tx_[0] + 1);
-        this->gdo0_fired_ = false;  // clear before STX so we detect TX-done cleanly
+        this->gdo0_fired_.store(false, std::memory_order_release);  // clear before STX so we detect TX-done cleanly
         this->write_cmd(CC1101_STX);
-        this->tx_state_ = TxState::FIRING;
+        this->tx_state_.store(TxState::FIRING, std::memory_order_release);
         this->tx_state_entered_ms_ = now;
       } else if (elapsed > TX_STATE_TIMEOUT_MS) {
-        ESP_LOGE(TAG, "TX timeout in GOING_IDLE (marc=%s (0x%02x))", marcstate_to_string(marc), marc);
+        ESP_LOGW(TAG, "TX timeout in GOING_IDLE (marc=%s (0x%02x)), aborting", marcstate_to_string(marc), marc);
         this->tx_abort_();
       }
       break;
     }
 
-    case TxState::LOADING:
-      // Handled inline in GOING_IDLE → falls through to FIRING
-      break;
-
     case TxState::FIRING: {
       uint8_t marc = this->read_status(CC1101_MARCSTATE) & 0x1F;
       if (marc == CC1101_MARCSTATE_TX) {
-        this->tx_state_ = TxState::TRANSMITTING;
+        this->tx_state_.store(TxState::TRANSMITTING, std::memory_order_release);
         this->tx_state_entered_ms_ = now;
         this->gdo0_miss_count_ = 0;
-      } else if (this->gdo0_fired_) {
+      } else if (this->gdo0_fired_.load(std::memory_order_acquire)) {
         // GDO0 falling edge means the TX packet has been fully sent.  The
         // entire TX cycle (calibration + packet) completed before we could
         // observe MARCSTATE=TX — the radio already auto-transitioned to RX
         // (MCSM1 TXOFF_MODE=RX).  Skip straight to verification.
         ESP_LOGD(TAG, "TX fast-path: GDO0 fired during FIRING (marc=%s (0x%02x), %lums)",
                  marcstate_to_string(marc), marc, (unsigned long) elapsed);
-        this->tx_state_ = TxState::VERIFYING;
+        this->tx_state_.store(TxState::VERIFYING, std::memory_order_release);
         this->tx_state_entered_ms_ = now;
         this->gdo0_miss_count_ = 0;
       } else if (marc == CC1101_MARCSTATE_RX || marc == CC1101_MARCSTATE_TX_END) {
@@ -241,16 +238,16 @@ void Elero::advance_tx() {
         // which confirms TXBYTES==0 for safety.
         ESP_LOGD(TAG, "TX completed (no GDO0) during FIRING (marc=%s (0x%02x), %lums)",
                  marcstate_to_string(marc), marc, (unsigned long) elapsed);
-        this->tx_state_ = TxState::VERIFYING;
+        this->tx_state_.store(TxState::VERIFYING, std::memory_order_release);
         this->tx_state_entered_ms_ = now;
-        if (++this->gdo0_miss_count_ == 10) {
+        if (++this->gdo0_miss_count_ == ELERO_GDO0_MISS_WARN_THRESHOLD) {
           ESP_LOGW(TAG, "GDO0 interrupt not firing during TX — check GDO0 pin wiring/configuration");
         }
       } else if (marc == CC1101_MARCSTATE_TXFIFO_UFLOW) {
         ESP_LOGE(TAG, "TX FIFO underflow in FIRING");
         this->tx_abort_();
       } else if (elapsed > TX_STATE_TIMEOUT_MS) {
-        ESP_LOGE(TAG, "TX timeout in FIRING (marc=%s (0x%02x))", marcstate_to_string(marc), marc);
+        ESP_LOGW(TAG, "TX timeout in FIRING (marc=%s (0x%02x)), aborting", marcstate_to_string(marc), marc);
         this->tx_abort_();
       }
       break;
@@ -261,11 +258,11 @@ void Elero::advance_tx() {
       // Detect by checking if MARCSTATE has left TX.  Also accept the GDO0
       // falling-edge interrupt as a fast-path indicator.
       uint8_t marc = this->read_status(CC1101_MARCSTATE) & 0x1F;
-      if (marc != CC1101_MARCSTATE_TX || this->gdo0_fired_) {
-        this->tx_state_ = TxState::VERIFYING;
+      if (marc != CC1101_MARCSTATE_TX || this->gdo0_fired_.load(std::memory_order_acquire)) {
+        this->tx_state_.store(TxState::VERIFYING, std::memory_order_release);
         this->tx_state_entered_ms_ = now;
       } else if (elapsed > TX_STATE_TIMEOUT_MS) {
-        ESP_LOGE(TAG, "TX timeout in TRANSMITTING (marc=%s (0x%02x))", marcstate_to_string(marc), marc);
+        ESP_LOGW(TAG, "TX timeout in TRANSMITTING (marc=%s (0x%02x)), aborting", marcstate_to_string(marc), marc);
         this->tx_abort_();
       }
       break;
@@ -279,7 +276,7 @@ void Elero::advance_tx() {
         // in RX mode, and the CC1101 spec says SFTX is only valid in IDLE
         // or TXFIFO_UNDERFLOW.  The TX FIFO is confirmed empty anyway.
         ESP_LOGD(TAG, "TX verified: packet sent successfully");
-        this->tx_state_ = TxState::COOLDOWN;
+        this->tx_state_.store(TxState::COOLDOWN, std::memory_order_release);
         this->tx_state_entered_ms_ = now;
         this->last_tx_complete_ms_ = now;
       } else {
@@ -292,7 +289,7 @@ void Elero::advance_tx() {
     case TxState::COOLDOWN: {
       // Allow the CC1101 time to settle into RX before accepting the next TX.
       if (elapsed >= TX_COOLDOWN_MS) {
-        this->tx_state_ = TxState::IDLE;
+        this->tx_state_.store(TxState::IDLE, std::memory_order_release);
         // Check for RX FIFO issues that may have occurred during the TX cycle.
         // During TX, the ISR doesn't set rx_ready_, so overflow or pending
         // data would go unnoticed without this explicit check.
@@ -302,7 +299,7 @@ void Elero::advance_tx() {
           this->flush_rx();
         } else if ((rxbytes & 0x7F) > 0) {
           // Data arrived during TX — make sure process_rx() sees it
-          this->rx_ready_ = true;
+          this->rx_ready_.store(true, std::memory_order_release);
         }
         this->process_rx();
       }
@@ -320,7 +317,7 @@ void Elero::advance_tx() {
 // ---------------------------------------------------------------------------
 void Elero::tx_abort_() {
   this->flush_and_rx();
-  this->tx_state_ = TxState::IDLE;
+  this->tx_state_.store(TxState::IDLE, std::memory_order_release);
 }
 
 // ---------------------------------------------------------------------------
@@ -394,13 +391,13 @@ void Elero::drain_runtime_queues() {
 }
 
 void IRAM_ATTR Elero::interrupt(Elero *arg) {
-  arg->gdo0_fired_.store(true, std::memory_order_relaxed);
+  arg->gdo0_fired_.store(true, std::memory_order_release);
   // GDO0 (IOCFG0=0x06) fires for both TX-done and RX-ready.
   // Only flag rx_ready_ when the radio is actually in receive mode,
   // so the TX state machine can use gdo0_fired_ without confusion.
-  TxState state = arg->tx_state_.load(std::memory_order_relaxed);
+  TxState state = arg->tx_state_.load(std::memory_order_acquire);
   if (state == TxState::IDLE || state == TxState::COOLDOWN) {
-    arg->rx_ready_.store(true, std::memory_order_relaxed);
+    arg->rx_ready_.store(true, std::memory_order_release);
   }
 }
 
@@ -429,9 +426,9 @@ void Elero::setup() {
 }
 
 void Elero::reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
-  this->rx_ready_ = false;
-  this->gdo0_fired_ = false;
-  this->tx_state_ = TxState::IDLE;
+  this->rx_ready_.store(false, std::memory_order_release);
+  this->gdo0_fired_.store(false, std::memory_order_release);
+  this->tx_state_.store(TxState::IDLE, std::memory_order_release);
   this->freq2_ = freq2;
   this->freq1_ = freq1;
   this->freq0_ = freq0;
@@ -443,21 +440,25 @@ void Elero::reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
 void Elero::flush_and_rx() {
   ESP_LOGVV(TAG, "flush_and_rx");
   this->write_cmd(CC1101_SIDLE);
-  this->wait_idle();
+  if (!this->wait_idle()) {
+    ESP_LOGW(TAG, "flush_and_rx: timed out waiting for IDLE");
+  }
   this->write_cmd(CC1101_SFRX);
   this->write_cmd(CC1101_SFTX);
   this->write_cmd(CC1101_SRX);
-  this->rx_ready_ = false;
-  this->gdo0_fired_ = false;
+  this->rx_ready_.store(false, std::memory_order_release);
+  this->gdo0_fired_.store(false, std::memory_order_release);
 }
 
 void Elero::flush_rx() {
   ESP_LOGVV(TAG, "flush_rx");
   this->write_cmd(CC1101_SIDLE);
-  this->wait_idle();
+  if (!this->wait_idle()) {
+    ESP_LOGW(TAG, "flush_rx: timed out waiting for IDLE");
+  }
   this->write_cmd(CC1101_SFRX);
   this->write_cmd(CC1101_SRX);
-  this->rx_ready_ = false;
+  this->rx_ready_.store(false, std::memory_order_release);
 }
 
 void Elero::reset() {
@@ -514,7 +515,9 @@ void Elero::init() {
   this->write_burst(CC1101_PATABLE, patable_data, 8);
 
   this->write_cmd(CC1101_SRX);
-  this->wait_rx();
+  if (!this->wait_rx()) {
+    ESP_LOGW(TAG, "init: CC1101 failed to enter RX after configuration");
+  }
 }
 
 void Elero::write_reg(uint8_t addr, uint8_t data) {
@@ -801,7 +804,7 @@ void Elero::interpret_msg() {
   // Sanity check: msg_decode accesses 8 bytes at msg_rx_[19 + dests_len],
   // so the highest index touched is 26 + dests_len. This must be within both
   // the packet (length) and the FIFO buffer.
-  if(26 + dests_len > length || 26 + dests_len >= CC1101_FIFO_LENGTH) {
+  if((uint16_t)(26 + dests_len) > length || (uint16_t)(26 + dests_len) >= CC1101_FIFO_LENGTH) {
     ESP_LOGE(TAG, "Received invalid packet: dests_len too long (%d) for length %d", dests_len, length);
     ESP_LOGD(TAG, "  Raw [%d bytes]: %s", length + 3,
              format_hex_pretty(this->msg_rx_, length + 3).c_str());
@@ -813,7 +816,7 @@ void Elero::interpret_msg() {
   }
 
   // RSSI and LQI are appended by CC1101 after packet data at indices length+1 and length+2
-  if (length + 2 >= CC1101_FIFO_LENGTH) {
+  if ((uint16_t)(length + 2) >= CC1101_FIFO_LENGTH) {
     ESP_LOGE(TAG, "Received invalid packet: RSSI/LQI out of buffer bounds (length=%d)", length);
     ESP_LOGD(TAG, "  Raw [%d bytes]: %s", CC1101_FIFO_LENGTH,
              format_hex_pretty(this->msg_rx_, CC1101_FIFO_LENGTH).c_str());
@@ -969,7 +972,7 @@ void Elero::register_cover(EleroBlindBase *cover) {
     return;
   }
   this->address_to_cover_mapping_.insert({address, cover});
-  cover->set_poll_offset((this->address_to_cover_mapping_.size() - 1) * 5000);
+  cover->set_poll_offset((this->address_to_cover_mapping_.size() - 1) * ELERO_POLL_STAGGER_MS);
 }
 
 void Elero::register_light(EleroLightBase *light) {
@@ -1091,7 +1094,7 @@ void Elero::track_discovered_blind(uint32_t src, uint32_t remote, uint8_t channe
 
 bool Elero::send_command(t_elero_command *cmd) {
   // Reject if a TX is already in progress — caller should retry next loop.
-  if (this->tx_state_ != TxState::IDLE)
+  if (this->tx_state_.load(std::memory_order_acquire) != TxState::IDLE)
     return false;
 
   ESP_LOGVV(TAG, "send_command called");
@@ -1128,7 +1131,7 @@ bool Elero::send_command(t_elero_command *cmd) {
 
   // Kick off non-blocking TX state machine: go to IDLE first so STX is not
   // subject to CCA (Elero motors actively transmit, causing CCA failures).
-  this->tx_state_ = TxState::GOING_IDLE;
+  this->tx_state_.store(TxState::GOING_IDLE, std::memory_order_release);
   this->tx_state_entered_ms_ = millis();
   this->write_cmd(CC1101_SIDLE);
   return true;
@@ -1210,6 +1213,7 @@ void Elero::append_log(uint8_t level, const char *tag, const char *fmt, ...) {
   va_start(args, fmt);
   vsnprintf(entry.message, sizeof(entry.message), fmt, args);
   va_end(args);
+  std::lock_guard<std::mutex> lock(this->log_mutex_);
   if (this->log_entries_.size() < ELERO_LOG_BUFFER_SIZE) {
     this->log_entries_.push_back(entry);
   } else {
