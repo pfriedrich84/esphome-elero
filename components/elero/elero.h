@@ -10,6 +10,7 @@
 #include <queue>
 #include <cstdarg>
 #include <atomic>
+#include <mutex>
 
 // All encryption/decryption structures copied from https://github.com/QuadCorei8085/elero_protocol/ (MIT)
 // All remote handling based on code from https://github.com/stanleypa/eleropy (GPLv3)
@@ -23,7 +24,6 @@ namespace elero {
 enum class TxState : uint8_t {
   IDLE,           ///< Radio in RX, ready for TX
   GOING_IDLE,     ///< Sent SIDLE strobe, waiting for MARCSTATE=IDLE
-  LOADING,        ///< IDLE reached; flushing TX FIFO, loading data, issuing STX
   FIRING,         ///< STX sent, waiting for MARCSTATE=TX
   TRANSMITTING,   ///< In TX, waiting for MARCSTATE to leave TX (packet sent)
   VERIFYING,      ///< TX finished, verifying TXBYTES==0
@@ -90,6 +90,11 @@ static const uint8_t  ELERO_STOP_VERIFY_MAX_RETRIES = 3;        // max stop-veri
 
 static const uint8_t ELERO_MAX_DISCOVERED = 20; // max discovered blinds to track
 static const uint8_t ELERO_MAX_RAW_PACKETS = 50; // max raw packets in dump ring buffer
+
+// Diagnostics thresholds
+static const uint8_t  ELERO_GDO0_MISS_WARN_THRESHOLD = 10; // warn after N consecutive TX completions without GDO0
+static const uint8_t  ELERO_MAX_RX_PER_LOOP = 4;           // max packets drained per process_rx() call
+static const uint32_t ELERO_POLL_STAGGER_MS = 5000;         // stagger offset between cover poll timers
 
 // RF protocol encoding/encryption constants (Elero protocol)
 static const uint8_t ELERO_MSG_LENGTH = 0x1d;             // Fixed message length for TX
@@ -199,7 +204,12 @@ class EleroBlindBase {
   virtual uint32_t get_open_duration_ms() const = 0;
   virtual uint32_t get_close_duration_ms() const = 0;
   virtual bool get_supports_tilt() const = 0;
-  // Web API commands
+  // Web API commands — read configured command bytes
+  virtual uint8_t get_command_up() const = 0;
+  virtual uint8_t get_command_down() const = 0;
+  virtual uint8_t get_command_stop() const = 0;
+  virtual uint8_t get_command_check() const = 0;
+  virtual uint8_t get_command_tilt() const = 0;
   virtual void enqueue_command(uint8_t cmd_byte) = 0;
   /// Called by the hub when a remote command packet (0x6a/0x69) targets this
   /// blind, so it can poll the blind immediately instead of waiting for the
@@ -233,7 +243,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void interpret_msg();
 
   /// True when the TX state machine is idle and ready for send_command().
-  bool is_tx_idle() const { return tx_state_.load(std::memory_order_relaxed) == TxState::IDLE; }
+  bool is_tx_idle() const { return tx_state_.load(std::memory_order_acquire) == TxState::IDLE; }
   void register_cover(EleroBlindBase *cover);
   void register_light(EleroLightBase *light);
   bool send_command(t_elero_command *cmd);
@@ -284,8 +294,8 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
     char message[160];
   };
   void append_log(uint8_t level, const char *tag, const char *fmt, ...);
-  void clear_log_entries() { log_entries_.clear(); log_write_idx_ = 0; }
-  const std::vector<LogEntry> &get_log_entries() const { return log_entries_; }
+  void clear_log_entries() { std::lock_guard<std::mutex> lock(log_mutex_); log_entries_.clear(); log_write_idx_ = 0; }
+  std::vector<LogEntry> get_log_entries_copy() const { std::lock_guard<std::mutex> lock(log_mutex_); return log_entries_; }
   void set_log_capture(bool en) { log_capture_ = en; }
   bool is_log_capture_active() const { return log_capture_; }
 
@@ -361,9 +371,10 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   std::vector<RawPacket> raw_packets_;
   uint16_t raw_packet_write_idx_{0};
   std::map<uint32_t, RuntimeBlind> runtime_blinds_;
-  // Log buffer
+  // Log buffer (protected by log_mutex_ — logger callback runs in a different context)
   uint32_t last_radio_check_ms_{0};
   bool log_capture_{false};
+  mutable std::mutex log_mutex_;
   std::vector<LogEntry> log_entries_;
   uint8_t log_write_idx_{0};
 };
