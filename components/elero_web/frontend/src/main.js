@@ -84,6 +84,7 @@ document.addEventListener('alpine:init', () => {
 
     // Covers (configured + adopted)
     covers: [],
+    lights: [],
     settingsOpen: null,   // blind_address of expanded settings panel
 
     // Discovery
@@ -95,6 +96,7 @@ document.addEventListener('alpine:init', () => {
     // Adopt modal
     adoptTarget: null,
     adoptName: '',
+    adoptType: 'cover',
 
     // YAML modal
     yamlContent: null,
@@ -161,13 +163,17 @@ document.addEventListener('alpine:init', () => {
     async refreshCovers() {
       try {
         const d = await api('GET', '/elero/api/configured')
-        this.covers = d.covers.map(c => ({
+        this.covers = (d.covers || []).map(c => ({
           ...c,
           _edit: {
             open_duration_ms:  c.open_duration_ms,
             close_duration_ms: c.close_duration_ms,
             poll_interval_ms:  c.poll_interval_ms,
           }
+        }))
+        this.lights = (d.lights || []).map(l => ({
+          ...l,
+          _edit: { dim_duration_ms: l.dim_duration_ms }
         }))
         // Also pull uptime from info periodically
         this.uptimeMs += 3000  // rough increment
@@ -182,6 +188,15 @@ document.addEventListener('alpine:init', () => {
       try {
         await api('POST', `/elero/api/covers/${c.blind_address}/command`, { cmd })
         this.showToast(`${c.name}: ${cmd} sent`)
+      } catch (e) {
+        this.showToast(`Command failed: ${e.message}`, true)
+      }
+    },
+
+    async lightCmd(l, cmd) {
+      try {
+        await api('POST', `/elero/api/lights/${l.blind_address}/command`, { cmd })
+        this.showToast(`${l.name}: ${cmd} sent`)
       } catch (e) {
         this.showToast(`Command failed: ${e.message}`, true)
       }
@@ -230,13 +245,15 @@ document.addEventListener('alpine:init', () => {
     startAdopt(b) {
       this.adoptTarget = b
       this.adoptName = ''
+      // Auto-detect type based on last state
+      this.adoptType = (b.last_state === 'on' || b.last_state === 'off') ? 'light' : 'cover'
     },
 
     async confirmAdopt() {
       if (!this.adoptTarget) return
       try {
         await api('POST', `/elero/api/discovered/${this.adoptTarget.blind_address}/adopt`,
-                  { name: this.adoptName || this.adoptTarget.blind_address })
+                  { name: this.adoptName || this.adoptTarget.blind_address, type: this.adoptType })
         this.showToast(`Adopted as "${this.adoptName || this.adoptTarget.blind_address}"`)
         this.adoptTarget = null
         this.tab = 'devices'
@@ -246,20 +263,37 @@ document.addEventListener('alpine:init', () => {
     },
 
     showYamlBlind(b) {
-      this.yamlContent =
-        `cover:\n` +
-        `  - platform: elero\n` +
-        `    blind_address: ${b.blind_address}\n` +
-        `    channel: ${b.channel}\n` +
-        `    remote_address: ${b.remote_address}\n` +
-        `    name: "My Blind"\n` +
-        `    # open_duration: 25s\n` +
-        `    # close_duration: 22s\n` +
-        `    hop: ${b.hop}\n` +
-        `    payload_1: ${b.payload_1}\n` +
-        `    payload_2: ${b.payload_2}\n` +
-        `    pck_inf1: ${b.pck_inf1}\n` +
-        `    pck_inf2: ${b.pck_inf2}\n`
+      const isLight = b.last_state === 'on' || b.last_state === 'off'
+      if (isLight) {
+        this.yamlContent =
+          `light:\n` +
+          `  - platform: elero\n` +
+          `    blind_address: ${b.blind_address}\n` +
+          `    channel: ${b.channel}\n` +
+          `    remote_address: ${b.remote_address}\n` +
+          `    name: "My Light"\n` +
+          `    # dim_duration: 0s\n` +
+          `    hop: ${b.hop}\n` +
+          `    payload_1: ${b.payload_1}\n` +
+          `    payload_2: ${b.payload_2}\n` +
+          `    pck_inf1: ${b.pck_inf1}\n` +
+          `    pck_inf2: ${b.pck_inf2}\n`
+      } else {
+        this.yamlContent =
+          `cover:\n` +
+          `  - platform: elero\n` +
+          `    blind_address: ${b.blind_address}\n` +
+          `    channel: ${b.channel}\n` +
+          `    remote_address: ${b.remote_address}\n` +
+          `    name: "My Blind"\n` +
+          `    # open_duration: 25s\n` +
+          `    # close_duration: 22s\n` +
+          `    hop: ${b.hop}\n` +
+          `    payload_1: ${b.payload_1}\n` +
+          `    payload_2: ${b.payload_2}\n` +
+          `    pck_inf1: ${b.pck_inf1}\n` +
+          `    pck_inf2: ${b.pck_inf2}\n`
+      }
     },
 
     async downloadYaml() {
@@ -330,6 +364,7 @@ document.addEventListener('alpine:init', () => {
       if (!msg) return ''
       const addrMap = {}
       for (const c of this.covers) addrMap[c.blind_address] = c.name
+      for (const l of this.lights) addrMap[l.blind_address] = l.name
       // Escape HTML first
       const safe = msg.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
       return safe.replace(/0x[0-9a-fA-F]{6}/g, m => {

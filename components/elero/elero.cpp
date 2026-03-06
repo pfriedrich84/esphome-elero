@@ -1139,8 +1139,11 @@ bool Elero::send_command(t_elero_command *cmd) {
 
 // ─── Runtime blind adoption ───────────────────────────────────────────────
 
-bool Elero::adopt_blind(const DiscoveredBlind &discovered, const std::string &name) {
+bool Elero::adopt_blind(const DiscoveredBlind &discovered, const std::string &name,
+                        DeviceType type) {
   if (this->is_cover_configured(discovered.blind_address))
+    return false;
+  if (this->is_light_configured(discovered.blind_address))
     return false;
   if (this->is_blind_adopted(discovered.blind_address))
     return false;
@@ -1154,11 +1157,13 @@ bool Elero::adopt_blind(const DiscoveredBlind &discovered, const std::string &na
   rb.payload_1 = discovered.payload_1;
   rb.payload_2 = discovered.payload_2;
   rb.name = name.empty() ? "Adopted" : name;
+  rb.device_type = type;
   rb.last_seen_ms = discovered.last_seen;
   rb.last_rssi = discovered.rssi;
   rb.last_state = discovered.last_state;
   this->runtime_blinds_.insert({discovered.blind_address, std::move(rb)});
-  ESP_LOGI(TAG, "Adopted runtime blind 0x%06x as \"%s\"",
+  ESP_LOGI(TAG, "Adopted runtime %s 0x%06x as \"%s\"",
+           type == DeviceType::LIGHT ? "light" : "blind",
            discovered.blind_address, rb.name.c_str());
   return true;
 }
