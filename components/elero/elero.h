@@ -144,6 +144,8 @@ struct DiscoveredBlind {
   bool params_from_command{false};
 };
 
+enum class DeviceType : uint8_t { COVER = 0, LIGHT = 1 };
+
 struct RuntimeBlind {
   uint32_t blind_address;
   uint32_t remote_address;
@@ -153,8 +155,10 @@ struct RuntimeBlind {
   uint8_t payload_1;
   uint8_t payload_2;
   std::string name;
+  DeviceType device_type{DeviceType::COVER};
   uint32_t open_duration_ms{0};
   uint32_t close_duration_ms{0};
+  uint32_t dim_duration_ms{0};
   uint32_t poll_intvl_ms{300000};
   uint32_t last_seen_ms{0};
   float last_rssi{0.0f};
@@ -178,6 +182,23 @@ class EleroLightBase {
   /// device, so it can poll the blind immediately instead of waiting for the
   /// normal poll interval.  Default no-op; concrete classes override.
   virtual void schedule_immediate_poll() {}
+  // Web API helpers — identity & state
+  virtual std::string get_light_name() const = 0;
+  virtual float get_brightness() const = 0;
+  virtual bool get_is_on() const = 0;
+  virtual const char *get_operation_str() const = 0;
+  virtual uint32_t get_last_seen_ms() const = 0;
+  virtual float get_last_rssi() const = 0;
+  virtual uint8_t get_last_state_raw() const = 0;
+  // Web API helpers — configuration
+  virtual uint8_t get_channel() const = 0;
+  virtual uint32_t get_remote_address() const = 0;
+  virtual uint32_t get_dim_duration_ms() const = 0;
+  // Web API helpers — command bytes
+  virtual uint8_t get_command_on() const = 0;
+  virtual uint8_t get_command_off() const = 0;
+  virtual uint8_t get_command_stop() const = 0;
+  virtual uint8_t get_command_check() const = 0;
 };
 
 /// Abstract base class for blinds registered with the Elero hub.
@@ -269,6 +290,12 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   }
   const std::map<uint32_t, EleroBlindBase *> &get_configured_covers() const { return address_to_cover_mapping_; }
 
+  // Light access for web server
+  bool is_light_configured(uint32_t address) const {
+    return address_to_light_mapping_.find(address) != address_to_light_mapping_.end();
+  }
+  const std::map<uint32_t, EleroLightBase *> &get_configured_lights() const { return address_to_light_mapping_; }
+
   // Packet dump mode: capture every received FIFO read into a ring buffer
   void start_packet_dump();
   void stop_packet_dump();
@@ -277,7 +304,8 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void clear_raw_packets();
 
   // Runtime adopted blinds (controllable from web UI without reflashing)
-  bool adopt_blind(const DiscoveredBlind &discovered, const std::string &name);
+  bool adopt_blind(const DiscoveredBlind &discovered, const std::string &name,
+                   DeviceType type = DeviceType::COVER);
   bool remove_runtime_blind(uint32_t addr);
   bool send_runtime_command(uint32_t addr, uint8_t cmd_byte);
   bool update_runtime_blind_settings(uint32_t addr, uint32_t open_dur_ms,

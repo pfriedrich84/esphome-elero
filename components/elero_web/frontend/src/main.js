@@ -22,18 +22,38 @@ const STATE_LABELS = {
 }
 
 // ─── API helpers ─────────────────────────────────────────────────────────────
-async function api(method, url, params = {}) {
-  const qs = Object.keys(params).length
-    ? '?' + new URLSearchParams(params).toString()
-    : ''
-  const r = await fetch(url + qs, { method })
-  if (!r.ok) {
-    let msg = `HTTP ${r.status}`
-    try { const d = await r.json(); msg = d.error || msg } catch {}
-    throw new Error(msg)
+// Serializing request queue: max 1 in-flight request at a time.
+// Prevents ESP32 socket exhaustion (ENFILE error 23).
+const _queue = []
+let _busy = false
+
+async function _drain() {
+  if (_busy) return
+  while (_queue.length > 0) {
+    _busy = true
+    const { method, fullUrl, resolve, reject } = _queue.shift()
+    try {
+      const r = await fetch(fullUrl, { method, signal: AbortSignal.timeout(10000) })
+      if (!r.ok) {
+        let msg = `HTTP ${r.status}`
+        try { const d = await r.json(); msg = d.error || msg } catch {}
+        reject(new Error(msg))
+      } else {
+        const ct = r.headers.get('content-type') || ''
+        resolve(ct.includes('application/json') ? await r.json() : await r.text())
+      }
+    } catch (e) { reject(e) }
+    _busy = false
   }
-  const ct = r.headers.get('content-type') || ''
-  return ct.includes('application/json') ? r.json() : r.text()
+}
+
+function api(method, url, params = {}) {
+  const qs = Object.keys(params).length
+    ? '?' + new URLSearchParams(params).toString() : ''
+  return new Promise((resolve, reject) => {
+    _queue.push({ method, fullUrl: url + qs, resolve, reject })
+    _drain()
+  })
 }
 
 // ─── Utility ─────────────────────────────────────────────────────────────────
@@ -84,6 +104,7 @@ document.addEventListener('alpine:init', () => {
 
     // Covers (configured + adopted)
     covers: [],
+    lights: [],
     settingsOpen: null,   // blind_address of expanded settings panel
 
     // Discovery
@@ -95,6 +116,7 @@ document.addEventListener('alpine:init', () => {
     // Adopt modal
     adoptTarget: null,
     adoptName: '',
+    adoptType: 'cover',
 
     // YAML modal
     yamlContent: null,
@@ -121,21 +143,72 @@ document.addEventListener('alpine:init', () => {
     toast: { show: false, error: false, msg: '' },
     _toastTimer: null,
 
-    // Polling intervals
-    _pollCovers: null,
-    _pollDisc: null,
-    _pollLog: null,
-    _pollDump: null,
+    // Polling state
+    _pollTimer: null,
+    _polling: false,
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
     async init() {
       await this.refreshInfo()
-      await this.refreshCovers()
+      await this.refreshStatus()
       await this.loadFrequency()
-      this._pollCovers = setInterval(() => this.refreshCovers(), 3000)
-      this._pollDisc   = setInterval(() => this.refreshDiscovered(), 3000)
-      this._pollDump   = setInterval(() => this.refreshDump(), 2000)
-      this._pollLog    = setInterval(() => this.refreshLog(), 1500)
+      this._schedulePoll()
+    },
+
+    // Single sequential poll loop — one combined request per cycle.
+    _schedulePoll() {
+      this._pollTimer = setTimeout(async () => {
+        if (this._polling) { this._schedulePoll(); return }
+        this._polling = true
+        try { await this.refreshStatus() } catch {}
+        this._polling = false
+        this._schedulePoll()
+      }, 3000)
+    },
+
+    // Combined status endpoint — covers + lights + tab-specific data in one request.
+    async refreshStatus() {
+      const params = { tab: this.tab }
+      if (this.tab === 'log' && this.logLastTs) params.since = this.logLastTs
+      const d = await api('GET', '/elero/api/status', params)
+
+      // Always: covers + lights
+      this.covers = (d.covers || []).map(c => ({
+        ...c,
+        _edit: {
+          open_duration_ms:  c.open_duration_ms,
+          close_duration_ms: c.close_duration_ms,
+          poll_interval_ms:  c.poll_interval_ms,
+        }
+      }))
+      this.lights = (d.lights || []).map(l => ({
+        ...l,
+        _edit: { dim_duration_ms: l.dim_duration_ms }
+      }))
+      this.uptimeMs += 3000
+
+      // Tab-specific
+      if (d.discovered !== undefined) {
+        this.scanning = d.scanning
+        this.allDiscovered = d.discovered || []
+      }
+      if (d.log_entries !== undefined) {
+        this.logCapture = d.capture_active
+        if (d.log_entries.length > 0) {
+          const ne = d.log_entries.map((e, i) => ({ ...e, idx: this.logEntries.length + i }))
+          this.logEntries.push(...ne)
+          if (this.logEntries.length > 500) this.logEntries.splice(0, this.logEntries.length - 500)
+          this.logLastTs = ne[ne.length - 1].t
+          if (this.logAutoScroll) this.$nextTick(() => {
+            const box = document.getElementById('log-box')
+            if (box) box.scrollTop = box.scrollHeight
+          })
+        }
+      }
+      if (d.packets !== undefined) {
+        this.dumpActive = d.dump_active
+        this.dumpPackets = d.packets || []
+      }
     },
 
     // ── Toast ─────────────────────────────────────────────────────────────────
@@ -161,13 +234,17 @@ document.addEventListener('alpine:init', () => {
     async refreshCovers() {
       try {
         const d = await api('GET', '/elero/api/configured')
-        this.covers = d.covers.map(c => ({
+        this.covers = (d.covers || []).map(c => ({
           ...c,
           _edit: {
             open_duration_ms:  c.open_duration_ms,
             close_duration_ms: c.close_duration_ms,
             poll_interval_ms:  c.poll_interval_ms,
           }
+        }))
+        this.lights = (d.lights || []).map(l => ({
+          ...l,
+          _edit: { dim_duration_ms: l.dim_duration_ms }
         }))
         // Also pull uptime from info periodically
         this.uptimeMs += 3000  // rough increment
@@ -182,6 +259,15 @@ document.addEventListener('alpine:init', () => {
       try {
         await api('POST', `/elero/api/covers/${c.blind_address}/command`, { cmd })
         this.showToast(`${c.name}: ${cmd} sent`)
+      } catch (e) {
+        this.showToast(`Command failed: ${e.message}`, true)
+      }
+    },
+
+    async lightCmd(l, cmd) {
+      try {
+        await api('POST', `/elero/api/lights/${l.blind_address}/command`, { cmd })
+        this.showToast(`${l.name}: ${cmd} sent`)
       } catch (e) {
         this.showToast(`Command failed: ${e.message}`, true)
       }
@@ -230,13 +316,15 @@ document.addEventListener('alpine:init', () => {
     startAdopt(b) {
       this.adoptTarget = b
       this.adoptName = ''
+      // Auto-detect type based on last state
+      this.adoptType = (b.last_state === 'on' || b.last_state === 'off') ? 'light' : 'cover'
     },
 
     async confirmAdopt() {
       if (!this.adoptTarget) return
       try {
         await api('POST', `/elero/api/discovered/${this.adoptTarget.blind_address}/adopt`,
-                  { name: this.adoptName || this.adoptTarget.blind_address })
+                  { name: this.adoptName || this.adoptTarget.blind_address, type: this.adoptType })
         this.showToast(`Adopted as "${this.adoptName || this.adoptTarget.blind_address}"`)
         this.adoptTarget = null
         this.tab = 'devices'
@@ -246,20 +334,37 @@ document.addEventListener('alpine:init', () => {
     },
 
     showYamlBlind(b) {
-      this.yamlContent =
-        `cover:\n` +
-        `  - platform: elero\n` +
-        `    blind_address: ${b.blind_address}\n` +
-        `    channel: ${b.channel}\n` +
-        `    remote_address: ${b.remote_address}\n` +
-        `    name: "My Blind"\n` +
-        `    # open_duration: 25s\n` +
-        `    # close_duration: 22s\n` +
-        `    hop: ${b.hop}\n` +
-        `    payload_1: ${b.payload_1}\n` +
-        `    payload_2: ${b.payload_2}\n` +
-        `    pck_inf1: ${b.pck_inf1}\n` +
-        `    pck_inf2: ${b.pck_inf2}\n`
+      const isLight = b.last_state === 'on' || b.last_state === 'off'
+      if (isLight) {
+        this.yamlContent =
+          `light:\n` +
+          `  - platform: elero\n` +
+          `    blind_address: ${b.blind_address}\n` +
+          `    channel: ${b.channel}\n` +
+          `    remote_address: ${b.remote_address}\n` +
+          `    name: "My Light"\n` +
+          `    # dim_duration: 0s\n` +
+          `    hop: ${b.hop}\n` +
+          `    payload_1: ${b.payload_1}\n` +
+          `    payload_2: ${b.payload_2}\n` +
+          `    pck_inf1: ${b.pck_inf1}\n` +
+          `    pck_inf2: ${b.pck_inf2}\n`
+      } else {
+        this.yamlContent =
+          `cover:\n` +
+          `  - platform: elero\n` +
+          `    blind_address: ${b.blind_address}\n` +
+          `    channel: ${b.channel}\n` +
+          `    remote_address: ${b.remote_address}\n` +
+          `    name: "My Blind"\n` +
+          `    # open_duration: 25s\n` +
+          `    # close_duration: 22s\n` +
+          `    hop: ${b.hop}\n` +
+          `    payload_1: ${b.payload_1}\n` +
+          `    payload_2: ${b.payload_2}\n` +
+          `    pck_inf1: ${b.pck_inf1}\n` +
+          `    pck_inf2: ${b.pck_inf2}\n`
+      }
     },
 
     async downloadYaml() {
@@ -330,6 +435,7 @@ document.addEventListener('alpine:init', () => {
       if (!msg) return ''
       const addrMap = {}
       for (const c of this.covers) addrMap[c.blind_address] = c.name
+      for (const l of this.lights) addrMap[l.blind_address] = l.name
       // Escape HTML first
       const safe = msg.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
       return safe.replace(/0x[0-9a-fA-F]{6}/g, m => {
@@ -391,9 +497,8 @@ document.addEventListener('alpine:init', () => {
 
     async downloadDump() {
       try {
-        const resp = await fetch('/elero/api/packets/download')
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
-        const blob = await resp.blob()
+        const d = await api('GET', '/elero/api/packets/download')
+        const blob = new Blob([JSON.stringify(d)], { type: 'application/json' })
         const url  = URL.createObjectURL(blob)
         const a    = document.createElement('a')
         a.href = url

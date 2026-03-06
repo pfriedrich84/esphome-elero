@@ -26,7 +26,7 @@
   <!-- Tab bar -->
   <nav class="tabs">
     <button class="tab-btn" :class="{active: tab==='devices'}"    @click="tab='devices'">
-      Devices <span class="tab-badge" x-text="covers.length" x-show="covers.length>0"></span>
+      Devices <span class="tab-badge" x-text="covers.length+lights.length" x-show="covers.length+lights.length>0"></span>
     </button>
     <button class="tab-btn" :class="{active: tab==='discovery'}"  @click="tab='discovery'">
       Discovery <span class="tab-badge" x-text="discoveredNew.length" x-show="discoveredNew.length>0"></span>
@@ -41,8 +41,8 @@
 
     <!-- ══════════════ DEVICES TAB ══════════════ -->
     <section x-show="tab==='devices'" x-cloak>
-      <template x-if="covers.length === 0">
-        <div class="empty">No covers configured. Add covers in your ESPHome YAML.</div>
+      <template x-if="covers.length === 0 && lights.length === 0">
+        <div class="empty">No devices configured. Add covers or lights in your ESPHome YAML.</div>
       </template>
       <template x-for="c in covers" :key="c.blind_address">
         <div class="card cover-card">
@@ -100,6 +100,44 @@
             <div class="settings-footer">
               <button class="btn btn-primary" @click="saveSettings(c)">Save</button>
             </div>
+          </div>
+        </div>
+      </template>
+
+      <!-- Lights -->
+      <template x-for="l in lights" :key="l.blind_address">
+        <div class="card cover-card">
+          <div class="cover-header">
+            <div>
+              <div class="cover-name" x-text="l.name"></div>
+              <div class="cover-meta">
+                <span class="mono" x-text="l.blind_address"></span>
+                <span x-show="l.channel" x-text="'· CH '+l.channel"></span>
+                <span x-show="l.rssi" :title="'RSSI: '+l.rssi.toFixed(1)+' dBm'" x-text="rssiIcon(l.rssi)"></span>
+              </div>
+            </div>
+            <div class="cover-right">
+              <span class="state-badge" :class="'state-'+l.last_state" x-text="stateLabel(l.last_state)"></span>
+              <span class="adopted-tag" x-show="l.adopted">adopted</span>
+            </div>
+          </div>
+
+          <!-- Brightness bar (only for dimmable lights) -->
+          <template x-if="l.dim_duration_ms > 0">
+            <div>
+              <div class="pos-bar"><div class="pos-fill" :style="'width:'+Math.round(l.brightness*100)+'%'"></div></div>
+              <div class="pos-label" x-text="Math.round(l.brightness*100)+'%'"></div>
+            </div>
+          </template>
+
+          <!-- Last seen -->
+          <div class="last-seen" x-text="'Last seen: '+relTime(l.last_seen_ms)"></div>
+
+          <!-- Light control buttons -->
+          <div class="btn-row">
+            <button class="btn btn-open"  @click="lightCmd(l, 'on')" title="Turn On">On</button>
+            <button class="btn btn-stop"  @click="lightCmd(l, 'stop')" title="Stop" x-show="l.dim_duration_ms > 0">Stop</button>
+            <button class="btn btn-close" @click="lightCmd(l, 'off')" title="Turn Off">Off</button>
           </div>
         </div>
       </template>
@@ -281,6 +319,7 @@
           <span class="info-label">Uptime</span><span x-text="uptimeStr"></span>
           <span class="info-label">Frequency</span><span class="mono" x-text="freq.freq2+' / '+freq.freq1+' / '+freq.freq0"></span>
           <span class="info-label">Covers</span><span x-text="covers.filter(c=>!c.adopted).length+' configured, '+covers.filter(c=>c.adopted).length+' adopted'"></span>
+          <span class="info-label">Lights</span><span x-text="lights.filter(l=>!l.adopted).length+' configured, '+lights.filter(l=>l.adopted).length+' adopted'"></span>
         </div>
       </div>
     </section>
@@ -302,8 +341,15 @@
           Friendly name
           <input type="text" x-model="adoptName" placeholder="e.g. Balcony" autofocus>
         </label>
+        <label class="settings-row">
+          Device type
+          <select x-model="adoptType">
+            <option value="cover">Cover (blind/shutter)</option>
+            <option value="light">Light (dimmer)</option>
+          </select>
+        </label>
         <p class="hint" style="margin-top:8px">
-          This blind will appear in the Devices tab and can be controlled from the web UI.
+          This device will appear in the Devices tab and can be controlled from the web UI.
           It is not a Home Assistant entity — reflash with the YAML below for permanent HA integration.
         </p>
       </div>

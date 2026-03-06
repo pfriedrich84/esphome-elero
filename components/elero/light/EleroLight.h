@@ -37,6 +37,28 @@ class EleroLight : public light::LightOutput, public Component, public EleroLigh
   }
   void schedule_immediate_poll() override;
 
+  // Web API helpers (EleroLightBase interface)
+  std::string get_light_name() const override {
+    return this->state_ ? std::string(this->state_->get_name().c_str()) : "Unknown";
+  }
+  float get_brightness() const override { return this->brightness_; }
+  bool get_is_on() const override { return this->is_on_; }
+  const char *get_operation_str() const override {
+    return this->is_dimming_ ? (this->dim_up_ ? "dimming_up" : "dimming_down") : "idle";
+  }
+  uint32_t get_last_seen_ms() const override { return this->last_seen_ms_; }
+  float get_last_rssi() const override { return this->last_rssi_; }
+  uint8_t get_last_state_raw() const override {
+    return this->is_on_ ? ELERO_STATE_ON : ELERO_STATE_OFF;
+  }
+  uint8_t get_channel() const override { return this->command_.channel; }
+  uint32_t get_remote_address() const override { return this->command_.remote_addr; }
+  uint32_t get_dim_duration_ms() const override { return this->dim_duration_; }
+  uint8_t get_command_on() const override { return this->command_on_; }
+  uint8_t get_command_off() const override { return this->command_off_; }
+  uint8_t get_command_stop() const override { return this->command_stop_; }
+  uint8_t get_command_check() const override { return this->command_check_; }
+
   // RF parameter setters
   void set_elero_parent(Elero *parent) { this->parent_ = parent; }
   void set_blind_address(uint32_t address) { this->command_.blind_addr = address; }

@@ -36,6 +36,7 @@ static std::string json_escape(const std::string &s) {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 void EleroWebServer::add_cors_headers(AsyncWebServerResponse *response) {
+  response->addHeader("Connection", "close");
   response->addHeader("Access-Control-Allow-Origin", "*");
   response->addHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
   response->addHeader("Access-Control-Allow-Headers", "Content-Type");
@@ -146,6 +147,9 @@ void EleroWebServer::handleRequest(AsyncWebServerRequest *request) {
   // ── Discovery ──
   if (url == "/elero/api/discovered" && method == HTTP_GET) { handle_get_discovered(request); return; }
 
+  // ── Combined status (single poll endpoint) ──
+  if (url == "/elero/api/status" && method == HTTP_GET) { handle_get_status(request); return; }
+
   // ── Configured covers ──
   if (url == "/elero/api/configured" && method == HTTP_GET) { handle_get_configured(request); return; }
 
@@ -155,6 +159,14 @@ void EleroWebServer::handleRequest(AsyncWebServerRequest *request) {
     if (parse_addr_url(url, "covers", addr, action)) {
       if (action == "command" && method == HTTP_POST) { handle_cover_command(request, addr); return; }
       if (action == "settings" && method == HTTP_POST) { handle_cover_settings(request, addr); return; }
+    }
+  }
+
+  // ── Light command by address (reuses cover command dispatch) ──
+  {
+    uint32_t addr; std::string action;
+    if (parse_addr_url(url, "lights", addr, action)) {
+      if (action == "command" && method == HTTP_POST) { handle_cover_command(request, addr); return; }
     }
   }
 
@@ -242,16 +254,11 @@ void EleroWebServer::handle_scan_stop(AsyncWebServerRequest *request) {
 
 // ─── Discovered blinds ────────────────────────────────────────────────────────
 
-void EleroWebServer::handle_get_discovered(AsyncWebServerRequest *request) {
+void EleroWebServer::build_discovered_array_json_(std::string &out) {
   const auto &blinds = this->parent_->get_discovered_blinds();
-  std::string json;
-  json.reserve(64 + blinds.size() * 400);
-  json += "{\"scanning\":";
-  json += this->parent_->is_scanning() ? "true" : "false";
-  json += ",\"blinds\":[";
   bool first = true;
   for (const auto &blind : blinds) {
-    if (!first) json += ",";
+    if (!first) out += ",";
     first = false;
 
     char buf[640];
@@ -270,6 +277,7 @@ void EleroWebServer::handle_get_discovered(AsyncWebServerRequest *request) {
       "\"last_seen_ms\":%lu,"
       "\"params_from_command\":%s,"
       "\"already_configured\":%s,"
+      "\"configured_as\":\"%s\","
       "\"already_adopted\":%s}",
       blind.blind_address,
       blind.remote_address,
@@ -284,12 +292,23 @@ void EleroWebServer::handle_get_discovered(AsyncWebServerRequest *request) {
       blind.pck_inf[1],
       (unsigned long)blind.last_seen,
       blind.params_from_command ? "true" : "false",
-      this->parent_->is_cover_configured(blind.blind_address) ? "true" : "false",
+      (this->parent_->is_cover_configured(blind.blind_address) ||
+       this->parent_->is_light_configured(blind.blind_address)) ? "true" : "false",
+      this->parent_->is_cover_configured(blind.blind_address) ? "cover" :
+        (this->parent_->is_light_configured(blind.blind_address) ? "light" : "none"),
       this->parent_->is_blind_adopted(blind.blind_address) ? "true" : "false"
     );
-    json += buf;
+    out += buf;
   }
+}
 
+void EleroWebServer::handle_get_discovered(AsyncWebServerRequest *request) {
+  std::string json;
+  json.reserve(512);
+  json += "{\"scanning\":";
+  json += this->parent_->is_scanning() ? "true" : "false";
+  json += ",\"blinds\":[";
+  this->build_discovered_array_json_(json);
   json += "]}";
   AsyncWebServerResponse *response =
       request->beginResponse(200, "application/json", json.c_str());
@@ -299,17 +318,14 @@ void EleroWebServer::handle_get_discovered(AsyncWebServerRequest *request) {
 
 // ─── Configured covers ────────────────────────────────────────────────────────
 
-void EleroWebServer::handle_get_configured(AsyncWebServerRequest *request) {
-  std::string json;
-  json.reserve(64 + this->parent_->get_configured_covers().size() * 400
-                   + this->parent_->get_runtime_blinds().size() * 400);
-  json += "{\"covers\":[";
+void EleroWebServer::build_configured_json_(std::string &out) {
+  out += "\"covers\":[";
 
   bool first = true;
 
   // ESPHome configured covers
   for (const auto &pair : this->parent_->get_configured_covers()) {
-    if (!first) json += ",";
+    if (!first) out += ",";
     first = false;
     auto *blind = pair.second;
     std::string esc_name = json_escape(blind->get_blind_name());
@@ -328,6 +344,7 @@ void EleroWebServer::handle_get_configured(AsyncWebServerRequest *request) {
       "\"open_duration_ms\":%lu,"
       "\"close_duration_ms\":%lu,"
       "\"supports_tilt\":%s,"
+      "\"device_type\":\"cover\","
       "\"adopted\":false}",
       pair.first,
       esc_name.c_str(),
@@ -343,13 +360,14 @@ void EleroWebServer::handle_get_configured(AsyncWebServerRequest *request) {
       (unsigned long)blind->get_close_duration_ms(),
       blind->get_supports_tilt() ? "true" : "false"
     );
-    json += buf;
+    out += buf;
   }
 
-  // Runtime adopted blinds (mixed in as "covers" with adopted=true)
+  // Runtime adopted covers (device_type == COVER)
   for (const auto &entry : this->parent_->get_runtime_blinds()) {
     const auto &rb = entry.second;
-    if (!first) json += ",";
+    if (rb.device_type != DeviceType::COVER) continue;
+    if (!first) out += ",";
     first = false;
     std::string esc_name = json_escape(rb.name);
     char buf[512];
@@ -367,6 +385,7 @@ void EleroWebServer::handle_get_configured(AsyncWebServerRequest *request) {
       "\"open_duration_ms\":%lu,"
       "\"close_duration_ms\":%lu,"
       "\"supports_tilt\":false,"
+      "\"device_type\":\"cover\","
       "\"adopted\":true}",
       rb.blind_address,
       esc_name.c_str(),
@@ -379,10 +398,94 @@ void EleroWebServer::handle_get_configured(AsyncWebServerRequest *request) {
       (unsigned long)rb.open_duration_ms,
       (unsigned long)rb.close_duration_ms
     );
-    json += buf;
+    out += buf;
   }
 
-  json += "]}";
+  out += "],\"lights\":[";
+
+  first = true;
+
+  // ESPHome configured lights
+  for (const auto &pair : this->parent_->get_configured_lights()) {
+    if (!first) out += ",";
+    first = false;
+    auto *light = pair.second;
+    std::string esc_name = json_escape(light->get_light_name());
+    char buf[512];
+    snprintf(buf, sizeof(buf),
+      "{\"blind_address\":\"0x%06x\","
+      "\"name\":\"%s\","
+      "\"is_on\":%s,"
+      "\"brightness\":%.2f,"
+      "\"operation\":\"%s\","
+      "\"last_state\":\"%s\","
+      "\"last_seen_ms\":%lu,"
+      "\"rssi\":%.1f,"
+      "\"channel\":%d,"
+      "\"remote_address\":\"0x%06x\","
+      "\"dim_duration_ms\":%lu,"
+      "\"device_type\":\"light\","
+      "\"adopted\":false}",
+      pair.first,
+      esc_name.c_str(),
+      light->get_is_on() ? "true" : "false",
+      light->get_brightness(),
+      light->get_operation_str(),
+      elero_state_to_string(light->get_last_state_raw()),
+      (unsigned long)light->get_last_seen_ms(),
+      light->get_last_rssi(),
+      (int)light->get_channel(),
+      light->get_remote_address(),
+      (unsigned long)light->get_dim_duration_ms()
+    );
+    out += buf;
+  }
+
+  // Runtime adopted lights (device_type == LIGHT)
+  for (const auto &entry : this->parent_->get_runtime_blinds()) {
+    const auto &rb = entry.second;
+    if (rb.device_type != DeviceType::LIGHT) continue;
+    if (!first) out += ",";
+    first = false;
+    std::string esc_name = json_escape(rb.name);
+    char buf[512];
+    snprintf(buf, sizeof(buf),
+      "{\"blind_address\":\"0x%06x\","
+      "\"name\":\"%s\","
+      "\"is_on\":false,"
+      "\"brightness\":0.00,"
+      "\"operation\":\"idle\","
+      "\"last_state\":\"%s\","
+      "\"last_seen_ms\":%lu,"
+      "\"rssi\":%.1f,"
+      "\"channel\":%d,"
+      "\"remote_address\":\"0x%06x\","
+      "\"dim_duration_ms\":%lu,"
+      "\"device_type\":\"light\","
+      "\"adopted\":true}",
+      rb.blind_address,
+      esc_name.c_str(),
+      elero_state_to_string(rb.last_state),
+      (unsigned long)rb.last_seen_ms,
+      rb.last_rssi,
+      (int)rb.channel,
+      rb.remote_address,
+      (unsigned long)rb.dim_duration_ms
+    );
+    out += buf;
+  }
+
+  out += "]";
+}
+
+void EleroWebServer::handle_get_configured(AsyncWebServerRequest *request) {
+  std::string json;
+  json.reserve(64 + this->parent_->get_configured_covers().size() * 400
+                   + this->parent_->get_configured_lights().size() * 400
+                   + this->parent_->get_runtime_blinds().size() * 400);
+  json += "{";
+  this->build_configured_json_(json);
+  json += "}";
   AsyncWebServerResponse *response =
       request->beginResponse(200, "application/json", json.c_str());
   this->add_cors_headers(response);
@@ -427,6 +530,27 @@ void EleroWebServer::handle_cover_command(AsyncWebServerRequest *request, uint32
     this->add_cors_headers(response);
     request->send(response);
     return;
+  }
+
+  // Try configured light
+  {
+    const auto &lights = this->parent_->get_configured_lights();
+    auto lit = lights.find(addr);
+    if (lit != lights.end()) {
+      int cmd_byte = -1;
+      if (cmd_str == "on"  || cmd_str == "up"   || cmd_str == "open")  cmd_byte = lit->second->get_command_on();
+      if (cmd_str == "off" || cmd_str == "down"  || cmd_str == "close") cmd_byte = lit->second->get_command_off();
+      if (cmd_str == "stop")  cmd_byte = lit->second->get_command_stop();
+      if (cmd_str == "check") cmd_byte = lit->second->get_command_check();
+      if (cmd_byte < 0) { this->send_json_error(request, 400, "Unknown cmd"); return; }
+      lit->second->enqueue_command((uint8_t)cmd_byte);
+      char buf[96];
+      snprintf(buf, sizeof(buf), "{\"status\":\"queued\",\"address\":\"0x%06x\",\"cmd\":\"%s\"}", addr, cmd_str.c_str());
+      AsyncWebServerResponse *response = request->beginResponse(200, "application/json", buf);
+      this->add_cors_headers(response);
+      request->send(response);
+      return;
+    }
   }
 
   // Try runtime blind
@@ -509,10 +633,19 @@ void EleroWebServer::handle_adopt_discovered(AsyncWebServerRequest *request, uin
       name = name_param->value().c_str();
   }
 
+  DeviceType dtype = DeviceType::COVER;
+  if (request->hasParam("type")) {
+    auto type_param = request->getParam("type");
+    if (type_param != nullptr) {
+      std::string type_str = type_param->value().c_str();
+      if (type_str == "light") dtype = DeviceType::LIGHT;
+    }
+  }
+
   const auto &blinds = this->parent_->get_discovered_blinds();
   for (const auto &blind : blinds) {
     if (blind.blind_address == addr) {
-      if (!this->parent_->adopt_blind(blind, name)) {
+      if (!this->parent_->adopt_blind(blind, name, dtype)) {
         this->send_json_error(request, 409, "Already configured or adopted");
         return;
       }
@@ -549,15 +682,19 @@ void EleroWebServer::handle_get_runtime(AsyncWebServerRequest *request) {
       "\"rssi\":%.1f,"
       "\"last_state\":\"%s\","
       "\"last_seen_ms\":%lu,"
+      "\"device_type\":\"%s\","
       "\"open_duration_ms\":%lu,"
       "\"close_duration_ms\":%lu,"
+      "\"dim_duration_ms\":%lu,"
       "\"poll_interval_ms\":%lu}",
       rb.blind_address, esc_name.c_str(), (int)rb.channel,
       rb.remote_address, rb.last_rssi,
       elero_state_to_string(rb.last_state),
       (unsigned long)rb.last_seen_ms,
+      rb.device_type == DeviceType::LIGHT ? "light" : "cover",
       (unsigned long)rb.open_duration_ms,
       (unsigned long)rb.close_duration_ms,
+      (unsigned long)rb.dim_duration_ms,
       (unsigned long)rb.poll_intvl_ms
     );
     json += buf;
@@ -606,9 +743,14 @@ void EleroWebServer::handle_get_yaml(AsyncWebServerRequest *request) {
   yaml += "# Copy this into your ESPHome configuration.\n\n";
   yaml += "cover:\n";
 
-  int idx = 0;
+  int cover_idx = 0;
   for (const auto &blind : blinds) {
     if (this->parent_->is_cover_configured(blind.blind_address))
+      continue;
+    if (this->parent_->is_light_configured(blind.blind_address))
+      continue;
+    // Skip devices that reported ON/OFF state (likely lights)
+    if (blind.last_state == ELERO_STATE_ON || blind.last_state == ELERO_STATE_OFF)
       continue;
 
     char buf[640];
@@ -631,14 +773,52 @@ void EleroWebServer::handle_get_yaml(AsyncWebServerRequest *request) {
         ? ""
         : "  # WARNING: params derived from status packet only — press a remote\n"
           "  # button during scan so command packets can be captured for reliable values.\n",
-      blind.blind_address, blind.channel, blind.remote_address, ++idx,
+      blind.blind_address, blind.channel, blind.remote_address, ++cover_idx,
       blind.hop, blind.payload_1, blind.payload_2, blind.pck_inf[0], blind.pck_inf[1]
     );
     yaml += buf;
   }
 
-  if (idx == 0)
+  if (cover_idx == 0)
     yaml += "  # All discovered blinds are already configured.\n";
+
+  // Light section — devices that reported ON/OFF state
+  int light_idx = 0;
+  for (const auto &blind : blinds) {
+    if (this->parent_->is_cover_configured(blind.blind_address))
+      continue;
+    if (this->parent_->is_light_configured(blind.blind_address))
+      continue;
+    if (blind.last_state != ELERO_STATE_ON && blind.last_state != ELERO_STATE_OFF)
+      continue;
+    if (light_idx == 0) {
+      yaml += "\n# Potential lights (reported ON/OFF state during scan)\n";
+      yaml += "light:\n";
+    }
+    char buf[640];
+    snprintf(buf, sizeof(buf),
+      "%s"
+      "  - platform: elero\n"
+      "    blind_address: 0x%06x\n"
+      "    channel: %d\n"
+      "    remote_address: 0x%06x\n"
+      "    name: \"Discovered Light %d\"\n"
+      "    # dim_duration: 0s\n"
+      "    hop: 0x%02x\n"
+      "    payload_1: 0x%02x\n"
+      "    payload_2: 0x%02x\n"
+      "    pck_inf1: 0x%02x\n"
+      "    pck_inf2: 0x%02x\n"
+      "\n",
+      blind.params_from_command
+        ? ""
+        : "  # WARNING: params derived from status packet only — press a remote\n"
+          "  # button during scan so command packets can be captured for reliable values.\n",
+      blind.blind_address, blind.channel, blind.remote_address, ++light_idx,
+      blind.hop, blind.payload_1, blind.payload_2, blind.pck_inf[0], blind.pck_inf[1]
+    );
+    yaml += buf;
+  }
 
   AsyncWebServerResponse *response =
       request->beginResponse(200, "text/plain; charset=utf-8", yaml.c_str());
@@ -673,20 +853,11 @@ void EleroWebServer::handle_packet_dump_stop(AsyncWebServerRequest *request) {
   request->send(response);
 }
 
-void EleroWebServer::handle_get_packets(AsyncWebServerRequest *request) {
+void EleroWebServer::build_packets_array_json_(std::string &out) {
   const auto &packets = this->parent_->get_raw_packets();
-
-  std::string json = "{\"dump_active\":";
-  json += this->parent_->is_packet_dump_active() ? "true" : "false";
-  json += ",\"count\":";
-  char cnt_buf[12];
-  snprintf(cnt_buf, sizeof(cnt_buf), "%d", (int)packets.size());
-  json += cnt_buf;
-  json += ",\"packets\":[";
-
   bool first = true;
   for (const auto &pkt : packets) {
-    if (!first) json += ",";
+    if (!first) out += ",";
     first = false;
 
     char hex_buf[CC1101_FIFO_LENGTH * 3 + 1];
@@ -707,9 +878,21 @@ void EleroWebServer::handle_get_packets(AsyncWebServerRequest *request) {
       pkt.reject_reason,
       hex_buf
     );
-    json += entry_buf;
+    out += entry_buf;
   }
+}
 
+void EleroWebServer::handle_get_packets(AsyncWebServerRequest *request) {
+  const auto &packets = this->parent_->get_raw_packets();
+
+  std::string json = "{\"dump_active\":";
+  json += this->parent_->is_packet_dump_active() ? "true" : "false";
+  json += ",\"count\":";
+  char cnt_buf[12];
+  snprintf(cnt_buf, sizeof(cnt_buf), "%d", (int)packets.size());
+  json += cnt_buf;
+  json += ",\"packets\":[";
+  this->build_packets_array_json_(json);
   json += "]}";
   AsyncWebServerResponse *response =
       request->beginResponse(200, "application/json", json.c_str());
@@ -842,26 +1025,14 @@ void EleroWebServer::handle_set_frequency(AsyncWebServerRequest *request) {
 
 // ─── Logs ─────────────────────────────────────────────────────────────────────
 
-void EleroWebServer::handle_get_logs(AsyncWebServerRequest *request) {
-  uint32_t since_ms = 0;
-  if (request->hasParam("since")) {
-    auto since_param = request->getParam("since");
-    if (since_param != nullptr)
-      since_ms = (uint32_t)strtoul(since_param->value().c_str(), nullptr, 10);
-  }
-
+void EleroWebServer::build_log_entries_array_json_(std::string &out, uint32_t since_ms) {
   const auto entries = this->parent_->get_log_entries_copy();
-
-  std::string json = "{\"capture_active\":";
-  json += this->parent_->is_log_capture_active() ? "true" : "false";
-  json += ",\"entries\":[";
-
   static const char *level_strs[] = {"", "error", "warn", "info", "debug", "verbose"};
 
   bool first = true;
   for (const auto &e : entries) {
     if (e.timestamp_ms <= since_ms) continue;
-    if (!first) json += ",";
+    if (!first) out += ",";
     first = false;
 
     uint8_t lv = (e.level >= 1 && e.level <= 5) ? e.level : 3;
@@ -871,9 +1042,22 @@ void EleroWebServer::handle_get_logs(AsyncWebServerRequest *request) {
     snprintf(buf, sizeof(buf),
       "{\"t\":%lu,\"level\":%d,\"level_str\":\"%s\",\"tag\":\"%s\",\"msg\":\"%s\"}",
       (unsigned long)e.timestamp_ms, lv, level_strs[lv], e.tag, msg_esc.c_str());
-    json += buf;
+    out += buf;
+  }
+}
+
+void EleroWebServer::handle_get_logs(AsyncWebServerRequest *request) {
+  uint32_t since_ms = 0;
+  if (request->hasParam("since")) {
+    auto since_param = request->getParam("since");
+    if (since_param != nullptr)
+      since_ms = (uint32_t)strtoul(since_param->value().c_str(), nullptr, 10);
   }
 
+  std::string json = "{\"capture_active\":";
+  json += this->parent_->is_log_capture_active() ? "true" : "false";
+  json += ",\"entries\":[";
+  this->build_log_entries_array_json_(json, since_ms);
   json += "]}";
   AsyncWebServerResponse *response = request->beginResponse(200, "application/json", json.c_str());
   this->add_cors_headers(response);
@@ -935,22 +1119,69 @@ void EleroWebServer::handle_webui_enable(AsyncWebServerRequest *request) {
 
 void EleroWebServer::handle_get_info(AsyncWebServerRequest *request) {
   std::string esc_app_name = json_escape(App.get_name());
-  char buf[256];
+  char buf[320];
   snprintf(buf, sizeof(buf),
     "{\"device_name\":\"%s\","
     "\"uptime_ms\":%lu,"
     "\"freq2\":\"0x%02x\","
     "\"freq1\":\"0x%02x\","
     "\"freq0\":\"0x%02x\","
-    "\"configured_covers\":%d}",
+    "\"configured_covers\":%d,"
+    "\"configured_lights\":%d}",
     esc_app_name.c_str(),
     (unsigned long)millis(),
     this->parent_->get_freq2(),
     this->parent_->get_freq1(),
     this->parent_->get_freq0(),
-    (int)this->parent_->get_configured_covers().size()
+    (int)this->parent_->get_configured_covers().size(),
+    (int)this->parent_->get_configured_lights().size()
   );
   AsyncWebServerResponse *response = request->beginResponse(200, "application/json", buf);
+  this->add_cors_headers(response);
+  request->send(response);
+}
+
+// ─── Combined status (reduces poll requests to one per cycle) ─────────────────
+
+void EleroWebServer::handle_get_status(AsyncWebServerRequest *request) {
+  std::string tab = "devices";
+  if (request->hasParam("tab")) {
+    auto p = request->getParam("tab");
+    if (p) tab = p->value().c_str();
+  }
+
+  std::string json;
+  json.reserve(1024);
+  json += "{";
+  this->build_configured_json_(json);  // always: "covers":[...],"lights":[...]
+
+  if (tab == "discovery") {
+    json += ",\"scanning\":";
+    json += this->parent_->is_scanning() ? "true" : "false";
+    json += ",\"discovered\":[";
+    this->build_discovered_array_json_(json);
+    json += "]";
+  } else if (tab == "log") {
+    uint32_t since_ms = 0;
+    if (request->hasParam("since")) {
+      auto p = request->getParam("since");
+      if (p) since_ms = (uint32_t)strtoul(p->value().c_str(), nullptr, 10);
+    }
+    json += ",\"capture_active\":";
+    json += this->parent_->is_log_capture_active() ? "true" : "false";
+    json += ",\"log_entries\":[";
+    this->build_log_entries_array_json_(json, since_ms);
+    json += "]";
+  } else if (tab == "config") {
+    json += ",\"dump_active\":";
+    json += this->parent_->is_packet_dump_active() ? "true" : "false";
+    json += ",\"packets\":[";
+    this->build_packets_array_json_(json);
+    json += "]";
+  }
+
+  json += "}";
+  auto *response = request->beginResponse(200, "application/json", json.c_str());
   this->add_cors_headers(response);
   request->send(response);
 }
