@@ -141,6 +141,8 @@ def _final_validate(config):
 
     seen_addresses = {}
     # Iterate all cover configs in the full ESPHome config
+    if CORE.config is None:
+        return config
     full_config = CORE.config.get("cover", [])
     for entry in full_config:
         if entry.get("platform") != "elero":
