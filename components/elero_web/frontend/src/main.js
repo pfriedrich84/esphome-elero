@@ -22,11 +22,38 @@ const STATE_LABELS = {
 }
 
 // ─── API helpers ─────────────────────────────────────────────────────────────
+// In-flight tracking: abort previous request to the same URL before starting a new one.
+// This prevents socket accumulation on the ESP32 when responses are slow.
+const _inflight = new Map()
+
 async function api(method, url, params = {}) {
   const qs = Object.keys(params).length
     ? '?' + new URLSearchParams(params).toString()
     : ''
-  const r = await fetch(url + qs, { method })
+  const fullUrl = url + qs
+  // Abort any in-flight GET to the same base URL (polling dedup)
+  if (method === 'GET') {
+    const prev = _inflight.get(url)
+    if (prev) prev.abort()
+    const ctrl = new AbortController()
+    _inflight.set(url, ctrl)
+    try {
+      const r = await fetch(fullUrl, { method, signal: ctrl.signal })
+      _inflight.delete(url)
+      if (!r.ok) {
+        let msg = `HTTP ${r.status}`
+        try { const d = await r.json(); msg = d.error || msg } catch {}
+        throw new Error(msg)
+      }
+      const ct = r.headers.get('content-type') || ''
+      return ct.includes('application/json') ? r.json() : r.text()
+    } catch (e) {
+      _inflight.delete(url)
+      throw e
+    }
+  }
+  // Non-GET requests (POST, etc.) — no dedup
+  const r = await fetch(fullUrl, { method })
   if (!r.ok) {
     let msg = `HTTP ${r.status}`
     try { const d = await r.json(); msg = d.error || msg } catch {}
@@ -123,21 +150,39 @@ document.addEventListener('alpine:init', () => {
     toast: { show: false, error: false, msg: '' },
     _toastTimer: null,
 
-    // Polling intervals
-    _pollCovers: null,
-    _pollDisc: null,
-    _pollLog: null,
-    _pollDump: null,
+    // Polling state
+    _pollTimer: null,
+    _polling: false,
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
     async init() {
       await this.refreshInfo()
       await this.refreshCovers()
       await this.loadFrequency()
-      this._pollCovers = setInterval(() => this.refreshCovers(), 3000)
-      this._pollDisc   = setInterval(() => this.refreshDiscovered(), 3000)
-      this._pollDump   = setInterval(() => this.refreshDump(), 2000)
-      this._pollLog    = setInterval(() => this.refreshLog(), 1500)
+      this._schedulePoll()
+    },
+
+    // Single sequential poll loop — only fetches data relevant to the active tab.
+    // Requests are serialized (one at a time) to avoid exhausting ESP32 sockets.
+    _schedulePoll() {
+      this._pollTimer = setTimeout(async () => {
+        if (this._polling) { this._schedulePoll(); return }
+        this._polling = true
+        try {
+          // Always refresh covers/lights (shown on Devices tab, also used by linkAddrs)
+          await this.refreshCovers()
+          // Tab-specific polls
+          if (this.tab === 'discovery') {
+            await this.refreshDiscovered()
+          } else if (this.tab === 'log') {
+            await this.refreshLog()
+          } else if (this.tab === 'config') {
+            await this.refreshDump()
+          }
+        } catch {}
+        this._polling = false
+        this._schedulePoll()
+      }, 3000)
     },
 
     // ── Toast ─────────────────────────────────────────────────────────────────
