@@ -36,6 +36,7 @@ static std::string json_escape(const std::string &s) {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 void EleroWebServer::add_cors_headers(AsyncWebServerResponse *response) {
+  response->addHeader("Connection", "close");
   response->addHeader("Access-Control-Allow-Origin", "*");
   response->addHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
   response->addHeader("Access-Control-Allow-Headers", "Content-Type");
@@ -146,6 +147,9 @@ void EleroWebServer::handleRequest(AsyncWebServerRequest *request) {
   // ── Discovery ──
   if (url == "/elero/api/discovered" && method == HTTP_GET) { handle_get_discovered(request); return; }
 
+  // ── Combined status (single poll endpoint) ──
+  if (url == "/elero/api/status" && method == HTTP_GET) { handle_get_status(request); return; }
+
   // ── Configured covers ──
   if (url == "/elero/api/configured" && method == HTTP_GET) { handle_get_configured(request); return; }
 
@@ -250,16 +254,11 @@ void EleroWebServer::handle_scan_stop(AsyncWebServerRequest *request) {
 
 // ─── Discovered blinds ────────────────────────────────────────────────────────
 
-void EleroWebServer::handle_get_discovered(AsyncWebServerRequest *request) {
+void EleroWebServer::build_discovered_array_json_(std::string &out) {
   const auto &blinds = this->parent_->get_discovered_blinds();
-  std::string json;
-  json.reserve(64 + blinds.size() * 400);
-  json += "{\"scanning\":";
-  json += this->parent_->is_scanning() ? "true" : "false";
-  json += ",\"blinds\":[";
   bool first = true;
   for (const auto &blind : blinds) {
-    if (!first) json += ",";
+    if (!first) out += ",";
     first = false;
 
     char buf[640];
@@ -299,9 +298,17 @@ void EleroWebServer::handle_get_discovered(AsyncWebServerRequest *request) {
         (this->parent_->is_light_configured(blind.blind_address) ? "light" : "none"),
       this->parent_->is_blind_adopted(blind.blind_address) ? "true" : "false"
     );
-    json += buf;
+    out += buf;
   }
+}
 
+void EleroWebServer::handle_get_discovered(AsyncWebServerRequest *request) {
+  std::string json;
+  json.reserve(512);
+  json += "{\"scanning\":";
+  json += this->parent_->is_scanning() ? "true" : "false";
+  json += ",\"blinds\":[";
+  this->build_discovered_array_json_(json);
   json += "]}";
   AsyncWebServerResponse *response =
       request->beginResponse(200, "application/json", json.c_str());
@@ -311,18 +318,14 @@ void EleroWebServer::handle_get_discovered(AsyncWebServerRequest *request) {
 
 // ─── Configured covers ────────────────────────────────────────────────────────
 
-void EleroWebServer::handle_get_configured(AsyncWebServerRequest *request) {
-  std::string json;
-  json.reserve(64 + this->parent_->get_configured_covers().size() * 400
-                   + this->parent_->get_configured_lights().size() * 400
-                   + this->parent_->get_runtime_blinds().size() * 400);
-  json += "{\"covers\":[";
+void EleroWebServer::build_configured_json_(std::string &out) {
+  out += "\"covers\":[";
 
   bool first = true;
 
   // ESPHome configured covers
   for (const auto &pair : this->parent_->get_configured_covers()) {
-    if (!first) json += ",";
+    if (!first) out += ",";
     first = false;
     auto *blind = pair.second;
     std::string esc_name = json_escape(blind->get_blind_name());
@@ -357,14 +360,14 @@ void EleroWebServer::handle_get_configured(AsyncWebServerRequest *request) {
       (unsigned long)blind->get_close_duration_ms(),
       blind->get_supports_tilt() ? "true" : "false"
     );
-    json += buf;
+    out += buf;
   }
 
   // Runtime adopted covers (device_type == COVER)
   for (const auto &entry : this->parent_->get_runtime_blinds()) {
     const auto &rb = entry.second;
     if (rb.device_type != DeviceType::COVER) continue;
-    if (!first) json += ",";
+    if (!first) out += ",";
     first = false;
     std::string esc_name = json_escape(rb.name);
     char buf[512];
@@ -395,16 +398,16 @@ void EleroWebServer::handle_get_configured(AsyncWebServerRequest *request) {
       (unsigned long)rb.open_duration_ms,
       (unsigned long)rb.close_duration_ms
     );
-    json += buf;
+    out += buf;
   }
 
-  json += "],\"lights\":[";
+  out += "],\"lights\":[";
 
   first = true;
 
   // ESPHome configured lights
   for (const auto &pair : this->parent_->get_configured_lights()) {
-    if (!first) json += ",";
+    if (!first) out += ",";
     first = false;
     auto *light = pair.second;
     std::string esc_name = json_escape(light->get_light_name());
@@ -435,14 +438,14 @@ void EleroWebServer::handle_get_configured(AsyncWebServerRequest *request) {
       light->get_remote_address(),
       (unsigned long)light->get_dim_duration_ms()
     );
-    json += buf;
+    out += buf;
   }
 
   // Runtime adopted lights (device_type == LIGHT)
   for (const auto &entry : this->parent_->get_runtime_blinds()) {
     const auto &rb = entry.second;
     if (rb.device_type != DeviceType::LIGHT) continue;
-    if (!first) json += ",";
+    if (!first) out += ",";
     first = false;
     std::string esc_name = json_escape(rb.name);
     char buf[512];
@@ -469,10 +472,20 @@ void EleroWebServer::handle_get_configured(AsyncWebServerRequest *request) {
       rb.remote_address,
       (unsigned long)rb.dim_duration_ms
     );
-    json += buf;
+    out += buf;
   }
 
-  json += "]}";
+  out += "]";
+}
+
+void EleroWebServer::handle_get_configured(AsyncWebServerRequest *request) {
+  std::string json;
+  json.reserve(64 + this->parent_->get_configured_covers().size() * 400
+                   + this->parent_->get_configured_lights().size() * 400
+                   + this->parent_->get_runtime_blinds().size() * 400);
+  json += "{";
+  this->build_configured_json_(json);
+  json += "}";
   AsyncWebServerResponse *response =
       request->beginResponse(200, "application/json", json.c_str());
   this->add_cors_headers(response);
@@ -840,20 +853,11 @@ void EleroWebServer::handle_packet_dump_stop(AsyncWebServerRequest *request) {
   request->send(response);
 }
 
-void EleroWebServer::handle_get_packets(AsyncWebServerRequest *request) {
+void EleroWebServer::build_packets_array_json_(std::string &out) {
   const auto &packets = this->parent_->get_raw_packets();
-
-  std::string json = "{\"dump_active\":";
-  json += this->parent_->is_packet_dump_active() ? "true" : "false";
-  json += ",\"count\":";
-  char cnt_buf[12];
-  snprintf(cnt_buf, sizeof(cnt_buf), "%d", (int)packets.size());
-  json += cnt_buf;
-  json += ",\"packets\":[";
-
   bool first = true;
   for (const auto &pkt : packets) {
-    if (!first) json += ",";
+    if (!first) out += ",";
     first = false;
 
     char hex_buf[CC1101_FIFO_LENGTH * 3 + 1];
@@ -874,9 +878,21 @@ void EleroWebServer::handle_get_packets(AsyncWebServerRequest *request) {
       pkt.reject_reason,
       hex_buf
     );
-    json += entry_buf;
+    out += entry_buf;
   }
+}
 
+void EleroWebServer::handle_get_packets(AsyncWebServerRequest *request) {
+  const auto &packets = this->parent_->get_raw_packets();
+
+  std::string json = "{\"dump_active\":";
+  json += this->parent_->is_packet_dump_active() ? "true" : "false";
+  json += ",\"count\":";
+  char cnt_buf[12];
+  snprintf(cnt_buf, sizeof(cnt_buf), "%d", (int)packets.size());
+  json += cnt_buf;
+  json += ",\"packets\":[";
+  this->build_packets_array_json_(json);
   json += "]}";
   AsyncWebServerResponse *response =
       request->beginResponse(200, "application/json", json.c_str());
@@ -1009,26 +1025,14 @@ void EleroWebServer::handle_set_frequency(AsyncWebServerRequest *request) {
 
 // ─── Logs ─────────────────────────────────────────────────────────────────────
 
-void EleroWebServer::handle_get_logs(AsyncWebServerRequest *request) {
-  uint32_t since_ms = 0;
-  if (request->hasParam("since")) {
-    auto since_param = request->getParam("since");
-    if (since_param != nullptr)
-      since_ms = (uint32_t)strtoul(since_param->value().c_str(), nullptr, 10);
-  }
-
+void EleroWebServer::build_log_entries_array_json_(std::string &out, uint32_t since_ms) {
   const auto entries = this->parent_->get_log_entries_copy();
-
-  std::string json = "{\"capture_active\":";
-  json += this->parent_->is_log_capture_active() ? "true" : "false";
-  json += ",\"entries\":[";
-
   static const char *level_strs[] = {"", "error", "warn", "info", "debug", "verbose"};
 
   bool first = true;
   for (const auto &e : entries) {
     if (e.timestamp_ms <= since_ms) continue;
-    if (!first) json += ",";
+    if (!first) out += ",";
     first = false;
 
     uint8_t lv = (e.level >= 1 && e.level <= 5) ? e.level : 3;
@@ -1038,9 +1042,22 @@ void EleroWebServer::handle_get_logs(AsyncWebServerRequest *request) {
     snprintf(buf, sizeof(buf),
       "{\"t\":%lu,\"level\":%d,\"level_str\":\"%s\",\"tag\":\"%s\",\"msg\":\"%s\"}",
       (unsigned long)e.timestamp_ms, lv, level_strs[lv], e.tag, msg_esc.c_str());
-    json += buf;
+    out += buf;
+  }
+}
+
+void EleroWebServer::handle_get_logs(AsyncWebServerRequest *request) {
+  uint32_t since_ms = 0;
+  if (request->hasParam("since")) {
+    auto since_param = request->getParam("since");
+    if (since_param != nullptr)
+      since_ms = (uint32_t)strtoul(since_param->value().c_str(), nullptr, 10);
   }
 
+  std::string json = "{\"capture_active\":";
+  json += this->parent_->is_log_capture_active() ? "true" : "false";
+  json += ",\"entries\":[";
+  this->build_log_entries_array_json_(json, since_ms);
   json += "]}";
   AsyncWebServerResponse *response = request->beginResponse(200, "application/json", json.c_str());
   this->add_cors_headers(response);
@@ -1120,6 +1137,51 @@ void EleroWebServer::handle_get_info(AsyncWebServerRequest *request) {
     (int)this->parent_->get_configured_lights().size()
   );
   AsyncWebServerResponse *response = request->beginResponse(200, "application/json", buf);
+  this->add_cors_headers(response);
+  request->send(response);
+}
+
+// ─── Combined status (reduces poll requests to one per cycle) ─────────────────
+
+void EleroWebServer::handle_get_status(AsyncWebServerRequest *request) {
+  std::string tab = "devices";
+  if (request->hasParam("tab")) {
+    auto p = request->getParam("tab");
+    if (p) tab = p->value().c_str();
+  }
+
+  std::string json;
+  json.reserve(1024);
+  json += "{";
+  this->build_configured_json_(json);  // always: "covers":[...],"lights":[...]
+
+  if (tab == "discovery") {
+    json += ",\"scanning\":";
+    json += this->parent_->is_scanning() ? "true" : "false";
+    json += ",\"discovered\":[";
+    this->build_discovered_array_json_(json);
+    json += "]";
+  } else if (tab == "log") {
+    uint32_t since_ms = 0;
+    if (request->hasParam("since")) {
+      auto p = request->getParam("since");
+      if (p) since_ms = (uint32_t)strtoul(p->value().c_str(), nullptr, 10);
+    }
+    json += ",\"capture_active\":";
+    json += this->parent_->is_log_capture_active() ? "true" : "false";
+    json += ",\"log_entries\":[";
+    this->build_log_entries_array_json_(json, since_ms);
+    json += "]";
+  } else if (tab == "config") {
+    json += ",\"dump_active\":";
+    json += this->parent_->is_packet_dump_active() ? "true" : "false";
+    json += ",\"packets\":[";
+    this->build_packets_array_json_(json);
+    json += "]";
+  }
+
+  json += "}";
+  auto *response = request->beginResponse(200, "application/json", json.c_str());
   this->add_cors_headers(response);
   request->send(response);
 }

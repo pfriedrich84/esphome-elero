@@ -22,45 +22,38 @@ const STATE_LABELS = {
 }
 
 // ─── API helpers ─────────────────────────────────────────────────────────────
-// In-flight tracking: abort previous request to the same URL before starting a new one.
-// This prevents socket accumulation on the ESP32 when responses are slow.
-const _inflight = new Map()
+// Serializing request queue: max 1 in-flight request at a time.
+// Prevents ESP32 socket exhaustion (ENFILE error 23).
+const _queue = []
+let _busy = false
 
-async function api(method, url, params = {}) {
-  const qs = Object.keys(params).length
-    ? '?' + new URLSearchParams(params).toString()
-    : ''
-  const fullUrl = url + qs
-  // Abort any in-flight GET to the same base URL (polling dedup)
-  if (method === 'GET') {
-    const prev = _inflight.get(url)
-    if (prev) prev.abort()
-    const ctrl = new AbortController()
-    _inflight.set(url, ctrl)
+async function _drain() {
+  if (_busy) return
+  while (_queue.length > 0) {
+    _busy = true
+    const { method, fullUrl, resolve, reject } = _queue.shift()
     try {
-      const r = await fetch(fullUrl, { method, signal: ctrl.signal })
-      _inflight.delete(url)
+      const r = await fetch(fullUrl, { method, signal: AbortSignal.timeout(10000) })
       if (!r.ok) {
         let msg = `HTTP ${r.status}`
         try { const d = await r.json(); msg = d.error || msg } catch {}
-        throw new Error(msg)
+        reject(new Error(msg))
+      } else {
+        const ct = r.headers.get('content-type') || ''
+        resolve(ct.includes('application/json') ? await r.json() : await r.text())
       }
-      const ct = r.headers.get('content-type') || ''
-      return ct.includes('application/json') ? r.json() : r.text()
-    } catch (e) {
-      _inflight.delete(url)
-      throw e
-    }
+    } catch (e) { reject(e) }
+    _busy = false
   }
-  // Non-GET requests (POST, etc.) — no dedup
-  const r = await fetch(fullUrl, { method })
-  if (!r.ok) {
-    let msg = `HTTP ${r.status}`
-    try { const d = await r.json(); msg = d.error || msg } catch {}
-    throw new Error(msg)
-  }
-  const ct = r.headers.get('content-type') || ''
-  return ct.includes('application/json') ? r.json() : r.text()
+}
+
+function api(method, url, params = {}) {
+  const qs = Object.keys(params).length
+    ? '?' + new URLSearchParams(params).toString() : ''
+  return new Promise((resolve, reject) => {
+    _queue.push({ method, fullUrl: url + qs, resolve, reject })
+    _drain()
+  })
 }
 
 // ─── Utility ─────────────────────────────────────────────────────────────────
@@ -157,32 +150,65 @@ document.addEventListener('alpine:init', () => {
     // ── Lifecycle ─────────────────────────────────────────────────────────────
     async init() {
       await this.refreshInfo()
-      await this.refreshCovers()
+      await this.refreshStatus()
       await this.loadFrequency()
       this._schedulePoll()
     },
 
-    // Single sequential poll loop — only fetches data relevant to the active tab.
-    // Requests are serialized (one at a time) to avoid exhausting ESP32 sockets.
+    // Single sequential poll loop — one combined request per cycle.
     _schedulePoll() {
       this._pollTimer = setTimeout(async () => {
         if (this._polling) { this._schedulePoll(); return }
         this._polling = true
-        try {
-          // Always refresh covers/lights (shown on Devices tab, also used by linkAddrs)
-          await this.refreshCovers()
-          // Tab-specific polls
-          if (this.tab === 'discovery') {
-            await this.refreshDiscovered()
-          } else if (this.tab === 'log') {
-            await this.refreshLog()
-          } else if (this.tab === 'config') {
-            await this.refreshDump()
-          }
-        } catch {}
+        try { await this.refreshStatus() } catch {}
         this._polling = false
         this._schedulePoll()
       }, 3000)
+    },
+
+    // Combined status endpoint — covers + lights + tab-specific data in one request.
+    async refreshStatus() {
+      const params = { tab: this.tab }
+      if (this.tab === 'log' && this.logLastTs) params.since = this.logLastTs
+      const d = await api('GET', '/elero/api/status', params)
+
+      // Always: covers + lights
+      this.covers = (d.covers || []).map(c => ({
+        ...c,
+        _edit: {
+          open_duration_ms:  c.open_duration_ms,
+          close_duration_ms: c.close_duration_ms,
+          poll_interval_ms:  c.poll_interval_ms,
+        }
+      }))
+      this.lights = (d.lights || []).map(l => ({
+        ...l,
+        _edit: { dim_duration_ms: l.dim_duration_ms }
+      }))
+      this.uptimeMs += 3000
+
+      // Tab-specific
+      if (d.discovered !== undefined) {
+        this.scanning = d.scanning
+        this.allDiscovered = d.discovered || []
+      }
+      if (d.log_entries !== undefined) {
+        this.logCapture = d.capture_active
+        if (d.log_entries.length > 0) {
+          const ne = d.log_entries.map((e, i) => ({ ...e, idx: this.logEntries.length + i }))
+          this.logEntries.push(...ne)
+          if (this.logEntries.length > 500) this.logEntries.splice(0, this.logEntries.length - 500)
+          this.logLastTs = ne[ne.length - 1].t
+          if (this.logAutoScroll) this.$nextTick(() => {
+            const box = document.getElementById('log-box')
+            if (box) box.scrollTop = box.scrollHeight
+          })
+        }
+      }
+      if (d.packets !== undefined) {
+        this.dumpActive = d.dump_active
+        this.dumpPackets = d.packets || []
+      }
     },
 
     // ── Toast ─────────────────────────────────────────────────────────────────
@@ -471,9 +497,8 @@ document.addEventListener('alpine:init', () => {
 
     async downloadDump() {
       try {
-        const resp = await fetch('/elero/api/packets/download')
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
-        const blob = await resp.blob()
+        const d = await api('GET', '/elero/api/packets/download')
+        const blob = new Blob([JSON.stringify(d)], { type: 'application/json' })
         const url  = URL.createObjectURL(blob)
         const a    = document.createElement('a')
         a.href = url

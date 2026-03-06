@@ -59,6 +59,14 @@ class EleroWebServer : public Component, public AsyncWebHandler {
   void handle_webui_enable(AsyncWebServerRequest *request);
   // Device info
   void handle_get_info(AsyncWebServerRequest *request);
+  // Combined status (reduces poll requests to one per cycle)
+  void handle_get_status(AsyncWebServerRequest *request);
+
+  // ── JSON fragment builders (reused by individual handlers + combined status) ──
+  void build_configured_json_(std::string &out);
+  void build_discovered_array_json_(std::string &out);
+  void build_log_entries_array_json_(std::string &out, uint32_t since_ms);
+  void build_packets_array_json_(std::string &out);
 
   // ── URL parsing helpers ────────────────────────────────────────────────
   // Tries to parse /elero/api/covers/0xABCDEF/command → addr = 0xABCDEF, action = "command"
