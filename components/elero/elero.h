@@ -4,6 +4,7 @@
 #include "esphome/core/preferences.h"
 #include "esphome/components/spi/spi.h"
 #include "cc1101.h"
+#include <RadioLib.h>
 #include <string>
 #include <vector>
 #include <map>
@@ -242,6 +243,42 @@ class EleroBlindBase {
                                       uint32_t poll_intvl_ms) = 0;
 };
 
+/// RadioLib HAL adapter that bridges ESPHome's SPIDevice to RadioLib's Module.
+/// GPIO and interrupt operations are forwarded to ESPHome primitives.
+/// SPI operations delegate to the parent Elero component's SPIDevice.
+class EspHomeRadioLibHal : public RadioLibHal {
+ public:
+  EspHomeRadioLibHal();
+
+  // GPIO
+  void pinMode(uint32_t pin, uint32_t mode) override;
+  void digitalWrite(uint32_t pin, uint32_t value) override;
+  uint32_t digitalRead(uint32_t pin) override;
+  void attachInterrupt(uint32_t interruptNum, void (*interruptCb)(void), uint32_t mode) override;
+  void detachInterrupt(uint32_t interruptNum) override;
+
+  // Timing
+  void delay(RadioLibTime_t ms) override;
+  void delayMicroseconds(RadioLibTime_t us) override;
+  RadioLibTime_t millis() override;
+  RadioLibTime_t micros() override;
+  long pulseIn(uint32_t pin, uint32_t state, RadioLibTime_t timeout) override;
+
+  // SPI — delegated to the parent Elero component's SPIDevice
+  void spiBegin() override;
+  void spiBeginTransaction() override;
+  void spiTransfer(uint8_t *out, size_t len, uint8_t *in) override;
+  void spiEndTransaction() override;
+  void spiEnd() override;
+
+  /// Set the parent component that owns the SPI bus.
+  /// Must be called before any SPI operations.
+  void set_spi_parent(void *parent) { spi_parent_ = parent; }
+
+ private:
+  void *spi_parent_{nullptr};
+};
+
 class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARITY_LOW,
                                     spi::CLOCK_PHASE_LEADING, spi::DATA_RATE_2MHZ>,
                                     public Component {
@@ -382,6 +419,11 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   uint32_t tx_state_entered_ms_{0};
   uint32_t last_tx_complete_ms_{0};
   uint8_t gdo0_miss_count_{0};  // consecutive TX completions without GDO0
+
+  // RadioLib instances (hybrid mode: used only for SPI register access)
+  EspHomeRadioLibHal radio_hal_;
+  Module *radio_module_{nullptr};
+  CC1101 *radio_{nullptr};
 
   uint8_t msg_rx_[CC1101_FIFO_LENGTH];
   uint8_t msg_tx_[CC1101_FIFO_LENGTH];

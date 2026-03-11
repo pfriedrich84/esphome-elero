@@ -54,6 +54,70 @@ static const char *TAG = "elero";
 static const uint8_t flash_table_encode[] = {0x08, 0x02, 0x0d, 0x01, 0x0f, 0x0e, 0x07, 0x05, 0x09, 0x0c, 0x00, 0x0a, 0x03, 0x04, 0x0b, 0x06};
 static const uint8_t flash_table_decode[] = {0x0a, 0x03, 0x01, 0x0c, 0x0d, 0x07, 0x0f, 0x06, 0x00, 0x08, 0x0b, 0x0e, 0x09, 0x02, 0x05, 0x04};
 
+// ---------------------------------------------------------------------------
+// EspHomeRadioLibHal — bridges ESPHome's SPIDevice to RadioLib's HAL
+// ---------------------------------------------------------------------------
+EspHomeRadioLibHal::EspHomeRadioLibHal()
+    : RadioLibHal(INPUT, OUTPUT, LOW, HIGH, RISING, FALLING) {}
+
+void EspHomeRadioLibHal::pinMode(uint32_t pin, uint32_t mode) {
+  // GPIO is managed by ESPHome — no-op
+}
+void EspHomeRadioLibHal::digitalWrite(uint32_t pin, uint32_t value) {
+  // CS is managed by ESPHome's SPIDevice enable/disable — no-op
+}
+uint32_t EspHomeRadioLibHal::digitalRead(uint32_t pin) {
+  return LOW;  // Not used in register-only mode
+}
+void EspHomeRadioLibHal::attachInterrupt(uint32_t interruptNum, void (*interruptCb)(void), uint32_t mode) {
+  // Interrupts are managed by Elero::setup() directly — no-op
+}
+void EspHomeRadioLibHal::detachInterrupt(uint32_t interruptNum) {
+  // No-op
+}
+void EspHomeRadioLibHal::delay(RadioLibTime_t ms) {
+  ::delay(ms);
+}
+void EspHomeRadioLibHal::delayMicroseconds(RadioLibTime_t us) {
+  delay_microseconds_safe(us);
+}
+RadioLibTime_t EspHomeRadioLibHal::millis() {
+  return ::millis();
+}
+RadioLibTime_t EspHomeRadioLibHal::micros() {
+  return ::micros();
+}
+long EspHomeRadioLibHal::pulseIn(uint32_t pin, uint32_t state, RadioLibTime_t timeout) {
+  return 0;  // Not used
+}
+void EspHomeRadioLibHal::spiBegin() {
+  // SPI bus is initialized by ESPHome's SPI component — no-op
+}
+void EspHomeRadioLibHal::spiBeginTransaction() {
+  if (this->spi_parent_ != nullptr) {
+    static_cast<Elero *>(this->spi_parent_)->enable();
+  }
+}
+void EspHomeRadioLibHal::spiTransfer(uint8_t *out, size_t len, uint8_t *in) {
+  if (this->spi_parent_ == nullptr)
+    return;
+  auto *parent = static_cast<Elero *>(this->spi_parent_);
+  for (size_t i = 0; i < len; i++) {
+    uint8_t tx = (out != nullptr) ? out[i] : 0x00;
+    uint8_t rx = parent->transfer_byte(tx);
+    if (in != nullptr)
+      in[i] = rx;
+  }
+}
+void EspHomeRadioLibHal::spiEndTransaction() {
+  if (this->spi_parent_ != nullptr) {
+    static_cast<Elero *>(this->spi_parent_)->disable();
+  }
+}
+void EspHomeRadioLibHal::spiEnd() {
+  // SPI bus lifecycle is managed by ESPHome — no-op
+}
+
 static const char *marcstate_to_string(uint8_t marc) {
   switch (marc) {
     case CC1101_MARCSTATE_SLEEP: return "SLEEP";
@@ -410,12 +474,29 @@ void Elero::dump_config() {
   LOG_PIN("  GDO0 Pin: ", this->gdo0_pin_);
   ESP_LOGCONFIG(TAG, "  freq2: 0x%02x, freq1: 0x%02x, freq0: 0x%02x", this->freq2_, this->freq1_, this->freq0_);
   ESP_LOGCONFIG(TAG, "  Send repeats: %d, send delay: %d ms", this->send_repeats_, this->send_delay_);
+  ESP_LOGCONFIG(TAG, "  RadioLib: hybrid mode (SPI register access with verify-readback)");
   ESP_LOGCONFIG(TAG, "  Registered covers: %d", this->address_to_cover_mapping_.size());
 }
 
 void Elero::setup() {
   ESP_LOGI(TAG, "Setting up Elero Component...");
   this->spi_setup();
+
+  // Initialize RadioLib HAL adapter — bridge ESPHome SPI to RadioLib Module.
+  // We use RADIOLIB_NC for all pins because GPIO/interrupt management stays
+  // with ESPHome.  RadioLib is only used for SPI register access with
+  // built-in verify-readback error handling.
+  this->radio_hal_.set_spi_parent(this);
+  this->radio_module_ = new Module(&this->radio_hal_, RADIOLIB_NC, RADIOLIB_NC, RADIOLIB_NC);
+  this->radio_ = new CC1101(this->radio_module_);
+
+  // Configure RadioLib's SPI addressing for CC1101 (normally done by begin()).
+  // We skip begin() because it sets default register values we don't want —
+  // our init() writes the exact Elero-specific register configuration.
+  this->radio_module_->spiConfig.cmds[RADIOLIB_MODULE_SPI_COMMAND_READ] = RADIOLIB_CC1101_CMD_READ;
+  this->radio_module_->spiConfig.cmds[RADIOLIB_MODULE_SPI_COMMAND_WRITE] = RADIOLIB_CC1101_CMD_WRITE;
+  ESP_LOGI(TAG, "RadioLib CC1101 HAL adapter initialized (hybrid mode)");
+
   this->gdo0_pin_->setup();
   this->gdo0_pin_->attach_interrupt(Elero::interrupt, this, gpio::INTERRUPT_FALLING_EDGE);
   this->reset();
@@ -467,13 +548,11 @@ void Elero::flush_rx() {
 }
 
 void Elero::reset() {
-  // We don't do a hardware reset as we can't read
-  // the MISO pin directly. Rely on software-reset only.
-
+  // Software reset via command strobes — direct SPI for timing control.
   this->enable();
-  this->write_byte(CC1101_SRES);
+  this->transfer_byte(CC1101_SRES);
   delay_microseconds_safe(50);
-  this->write_byte(CC1101_SIDLE);
+  this->transfer_byte(CC1101_SIDLE);
   delay_microseconds_safe(50);
   this->disable();
 }
@@ -526,30 +605,29 @@ void Elero::init() {
 }
 
 void Elero::write_reg(uint8_t addr, uint8_t data) {
-  this->enable();
-  this->write_byte(addr);
-  this->write_byte(data);
-  this->disable();
-  delay_microseconds_safe(15);
-  // TODO: Add error handling - verify SPI transaction success, handle timeout/CRC errors
+  // RadioLib SPIsetRegValue does verify-readback for config registers (0x00-0x2E).
+  // Status registers and FIFOs are write-only — use raw write for those.
+  if (addr <= CC1101_TEST0) {
+    int16_t rc = this->radio_module_->SPIsetRegValue(addr, data);
+    if (rc != RADIOLIB_ERR_NONE) {
+      ESP_LOGW(TAG, "SPI write verify failed: reg=0x%02x val=0x%02x rc=%d", addr, data, rc);
+    }
+  } else {
+    this->radio_module_->SPIwriteRegister(addr, data);
+  }
 }
 
 void Elero::write_burst(uint8_t addr, uint8_t *data, uint8_t len) {
-  this->enable();
-  this->write_byte(addr | CC1101_WRITE_BURST);
-  for(int i=0; i<len; i++)
-    this->write_byte(data[i]);
-  this->disable();
-  delay_microseconds_safe(15);
-  // TODO: Add error handling - verify all bytes written, handle partial writes
+  this->radio_module_->SPIwriteRegisterBurst(addr, data, len);
 }
 
 void Elero::write_cmd(uint8_t cmd) {
+  // Command strobes are single-byte SPI transactions — use direct SPI
+  // since RadioLib's SPIsendCommand is on the CC1101 class, not Module.
   this->enable();
-  this->write_byte(cmd);
+  this->transfer_byte(cmd);
   this->disable();
   delay_microseconds_safe(15);
-  // TODO: Add error handling - verify command accepted by CC1101
 }
 
 bool Elero::wait_rx() {
@@ -583,33 +661,28 @@ bool Elero::wait_idle() {
 // use send_command() which kicks off the state machine instead.
 
 uint8_t Elero::read_reg(uint8_t addr) {
-  uint8_t data;
-
-  this->enable();
-  this->write_byte(addr | CC1101_READ_SINGLE);
-  data = this->read_byte();
-  this->disable();
-  delay_microseconds_safe(15);
-  // TODO: Add error handling - validate returned data, detect SPI communication failures
-  return data;
+  return (uint8_t) this->radio_module_->SPIgetRegValue(addr);
 }
 
 uint8_t Elero::read_status(uint8_t addr) {
-  uint8_t data;
-
+  // CC1101 status registers require the READ_BURST flag (0xC0) to distinguish
+  // them from command strobes at the same addresses (0x30-0x3D).
+  // Use direct SPI for exact control in the TX state machine critical path.
   this->enable();
-  this->write_byte(addr | CC1101_READ_BURST);
-  data = this->read_byte();
+  this->transfer_byte(addr | CC1101_READ_BURST);
+  uint8_t data = this->transfer_byte(0x00);
   this->disable();
   delay_microseconds_safe(15);
   return data;
 }
 
 void Elero::read_buf(uint8_t addr, uint8_t *buf, uint8_t len) {
+  // FIFO reads (0x3F) use burst mode for multi-byte access.
+  // Direct SPI for exact control in the RX processing critical path.
   this->enable();
-  this->write_byte(addr | CC1101_READ_BURST);
-  for(uint8_t i=0; i<len; i++)
-    buf[i] = this->read_byte();
+  this->transfer_byte(addr | CC1101_READ_BURST);
+  for (uint8_t i = 0; i < len; i++)
+    buf[i] = this->transfer_byte(0x00);
   this->disable();
   delay_microseconds_safe(15);
 }
