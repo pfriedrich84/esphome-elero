@@ -765,6 +765,19 @@ void Elero::interpret_msg() {
     return;
   }
 
+  // Minimum length: header fields extend to msg_rx_[16] (num_dests), so the
+  // payload portion (length) must be at least 17 bytes.  Shorter packets are
+  // non-Elero RF noise on the shared 868 MHz band — expected and harmless.
+  static const uint8_t ELERO_MIN_PACKET_SIZE = 17;
+  if (length < ELERO_MIN_PACKET_SIZE) {
+    ESP_LOGD(TAG, "Received non-Elero packet: too short (%d bytes)", length);
+    if (this->packet_dump_pending_update_) {
+      this->mark_last_raw_packet_(false, "too_short");
+      this->packet_dump_pending_update_ = false;
+    }
+    return;
+  }
+
   uint8_t cnt = this->msg_rx_[1];
   uint8_t typ = this->msg_rx_[2];
   uint8_t typ2 = this->msg_rx_[3];
