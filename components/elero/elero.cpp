@@ -490,12 +490,19 @@ void Elero::setup() {
   this->radio_module_ = new Module(&this->radio_hal_, RADIOLIB_NC, RADIOLIB_NC, RADIOLIB_NC);
   this->radio_ = new CC1101(this->radio_module_);
 
-  // Configure RadioLib's SPI addressing for CC1101 (normally done by begin()).
-  // We skip begin() because it sets default register values we don't want —
-  // our init() writes the exact Elero-specific register configuration.
-  this->radio_module_->spiConfig.cmds[RADIOLIB_MODULE_SPI_COMMAND_READ] = RADIOLIB_CC1101_CMD_READ;
-  this->radio_module_->spiConfig.cmds[RADIOLIB_MODULE_SPI_COMMAND_WRITE] = RADIOLIB_CC1101_CMD_WRITE;
-  ESP_LOGI(TAG, "RadioLib CC1101 HAL adapter initialized (hybrid mode)");
+  // begin() initializes spiConfig, Module::init(), resets CC1101, and verifies
+  // the chip version (10 retries).  Parameters don't matter — our init()
+  // overwrites all registers with Elero-specific values afterwards.
+  int16_t rc = this->radio_->begin(868.35, 47.607, 38.383, 101.5625, 10, 32);
+  if (rc == RADIOLIB_ERR_NONE) {
+    ESP_LOGI(TAG, "RadioLib CC1101 initialized (chip version verified)");
+  } else if (rc == RADIOLIB_ERR_CHIP_NOT_FOUND) {
+    ESP_LOGE(TAG, "RadioLib: CC1101 chip not found! Check SPI wiring. rc=%d", rc);
+    this->mark_failed();
+    return;
+  } else {
+    ESP_LOGW(TAG, "RadioLib begin() returned rc=%d, continuing with custom init", rc);
+  }
 
   this->gdo0_pin_->setup();
   this->gdo0_pin_->attach_interrupt(Elero::interrupt, this, gpio::INTERRUPT_FALLING_EDGE);
@@ -618,7 +625,14 @@ void Elero::write_reg(uint8_t addr, uint8_t data) {
 }
 
 void Elero::write_burst(uint8_t addr, uint8_t *data, uint8_t len) {
-  this->radio_module_->SPIwriteRegisterBurst(addr, data, len);
+  // TXFIFO and PATABLE burst writes are in the TX-critical path.
+  // Use direct SPI with explicit burst flag for proven reliability.
+  this->enable();
+  this->transfer_byte(addr | CC1101_WRITE_BURST);
+  for (int i = 0; i < len; i++)
+    this->transfer_byte(data[i]);
+  this->disable();
+  delay_microseconds_safe(15);
 }
 
 void Elero::write_cmd(uint8_t cmd) {
