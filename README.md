@@ -109,6 +109,8 @@ esphome:
 
 esp32:
   board: esp32dev
+  variant: esp32
+  minimum_chip_revision: 3.1
 
 # WLAN-Konfiguration
 wifi:
