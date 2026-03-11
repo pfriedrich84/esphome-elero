@@ -146,13 +146,13 @@ void EleroCover::handle_commands(uint32_t now) {
   // Don't attempt TX while the radio is busy — try again next loop()
   if (!this->parent_->is_tx_idle()) return;
 
-  if((now - this->last_command_) > ELERO_DELAY_SEND_PACKETS) {
+  if((now - this->last_command_) > this->parent_->get_send_delay()) {
     if(this->commands_to_send_.size() > 0) {
       this->command_.payload[4] = this->commands_to_send_.front();
       if(this->parent_->send_command(&this->command_)) {
         this->send_packets_++;
         this->send_retries_ = 0;
-        if(this->send_packets_ >= ELERO_SEND_PACKETS) {
+        if(this->send_packets_ >= this->parent_->get_send_repeats()) {
           this->commands_to_send_.pop();
           this->send_packets_ = 0;
           this->increase_counter();
