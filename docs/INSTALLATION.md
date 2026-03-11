@@ -108,6 +108,8 @@ esphome:
 
 esp32:
   board: esp32dev
+  variant: esp32
+  minimum_chip_revision: 3.1
 
 wifi:
   ssid: "DEIN_WLAN_NAME"
@@ -308,6 +310,8 @@ esphome:
 
 esp32:
   board: esp32dev
+  variant: esp32
+  minimum_chip_revision: 3.1
 
 wifi:
   ssid: !secret wifi_ssid
