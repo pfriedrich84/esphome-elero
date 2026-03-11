@@ -14,6 +14,8 @@ CONF_ELERO_ID = "elero_id"
 CONF_FREQ0 = "freq0"
 CONF_FREQ1 = "freq1"
 CONF_FREQ2 = "freq2"
+CONF_SEND_REPEATS = "send_repeats"
+CONF_SEND_DELAY = "send_delay"
 
 CONFIG_SCHEMA = (
     cv.Schema(
@@ -23,6 +25,8 @@ CONFIG_SCHEMA = (
             cv.Optional(CONF_FREQ0, default=0x7a): cv.hex_int_range(min=0x0, max=0xff),
             cv.Optional(CONF_FREQ1, default=0x71): cv.hex_int_range(min=0x0, max=0xff),
             cv.Optional(CONF_FREQ2, default=0x21): cv.hex_int_range(min=0x0, max=0xff),
+            cv.Optional(CONF_SEND_REPEATS, default=5): cv.int_range(min=1, max=20),
+            cv.Optional(CONF_SEND_DELAY, default="1ms"): cv.positive_time_period_milliseconds,
         }
     )
     .extend(cv.COMPONENT_SCHEMA)
@@ -40,6 +44,8 @@ async def to_code(config):
     cg.add(var.set_freq0(config[CONF_FREQ0]))
     cg.add(var.set_freq1(config[CONF_FREQ1]))
     cg.add(var.set_freq2(config[CONF_FREQ2]))
+    cg.add(var.set_send_repeats(config[CONF_SEND_REPEATS]))
+    cg.add(var.set_send_delay(config[CONF_SEND_DELAY].total_milliseconds))
 
     # Reserve a log listener slot so add_log_listener() works at runtime.
     # Required for ESPHome 2026.1.0+ (StaticVector migration).

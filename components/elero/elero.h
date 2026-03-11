@@ -74,12 +74,12 @@ static const uint8_t ELERO_STATE_ON = 0x10;
 static const uint8_t ELERO_MAX_PACKET_SIZE = 57; // according to FCC documents
 
 static const uint32_t ELERO_POLL_INTERVAL_MOVING = 2000;  // poll every two seconds while moving
-static const uint32_t ELERO_DELAY_SEND_PACKETS = 50; // 50ms send delay between repeats
+static const uint32_t ELERO_DEFAULT_SEND_DELAY = 1; // 1ms default send delay between repeats
 static const uint32_t ELERO_TIMEOUT_MOVEMENT = 120000; // poll for up to two minutes while moving
 static const uint32_t ELERO_POST_MOVEMENT_POLL_DELAY = 5000; // poll 5s after open/close duration elapses
 
 static const uint8_t ELERO_SEND_RETRIES = 3;
-static const uint8_t ELERO_SEND_PACKETS = 2;
+static const uint8_t ELERO_DEFAULT_SEND_REPEATS = 5;
 static const uint8_t ELERO_MAX_COMMAND_QUEUE = 10; // max commands per blind to prevent OOM
 
 // Auto-stop reliability: repeat stop commands, compensate for TX latency, verify motor stopped
@@ -165,6 +165,7 @@ struct RuntimeBlind {
   uint8_t last_state{ELERO_STATE_UNKNOWN};
   uint8_t cmd_counter{1};
   std::queue<uint8_t> command_queue;
+  uint8_t send_packets_count{0};
 };
 
 const char *elero_state_to_string(uint8_t state);
@@ -331,6 +332,10 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void set_freq0(uint8_t freq) { freq0_ = freq; }
   void set_freq1(uint8_t freq) { freq1_ = freq; }
   void set_freq2(uint8_t freq) { freq2_ = freq; }
+  void set_send_repeats(uint8_t repeats) { send_repeats_ = repeats; }
+  void set_send_delay(uint32_t delay_ms) { send_delay_ = delay_ms; }
+  uint8_t get_send_repeats() const { return send_repeats_; }
+  uint32_t get_send_delay() const { return send_delay_; }
   void reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0);
   uint8_t get_freq0() const { return freq0_; }
   uint8_t get_freq1() const { return freq1_; }
@@ -383,6 +388,8 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   uint8_t freq0_{0x7a};
   uint8_t freq1_{0x71};
   uint8_t freq2_{0x21};
+  uint8_t send_repeats_{ELERO_DEFAULT_SEND_REPEATS};
+  uint32_t send_delay_{ELERO_DEFAULT_SEND_DELAY};
   InternalGPIOPin *gdo0_pin_{nullptr};
   std::map<uint32_t, EleroBlindBase*> address_to_cover_mapping_;
   std::map<uint32_t, EleroLightBase*> address_to_light_mapping_;

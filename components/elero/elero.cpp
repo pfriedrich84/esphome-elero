@@ -381,9 +381,13 @@ void Elero::drain_runtime_queues() {
       cmd.payload[1] = rb.payload_2;
       cmd.payload[4] = cmd_byte;
       if (this->send_command(&cmd)) {
-        rb.command_queue.pop();
-        rb.cmd_counter++;
-        if (rb.cmd_counter > 255) rb.cmd_counter = 1;
+        rb.send_packets_count++;
+        if (rb.send_packets_count >= this->send_repeats_) {
+          rb.command_queue.pop();
+          rb.send_packets_count = 0;
+          rb.cmd_counter++;
+          if (rb.cmd_counter > 255) rb.cmd_counter = 1;
+        }
       }
       break;  // Only one TX per loop iteration
     }
@@ -405,6 +409,7 @@ void Elero::dump_config() {
   ESP_LOGCONFIG(TAG, "Elero CC1101:");
   LOG_PIN("  GDO0 Pin: ", this->gdo0_pin_);
   ESP_LOGCONFIG(TAG, "  freq2: 0x%02x, freq1: 0x%02x, freq0: 0x%02x", this->freq2_, this->freq1_, this->freq0_);
+  ESP_LOGCONFIG(TAG, "  Send repeats: %d, send delay: %d ms", this->send_repeats_, this->send_delay_);
   ESP_LOGCONFIG(TAG, "  Registered covers: %d", this->address_to_cover_mapping_.size());
 }
 
