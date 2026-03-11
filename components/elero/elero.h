@@ -283,6 +283,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
                                     spi::CLOCK_PHASE_LEADING, spi::DATA_RATE_2MHZ>,
                                     public Component {
  public:
+  ~Elero() override;
   void setup() override;
   void loop() override;
 

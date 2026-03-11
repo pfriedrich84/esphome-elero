@@ -168,6 +168,13 @@ const char *elero_state_to_string(uint8_t state) {
   }
 }
 
+Elero::~Elero() {
+  delete this->radio_;
+  this->radio_ = nullptr;
+  delete this->radio_module_;
+  this->radio_module_ = nullptr;
+}
+
 void Elero::loop() {
   // 1. ALWAYS process pending RX packets first (highest priority).
   //    Only safe when not mid-TX — during active TX states, gdo0_fired_
@@ -675,7 +682,12 @@ bool Elero::wait_idle() {
 // use send_command() which kicks off the state machine instead.
 
 uint8_t Elero::read_reg(uint8_t addr) {
-  return (uint8_t) this->radio_module_->SPIgetRegValue(addr);
+  int16_t val = this->radio_module_->SPIgetRegValue(addr);
+  if (val < 0) {
+    ESP_LOGW(TAG, "SPI read failed: reg=0x%02x rc=%d", addr, val);
+    return 0;
+  }
+  return (uint8_t) val;
 }
 
 uint8_t Elero::read_status(uint8_t addr) {
