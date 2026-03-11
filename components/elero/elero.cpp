@@ -58,7 +58,7 @@ static const uint8_t flash_table_decode[] = {0x0a, 0x03, 0x01, 0x0c, 0x0d, 0x07,
 // EspHomeRadioLibHal — bridges ESPHome's SPIDevice to RadioLib's HAL
 // ---------------------------------------------------------------------------
 EspHomeRadioLibHal::EspHomeRadioLibHal()
-    : RadioLibHal(INPUT, OUTPUT, LOW, HIGH, RISING, FALLING) {}
+    : RadioLibHal(0x01 /*INPUT*/, 0x02 /*OUTPUT*/, 0 /*LOW*/, 1 /*HIGH*/, 1 /*RISING*/, 2 /*FALLING*/) {}
 
 void EspHomeRadioLibHal::pinMode(uint32_t pin, uint32_t mode) {
   // GPIO is managed by ESPHome — no-op
@@ -67,7 +67,7 @@ void EspHomeRadioLibHal::digitalWrite(uint32_t pin, uint32_t value) {
   // CS is managed by ESPHome's SPIDevice enable/disable — no-op
 }
 uint32_t EspHomeRadioLibHal::digitalRead(uint32_t pin) {
-  return LOW;  // Not used in register-only mode
+  return 0;  // Not used in register-only mode
 }
 void EspHomeRadioLibHal::attachInterrupt(uint32_t interruptNum, void (*interruptCb)(void), uint32_t mode) {
   // Interrupts are managed by Elero::setup() directly — no-op
@@ -76,16 +76,16 @@ void EspHomeRadioLibHal::detachInterrupt(uint32_t interruptNum) {
   // No-op
 }
 void EspHomeRadioLibHal::delay(RadioLibTime_t ms) {
-  ::delay(ms);
+  esphome::delay(ms);
 }
 void EspHomeRadioLibHal::delayMicroseconds(RadioLibTime_t us) {
   delay_microseconds_safe(us);
 }
 RadioLibTime_t EspHomeRadioLibHal::millis() {
-  return ::millis();
+  return esphome::millis();
 }
 RadioLibTime_t EspHomeRadioLibHal::micros() {
-  return ::micros();
+  return esphome::micros();
 }
 long EspHomeRadioLibHal::pulseIn(uint32_t pin, uint32_t state, RadioLibTime_t timeout) {
   return 0;  // Not used
