@@ -465,6 +465,10 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   uint32_t tx_count_{0};
   uint32_t watchdog_recovery_count_{0};
 
+  // RX overflow recovery: rate-limit flush attempts and escalate to full reinit
+  uint32_t last_rx_overflow_ms_{0};
+  uint8_t rx_overflow_count_{0};
+
   // Log buffer (protected by log_mutex_ — logger callback runs in a different context)
   uint32_t last_radio_check_ms_{0};
   bool log_capture_{false};
