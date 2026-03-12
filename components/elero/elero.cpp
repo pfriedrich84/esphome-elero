@@ -176,6 +176,10 @@ Elero::~Elero() {
 }
 
 void Elero::loop() {
+  // Skip all processing if SPI is permanently broken (e.g. strapping pin issue).
+  if (this->spi_failed_)
+    return;
+
   // 1. ALWAYS process pending RX packets first (highest priority).
   //    Only safe when not mid-TX — process_rx() ignores stale rx_ready_
   //    flags by only running when TX is idle or in cooldown.
@@ -370,8 +374,10 @@ void Elero::check_radio_state_() {
   uint8_t marc = this->read_status(CC1101_MARCSTATE) & 0x1F;
 
   // RX is the expected state when tx_state_ is IDLE
-  if (marc == CC1101_MARCSTATE_RX)
+  if (marc == CC1101_MARCSTATE_RX) {
+    this->consecutive_watchdog_failures_ = 0;
     return;
+  }
 
   // Transient calibration / synthesizer states — let them complete
   if (marc >= CC1101_MARCSTATE_VCOON_MC && marc <= CC1101_MARCSTATE_ENDCAL)
@@ -399,6 +405,7 @@ void Elero::check_radio_state_() {
   if (marc == CC1101_MARCSTATE_IDLE) {
     ESP_LOGW(TAG, "Radio watchdog: stuck in IDLE, restarting RX");
     this->watchdog_recovery_count_++;
+    this->consecutive_watchdog_failures_ = 0;  // IDLE is a valid CC1101 state, not SPI failure
     this->write_cmd(CC1101_SRX);
     return;
   }
@@ -409,6 +416,21 @@ void Elero::check_radio_state_() {
   // SRES followed by full register configuration is needed.
   ESP_LOGW(TAG, "Radio watchdog: unexpected state 0x%02x, full reinit", marc);
   this->watchdog_recovery_count_++;
+  this->consecutive_watchdog_failures_++;
+
+  // If the watchdog has failed 3+ times in a row without recovery, SPI is
+  // likely permanently broken (e.g. GPIO12 strapping pin issue).  Stop
+  // retrying to avoid flooding the log.
+  if (this->consecutive_watchdog_failures_ >= 3) {
+    ESP_LOGE(TAG, "Radio watchdog: %d consecutive failures — SPI appears permanently broken.",
+             this->consecutive_watchdog_failures_);
+    ESP_LOGE(TAG, "  If GPIO12 is used for SPI MISO, it may be pulling VDD_SDIO to 1.8V at boot.");
+    ESP_LOGE(TAG, "  Use non-strapping pins for SPI (e.g. CLK=18, MISO=19, MOSI=23).");
+    this->spi_failed_ = true;
+    this->mark_failed();
+    return;
+  }
+
   this->reset();
   this->init();
 }
@@ -536,6 +558,10 @@ void Elero::dump_config() {
   ESP_LOGCONFIG(TAG, "  freq2: 0x%02x, freq1: 0x%02x, freq0: 0x%02x", this->freq2_, this->freq1_, this->freq0_);
   ESP_LOGCONFIG(TAG, "  Send repeats: %d, send delay: %d ms", this->send_repeats_, this->send_delay_);
   ESP_LOGCONFIG(TAG, "  RadioLib: standby() + SPI register access with verify-readback");
+  if (this->spi_failed_) {
+    ESP_LOGCONFIG(TAG, "  SPI Status: FAILED — CC1101 communication broken");
+    ESP_LOGCONFIG(TAG, "  Check SPI pin assignments — avoid ESP32 strapping pins (GPIO0/2/5/12/15)");
+  }
   ESP_LOGCONFIG(TAG, "  Registered covers: %d", this->address_to_cover_mapping_.size());
 }
 
@@ -569,6 +595,25 @@ void Elero::setup() {
   this->gdo0_pin_->attach_interrupt(Elero::interrupt, this, gpio::INTERRUPT_FALLING_EDGE);
   this->reset();
   this->init();
+
+  // SPI health check: verify that register writes actually stick by reading
+  // back a known config register.  If SPI is completely broken (e.g. due to
+  // GPIO12 strapping pin pulling VDD_SDIO to 1.8V), every read returns 0x00
+  // or 0xFF and the radio can never initialize.
+  uint8_t test_val = this->read_reg(CC1101_FREQ2);
+  if (test_val != this->freq2_) {
+    ESP_LOGE(TAG, "SPI health check FAILED: wrote 0x%02x to FREQ2, read back 0x%02x",
+             this->freq2_, test_val);
+    ESP_LOGE(TAG, "CC1101 SPI communication is broken — the radio is non-functional.");
+    ESP_LOGE(TAG, "Common cause: GPIO12 is an ESP32 strapping pin that controls flash voltage.");
+    ESP_LOGE(TAG, "  If GPIO12 is used as SPI MISO, the CC1101 can pull it HIGH at boot,");
+    ESP_LOGE(TAG, "  setting VDD_SDIO to 1.8V and breaking all SPI communication.");
+    ESP_LOGE(TAG, "  Solution: use non-strapping pins for SPI (e.g. CLK=18, MISO=19, MOSI=23).");
+    ESP_LOGE(TAG, "  ESP32 strapping pins to avoid: GPIO0, GPIO2, GPIO5, GPIO12, GPIO15.");
+    this->spi_failed_ = true;
+    this->mark_failed();
+    return;
+  }
 
 #ifdef USE_LOGGER
   // Forward all ESP_LOG messages into the ring buffer so the web UI Log tab
@@ -1301,7 +1346,9 @@ void Elero::track_discovered_blind(uint32_t src, uint32_t remote, uint8_t channe
 }
 
 bool Elero::send_command(t_elero_command *cmd) {
-  // Reject if a TX is already in progress — caller should retry next loop.
+  // Reject if SPI is permanently broken or TX is already in progress.
+  if (this->spi_failed_)
+    return false;
   if (this->tx_state_.load(std::memory_order_acquire) != TxState::IDLE)
     return false;
 
