@@ -54,6 +54,70 @@ static const char *TAG = "elero";
 static const uint8_t flash_table_encode[] = {0x08, 0x02, 0x0d, 0x01, 0x0f, 0x0e, 0x07, 0x05, 0x09, 0x0c, 0x00, 0x0a, 0x03, 0x04, 0x0b, 0x06};
 static const uint8_t flash_table_decode[] = {0x0a, 0x03, 0x01, 0x0c, 0x0d, 0x07, 0x0f, 0x06, 0x00, 0x08, 0x0b, 0x0e, 0x09, 0x02, 0x05, 0x04};
 
+// ---------------------------------------------------------------------------
+// EspHomeRadioLibHal — bridges ESPHome's SPIDevice to RadioLib's HAL
+// ---------------------------------------------------------------------------
+EspHomeRadioLibHal::EspHomeRadioLibHal()
+    : RadioLibHal(0x01 /*INPUT*/, 0x02 /*OUTPUT*/, 0 /*LOW*/, 1 /*HIGH*/, 1 /*RISING*/, 2 /*FALLING*/) {}
+
+void EspHomeRadioLibHal::pinMode(uint32_t pin, uint32_t mode) {
+  // GPIO is managed by ESPHome — no-op
+}
+void EspHomeRadioLibHal::digitalWrite(uint32_t pin, uint32_t value) {
+  // CS is managed by ESPHome's SPIDevice enable/disable — no-op
+}
+uint32_t EspHomeRadioLibHal::digitalRead(uint32_t pin) {
+  return 0;  // Not used in register-only mode
+}
+void EspHomeRadioLibHal::attachInterrupt(uint32_t interruptNum, void (*interruptCb)(void), uint32_t mode) {
+  // Interrupts are managed by Elero::setup() directly — no-op
+}
+void EspHomeRadioLibHal::detachInterrupt(uint32_t interruptNum) {
+  // No-op
+}
+void EspHomeRadioLibHal::delay(RadioLibTime_t ms) {
+  esphome::delay(ms);
+}
+void EspHomeRadioLibHal::delayMicroseconds(RadioLibTime_t us) {
+  delay_microseconds_safe(us);
+}
+RadioLibTime_t EspHomeRadioLibHal::millis() {
+  return esphome::millis();
+}
+RadioLibTime_t EspHomeRadioLibHal::micros() {
+  return esphome::micros();
+}
+long EspHomeRadioLibHal::pulseIn(uint32_t pin, uint32_t state, RadioLibTime_t timeout) {
+  return 0;  // Not used
+}
+void EspHomeRadioLibHal::spiBegin() {
+  // SPI bus is initialized by ESPHome's SPI component — no-op
+}
+void EspHomeRadioLibHal::spiBeginTransaction() {
+  if (this->spi_parent_ != nullptr) {
+    static_cast<Elero *>(this->spi_parent_)->enable();
+  }
+}
+void EspHomeRadioLibHal::spiTransfer(uint8_t *out, size_t len, uint8_t *in) {
+  if (this->spi_parent_ == nullptr)
+    return;
+  auto *parent = static_cast<Elero *>(this->spi_parent_);
+  for (size_t i = 0; i < len; i++) {
+    uint8_t tx = (out != nullptr) ? out[i] : 0x00;
+    uint8_t rx = parent->transfer_byte(tx);
+    if (in != nullptr)
+      in[i] = rx;
+  }
+}
+void EspHomeRadioLibHal::spiEndTransaction() {
+  if (this->spi_parent_ != nullptr) {
+    static_cast<Elero *>(this->spi_parent_)->disable();
+  }
+}
+void EspHomeRadioLibHal::spiEnd() {
+  // SPI bus lifecycle is managed by ESPHome — no-op
+}
+
 static const char *marcstate_to_string(uint8_t marc) {
   switch (marc) {
     case CC1101_MARCSTATE_SLEEP: return "SLEEP";
@@ -104,10 +168,17 @@ const char *elero_state_to_string(uint8_t state) {
   }
 }
 
+Elero::~Elero() {
+  delete this->radio_;
+  this->radio_ = nullptr;
+  delete this->radio_module_;
+  this->radio_module_ = nullptr;
+}
+
 void Elero::loop() {
   // 1. ALWAYS process pending RX packets first (highest priority).
-  //    Only safe when not mid-TX — during active TX states, gdo0_fired_
-  //    belongs to the TX completion path.
+  //    Only safe when not mid-TX — process_rx() ignores stale rx_ready_
+  //    flags by only running when TX is idle or in cooldown.
   TxState cur_tx = this->tx_state_.load(std::memory_order_acquire);
   if (cur_tx == TxState::IDLE || cur_tx == TxState::COOLDOWN) {
     this->process_rx();
@@ -193,94 +264,29 @@ void Elero::advance_tx() {
 
   switch (this->tx_state_) {
 
-    case TxState::GOING_IDLE: {
-      uint8_t marc = this->read_status(CC1101_MARCSTATE) & 0x1F;
-      if (marc == CC1101_MARCSTATE_IDLE) {
-        // Flush both FIFOs: TX for a clean slate, RX to discard any
-        // partial packet data left over from the reception that SIDLE
-        // interrupted.  Both flushes are valid in IDLE state per CC1101 spec.
-        this->write_cmd(CC1101_SFTX);
-        this->write_cmd(CC1101_SFRX);
-        this->rx_ready_.store(false, std::memory_order_release);  // invalidate stale RX flag
-        delay_microseconds_safe(100);
-        this->write_burst(CC1101_TXFIFO, this->msg_tx_, this->msg_tx_[0] + 1);
-        this->gdo0_fired_.store(false, std::memory_order_release);  // clear before STX so we detect TX-done cleanly
-        this->write_cmd(CC1101_STX);
-        this->tx_state_.store(TxState::FIRING, std::memory_order_release);
-        this->tx_state_entered_ms_ = now;
-      } else if (elapsed > TX_STATE_TIMEOUT_MS) {
-        ESP_LOGW(TAG, "TX timeout in GOING_IDLE (marc=%s (0x%02x)), aborting", marcstate_to_string(marc), marc);
-        this->tx_abort_();
-      }
-      break;
-    }
-
-    case TxState::FIRING: {
-      uint8_t marc = this->read_status(CC1101_MARCSTATE) & 0x1F;
-      if (marc == CC1101_MARCSTATE_TX) {
-        this->tx_state_.store(TxState::TRANSMITTING, std::memory_order_release);
-        this->tx_state_entered_ms_ = now;
-        this->gdo0_miss_count_ = 0;
-      } else if (this->gdo0_fired_.load(std::memory_order_acquire)) {
-        // GDO0 falling edge means the TX packet has been fully sent.  The
-        // entire TX cycle (calibration + packet) completed before we could
-        // observe MARCSTATE=TX — the radio already auto-transitioned to RX
-        // (MCSM1 TXOFF_MODE=RX).  Skip straight to verification.
-        ESP_LOGD(TAG, "TX fast-path: GDO0 fired during FIRING (marc=%s (0x%02x), %lums)",
-                 marcstate_to_string(marc), marc, (unsigned long) elapsed);
-        this->tx_state_.store(TxState::VERIFYING, std::memory_order_release);
-        this->tx_state_entered_ms_ = now;
-        this->gdo0_miss_count_ = 0;
-      } else if (marc == CC1101_MARCSTATE_RX || marc == CC1101_MARCSTATE_TX_END) {
-        // The entire TX cycle completed before we could observe MARCSTATE=TX,
-        // and the GDO0 interrupt did not fire.  The radio already auto-
-        // transitioned to RX (MCSM1 TXOFF_MODE=RX).  Proceed to VERIFYING
-        // which confirms TXBYTES==0 for safety.
-        ESP_LOGD(TAG, "TX completed (no GDO0) during FIRING (marc=%s (0x%02x), %lums)",
-                 marcstate_to_string(marc), marc, (unsigned long) elapsed);
-        this->tx_state_.store(TxState::VERIFYING, std::memory_order_release);
-        this->tx_state_entered_ms_ = now;
-        if (++this->gdo0_miss_count_ == ELERO_GDO0_MISS_WARN_THRESHOLD) {
-          ESP_LOGW(TAG, "GDO0 interrupt not firing during TX — check GDO0 pin wiring/configuration");
-        }
-      } else if (marc == CC1101_MARCSTATE_TXFIFO_UFLOW) {
-        ESP_LOGE(TAG, "TX FIFO underflow in FIRING");
-        this->tx_abort_();
-      } else if (elapsed > TX_STATE_TIMEOUT_MS) {
-        ESP_LOGW(TAG, "TX timeout in FIRING (marc=%s (0x%02x)), aborting", marcstate_to_string(marc), marc);
-        this->tx_abort_();
-      }
-      break;
-    }
-
     case TxState::TRANSMITTING: {
       // TX completion: CC1101 auto-transitions to RX (MCSM1 TXOFF_MODE=0x3).
-      // Detect by checking if MARCSTATE has left TX.  Also accept the GDO0
-      // falling-edge interrupt as a fast-path indicator.
+      // Detect by polling MARCSTATE — when it leaves TX the packet is sent.
       uint8_t marc = this->read_status(CC1101_MARCSTATE) & 0x1F;
-      if (marc != CC1101_MARCSTATE_TX || this->gdo0_fired_.load(std::memory_order_acquire)) {
-        this->tx_state_.store(TxState::VERIFYING, std::memory_order_release);
-        this->tx_state_entered_ms_ = now;
-      } else if (elapsed > TX_STATE_TIMEOUT_MS) {
-        ESP_LOGW(TAG, "TX timeout in TRANSMITTING (marc=%s (0x%02x)), aborting", marcstate_to_string(marc), marc);
+      if (marc != CC1101_MARCSTATE_TX) {
+        // TX finished — verify FIFO is empty for safety
+        uint8_t bytes = this->read_status(CC1101_TXBYTES) & 0x7F;
+        if (bytes == 0) {
+          ESP_LOGD(TAG, "TX complete (marc=%s, %lums)",
+                   marcstate_to_string(marc), (unsigned long) elapsed);
+          this->tx_state_.store(TxState::COOLDOWN, std::memory_order_release);
+          this->tx_state_entered_ms_ = now;
+          this->last_tx_complete_ms_ = now;
+        } else {
+          ESP_LOGE(TAG, "TX verify failed: %d bytes left in TX FIFO", bytes);
+          this->tx_abort_();
+        }
+      } else if (marc == CC1101_MARCSTATE_TXFIFO_UFLOW) {
+        ESP_LOGE(TAG, "TX FIFO underflow");
         this->tx_abort_();
-      }
-      break;
-    }
-
-    case TxState::VERIFYING: {
-      uint8_t bytes = this->read_status(CC1101_TXBYTES) & 0x7F;
-      if (bytes == 0) {
-        // Success.  The CC1101 has already auto-transitioned to RX
-        // (MCSM1 TXOFF_MODE=RX).  Do NOT issue SFTX here — the radio is
-        // in RX mode, and the CC1101 spec says SFTX is only valid in IDLE
-        // or TXFIFO_UNDERFLOW.  The TX FIFO is confirmed empty anyway.
-        ESP_LOGD(TAG, "TX verified: packet sent successfully");
-        this->tx_state_.store(TxState::COOLDOWN, std::memory_order_release);
-        this->tx_state_entered_ms_ = now;
-        this->last_tx_complete_ms_ = now;
-      } else {
-        ESP_LOGE(TAG, "TX verify failed: %d bytes left in TX FIFO", bytes);
+      } else if (elapsed > TX_STATE_TIMEOUT_MS) {
+        ESP_LOGW(TAG, "TX timeout in TRANSMITTING (marc=%s (0x%02x)), aborting",
+                 marcstate_to_string(marc), marc);
         this->tx_abort_();
       }
       break;
@@ -291,8 +297,9 @@ void Elero::advance_tx() {
       if (elapsed >= TX_COOLDOWN_MS) {
         this->tx_state_.store(TxState::IDLE, std::memory_order_release);
         // Check for RX FIFO issues that may have occurred during the TX cycle.
-        // During TX, the ISR doesn't set rx_ready_, so overflow or pending
-        // data would go unnoticed without this explicit check.
+        // The ISR still sets rx_ready_ during TX, but process_rx() only runs
+        // when IDLE, so overflow or pending data could go unnoticed without
+        // this explicit check.
         uint8_t rxbytes = this->read_status(CC1101_RXBYTES);
         if (rxbytes & 0x80) {
           ESP_LOGW(TAG, "RX FIFO overflow detected after TX, flushing");
@@ -395,14 +402,10 @@ void Elero::drain_runtime_queues() {
 }
 
 void IRAM_ATTR Elero::interrupt(Elero *arg) {
-  arg->gdo0_fired_.store(true, std::memory_order_release);
-  // GDO0 (IOCFG0=0x06) fires for both TX-done and RX-ready.
-  // Only flag rx_ready_ when the radio is actually in receive mode,
-  // so the TX state machine can use gdo0_fired_ without confusion.
-  TxState state = arg->tx_state_.load(std::memory_order_acquire);
-  if (state == TxState::IDLE || state == TxState::COOLDOWN) {
-    arg->rx_ready_.store(true, std::memory_order_release);
-  }
+  // GDO0 (IOCFG0=0x06) fires on sync-word/end-of-packet.  We always set
+  // rx_ready_ — stale flags during TX are harmlessly ignored because
+  // process_rx() only runs when tx_state_ == IDLE.
+  arg->rx_ready_.store(true, std::memory_order_release);
 }
 
 void Elero::dump_config() {
@@ -410,12 +413,36 @@ void Elero::dump_config() {
   LOG_PIN("  GDO0 Pin: ", this->gdo0_pin_);
   ESP_LOGCONFIG(TAG, "  freq2: 0x%02x, freq1: 0x%02x, freq0: 0x%02x", this->freq2_, this->freq1_, this->freq0_);
   ESP_LOGCONFIG(TAG, "  Send repeats: %d, send delay: %d ms", this->send_repeats_, this->send_delay_);
+  ESP_LOGCONFIG(TAG, "  RadioLib: standby() + SPI register access with verify-readback");
   ESP_LOGCONFIG(TAG, "  Registered covers: %d", this->address_to_cover_mapping_.size());
 }
 
 void Elero::setup() {
   ESP_LOGI(TAG, "Setting up Elero Component...");
   this->spi_setup();
+
+  // Initialize RadioLib HAL adapter — bridge ESPHome SPI to RadioLib Module.
+  // We use RADIOLIB_NC for all pins because GPIO/interrupt management stays
+  // with ESPHome.  RadioLib is only used for SPI register access with
+  // built-in verify-readback error handling.
+  this->radio_hal_.set_spi_parent(this);
+  this->radio_module_ = new Module(&this->radio_hal_, RADIOLIB_NC, RADIOLIB_NC, RADIOLIB_NC);
+  this->radio_ = new CC1101(this->radio_module_);
+
+  // begin() initializes spiConfig, Module::init(), resets CC1101, and verifies
+  // the chip version (10 retries).  Parameters don't matter — our init()
+  // overwrites all registers with Elero-specific values afterwards.
+  int16_t rc = this->radio_->begin(868.35, 47.607, 38.383, 101.5625, 10, 32);
+  if (rc == RADIOLIB_ERR_NONE) {
+    ESP_LOGI(TAG, "RadioLib CC1101 initialized (chip version verified)");
+  } else if (rc == RADIOLIB_ERR_CHIP_NOT_FOUND) {
+    ESP_LOGE(TAG, "RadioLib: CC1101 chip not found! Check SPI wiring. rc=%d", rc);
+    this->mark_failed();
+    return;
+  } else {
+    ESP_LOGW(TAG, "RadioLib begin() returned rc=%d, continuing with custom init", rc);
+  }
+
   this->gdo0_pin_->setup();
   this->gdo0_pin_->attach_interrupt(Elero::interrupt, this, gpio::INTERRUPT_FALLING_EDGE);
   this->reset();
@@ -432,7 +459,6 @@ void Elero::setup() {
 
 void Elero::reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
   this->rx_ready_.store(false, std::memory_order_release);
-  this->gdo0_fired_.store(false, std::memory_order_release);
   this->tx_state_.store(TxState::IDLE, std::memory_order_release);
   this->freq2_ = freq2;
   this->freq1_ = freq1;
@@ -444,36 +470,27 @@ void Elero::reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
 
 void Elero::flush_and_rx() {
   ESP_LOGVV(TAG, "flush_and_rx");
-  this->write_cmd(CC1101_SIDLE);
-  if (!this->wait_idle()) {
-    ESP_LOGW(TAG, "flush_and_rx: timed out waiting for IDLE");
-  }
+  this->radio_->standby();  // blocks until IDLE (~1ms)
   this->write_cmd(CC1101_SFRX);
   this->write_cmd(CC1101_SFTX);
   this->write_cmd(CC1101_SRX);
   this->rx_ready_.store(false, std::memory_order_release);
-  this->gdo0_fired_.store(false, std::memory_order_release);
 }
 
 void Elero::flush_rx() {
   ESP_LOGVV(TAG, "flush_rx");
-  this->write_cmd(CC1101_SIDLE);
-  if (!this->wait_idle()) {
-    ESP_LOGW(TAG, "flush_rx: timed out waiting for IDLE");
-  }
+  this->radio_->standby();  // blocks until IDLE (~1ms)
   this->write_cmd(CC1101_SFRX);
   this->write_cmd(CC1101_SRX);
   this->rx_ready_.store(false, std::memory_order_release);
 }
 
 void Elero::reset() {
-  // We don't do a hardware reset as we can't read
-  // the MISO pin directly. Rely on software-reset only.
-
+  // Software reset via command strobes — direct SPI for timing control.
   this->enable();
-  this->write_byte(CC1101_SRES);
+  this->transfer_byte(CC1101_SRES);
   delay_microseconds_safe(50);
-  this->write_byte(CC1101_SIDLE);
+  this->transfer_byte(CC1101_SIDLE);
   delay_microseconds_safe(50);
   this->disable();
 }
@@ -526,30 +543,36 @@ void Elero::init() {
 }
 
 void Elero::write_reg(uint8_t addr, uint8_t data) {
-  this->enable();
-  this->write_byte(addr);
-  this->write_byte(data);
-  this->disable();
-  delay_microseconds_safe(15);
-  // TODO: Add error handling - verify SPI transaction success, handle timeout/CRC errors
+  // RadioLib SPIsetRegValue does verify-readback for config registers (0x00-0x2E).
+  // Status registers and FIFOs are write-only — use raw write for those.
+  if (addr <= CC1101_TEST0) {
+    int16_t rc = this->radio_module_->SPIsetRegValue(addr, data);
+    if (rc != RADIOLIB_ERR_NONE) {
+      ESP_LOGW(TAG, "SPI write verify failed: reg=0x%02x val=0x%02x rc=%d", addr, data, rc);
+    }
+  } else {
+    this->radio_module_->SPIwriteRegister(addr, data);
+  }
 }
 
 void Elero::write_burst(uint8_t addr, uint8_t *data, uint8_t len) {
+  // TXFIFO and PATABLE burst writes are in the TX-critical path.
+  // Use direct SPI with explicit burst flag for proven reliability.
   this->enable();
-  this->write_byte(addr | CC1101_WRITE_BURST);
-  for(int i=0; i<len; i++)
-    this->write_byte(data[i]);
+  this->transfer_byte(addr | CC1101_WRITE_BURST);
+  for (int i = 0; i < len; i++)
+    this->transfer_byte(data[i]);
   this->disable();
   delay_microseconds_safe(15);
-  // TODO: Add error handling - verify all bytes written, handle partial writes
 }
 
 void Elero::write_cmd(uint8_t cmd) {
+  // Command strobes are single-byte SPI transactions — use direct SPI
+  // since RadioLib's SPIsendCommand is on the CC1101 class, not Module.
   this->enable();
-  this->write_byte(cmd);
+  this->transfer_byte(cmd);
   this->disable();
   delay_microseconds_safe(15);
-  // TODO: Add error handling - verify command accepted by CC1101
 }
 
 bool Elero::wait_rx() {
@@ -565,51 +588,38 @@ bool Elero::wait_rx() {
   return false;
 }
 
-bool Elero::wait_idle() {
-  ESP_LOGVV(TAG, "wait_idle");
-  uint8_t timeout = 200;
-  while ((this->read_status(CC1101_MARCSTATE) != CC1101_MARCSTATE_IDLE) && (--timeout != 0)) {
-    delay_microseconds_safe(200);
-  }
-
-  if(timeout > 0)
-    return true;
-  ESP_LOGE(TAG, "Timed out waiting for Idle: 0x%02x", this->read_status(CC1101_MARCSTATE));
-  return false;
-}
-
 // wait_tx() and wait_tx_done() have been replaced by the non-blocking
 // advance_tx() state machine.  transmit() is no longer needed — callers
 // use send_command() which kicks off the state machine instead.
 
 uint8_t Elero::read_reg(uint8_t addr) {
-  uint8_t data;
-
-  this->enable();
-  this->write_byte(addr | CC1101_READ_SINGLE);
-  data = this->read_byte();
-  this->disable();
-  delay_microseconds_safe(15);
-  // TODO: Add error handling - validate returned data, detect SPI communication failures
-  return data;
+  int16_t val = this->radio_module_->SPIgetRegValue(addr);
+  if (val < 0) {
+    ESP_LOGW(TAG, "SPI read failed: reg=0x%02x rc=%d", addr, val);
+    return 0;
+  }
+  return (uint8_t) val;
 }
 
 uint8_t Elero::read_status(uint8_t addr) {
-  uint8_t data;
-
+  // CC1101 status registers require the READ_BURST flag (0xC0) to distinguish
+  // them from command strobes at the same addresses (0x30-0x3D).
+  // Use direct SPI for exact control in the TX state machine critical path.
   this->enable();
-  this->write_byte(addr | CC1101_READ_BURST);
-  data = this->read_byte();
+  this->transfer_byte(addr | CC1101_READ_BURST);
+  uint8_t data = this->transfer_byte(0x00);
   this->disable();
   delay_microseconds_safe(15);
   return data;
 }
 
 void Elero::read_buf(uint8_t addr, uint8_t *buf, uint8_t len) {
+  // FIFO reads (0x3F) use burst mode for multi-byte access.
+  // Direct SPI for exact control in the RX processing critical path.
   this->enable();
-  this->write_byte(addr | CC1101_READ_BURST);
-  for(uint8_t i=0; i<len; i++)
-    buf[i] = this->read_byte();
+  this->transfer_byte(addr | CC1101_READ_BURST);
+  for (uint8_t i = 0; i < len; i++)
+    buf[i] = this->transfer_byte(0x00);
   this->disable();
   delay_microseconds_safe(15);
 }
@@ -1147,11 +1157,25 @@ bool Elero::send_command(t_elero_command *cmd) {
 
   ESP_LOGV(TAG, "send: len=%02d, cnt=%02d, typ=0x%02x, typ2=0x%02x, hop=0x%02x, syst=0x%02x, chl=%02d, src=0x%02x%02x%02x, bwd=0x%02x%02x%02x, fwd=0x%02x%02x%02x, #dst=%02d, dst=0x%02x%02x%02x, payload=[0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x]", this->msg_tx_[0], this->msg_tx_[1], this->msg_tx_[2], this->msg_tx_[3], this->msg_tx_[4], this->msg_tx_[5], this->msg_tx_[6], this->msg_tx_[7], this->msg_tx_[8], this->msg_tx_[9], this->msg_tx_[10], this->msg_tx_[11], this->msg_tx_[12], this->msg_tx_[13], this->msg_tx_[14], this->msg_tx_[15], this->msg_tx_[16], this->msg_tx_[17], this->msg_tx_[18], this->msg_tx_[19], this->msg_tx_[20], this->msg_tx_[21], this->msg_tx_[22], this->msg_tx_[23], this->msg_tx_[24], this->msg_tx_[25], this->msg_tx_[26], this->msg_tx_[27], this->msg_tx_[28], this->msg_tx_[29]);
 
-  // Kick off non-blocking TX state machine: go to IDLE first so STX is not
-  // subject to CCA (Elero motors actively transmit, causing CCA failures).
-  this->tx_state_.store(TxState::GOING_IDLE, std::memory_order_release);
+  // Synchronous TX initiation: RadioLib's standby() blocks until IDLE (~1ms),
+  // then we flush, load FIFO, and send STX.  Going to IDLE first so STX is
+  // not subject to CCA (Elero motors actively transmit, causing CCA failures).
+  this->radio_->standby();
+
+  // Flush both FIFOs (valid in IDLE state per CC1101 spec): TX for a clean
+  // slate, RX to discard any partial packet data from the reception that
+  // SIDLE interrupted.
+  this->write_cmd(CC1101_SFTX);
+  this->write_cmd(CC1101_SFRX);
+  this->rx_ready_.store(false, std::memory_order_release);
+
+  // Load TX FIFO and start transmission
+  delay_microseconds_safe(100);
+  this->write_burst(CC1101_TXFIFO, this->msg_tx_, this->msg_tx_[0] + 1);
+  this->write_cmd(CC1101_STX);
+
+  this->tx_state_.store(TxState::TRANSMITTING, std::memory_order_release);
   this->tx_state_entered_ms_ = millis();
-  this->write_cmd(CC1101_SIDLE);
   return true;
 }
 

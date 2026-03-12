@@ -47,6 +47,9 @@ async def to_code(config):
     cg.add(var.set_send_repeats(config[CONF_SEND_REPEATS]))
     cg.add(var.set_send_delay(config[CONF_SEND_DELAY].total_milliseconds))
 
+    # Add RadioLib as PlatformIO library dependency
+    cg.add_library("jgromes/RadioLib", "7.1.2")
+
     # Reserve a log listener slot so add_log_listener() works at runtime.
     # Required for ESPHome 2026.1.0+ (StaticVector migration).
     try:

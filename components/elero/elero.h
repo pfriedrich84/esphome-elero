@@ -4,6 +4,7 @@
 #include "esphome/core/preferences.h"
 #include "esphome/components/spi/spi.h"
 #include "cc1101.h"
+#include <RadioLib.h>
 #include <string>
 #include <vector>
 #include <map>
@@ -21,13 +22,12 @@ namespace elero {
 
 /// Non-blocking TX state machine states.
 /// The radio is always in RX when IDLE; TX progresses one step per loop().
+/// RadioLib's standby() handles the IDLE transition synchronously in
+/// send_command(), so only 3 states remain.
 enum class TxState : uint8_t {
   IDLE,           ///< Radio in RX, ready for TX
-  GOING_IDLE,     ///< Sent SIDLE strobe, waiting for MARCSTATE=IDLE
-  FIRING,         ///< STX sent, waiting for MARCSTATE=TX
-  TRANSMITTING,   ///< In TX, waiting for MARCSTATE to leave TX (packet sent)
-  VERIFYING,      ///< TX finished, verifying TXBYTES==0
-  COOLDOWN,       ///< Brief pause before accepting next TX
+  TRANSMITTING,   ///< Packet loaded and STX sent, waiting for TX to complete
+  COOLDOWN,       ///< Brief pause before resuming RX
 };
 
 }  // namespace elero
@@ -92,7 +92,6 @@ static const uint8_t ELERO_MAX_DISCOVERED = 20; // max discovered blinds to trac
 static const uint8_t ELERO_MAX_RAW_PACKETS = 50; // max raw packets in dump ring buffer
 
 // Diagnostics thresholds
-static const uint8_t  ELERO_GDO0_MISS_WARN_THRESHOLD = 10; // warn after N consecutive TX completions without GDO0
 static const uint8_t  ELERO_MAX_RX_PER_LOOP = 4;           // max packets drained per process_rx() call
 static const uint32_t ELERO_POLL_STAGGER_MS = 5000;         // stagger offset between cover poll timers
 
@@ -242,10 +241,47 @@ class EleroBlindBase {
                                       uint32_t poll_intvl_ms) = 0;
 };
 
+/// RadioLib HAL adapter that bridges ESPHome's SPIDevice to RadioLib's Module.
+/// GPIO and interrupt operations are forwarded to ESPHome primitives.
+/// SPI operations delegate to the parent Elero component's SPIDevice.
+class EspHomeRadioLibHal : public RadioLibHal {
+ public:
+  EspHomeRadioLibHal();
+
+  // GPIO
+  void pinMode(uint32_t pin, uint32_t mode) override;
+  void digitalWrite(uint32_t pin, uint32_t value) override;
+  uint32_t digitalRead(uint32_t pin) override;
+  void attachInterrupt(uint32_t interruptNum, void (*interruptCb)(void), uint32_t mode) override;
+  void detachInterrupt(uint32_t interruptNum) override;
+
+  // Timing
+  void delay(RadioLibTime_t ms) override;
+  void delayMicroseconds(RadioLibTime_t us) override;
+  RadioLibTime_t millis() override;
+  RadioLibTime_t micros() override;
+  long pulseIn(uint32_t pin, uint32_t state, RadioLibTime_t timeout) override;
+
+  // SPI — delegated to the parent Elero component's SPIDevice
+  void spiBegin() override;
+  void spiBeginTransaction() override;
+  void spiTransfer(uint8_t *out, size_t len, uint8_t *in) override;
+  void spiEndTransaction() override;
+  void spiEnd() override;
+
+  /// Set the parent component that owns the SPI bus.
+  /// Must be called before any SPI operations.
+  void set_spi_parent(void *parent) { spi_parent_ = parent; }
+
+ private:
+  void *spi_parent_{nullptr};
+};
+
 class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARITY_LOW,
                                     spi::CLOCK_PHASE_LEADING, spi::DATA_RATE_2MHZ>,
                                     public Component {
  public:
+  ~Elero() override;
   void setup() override;
   void loop() override;
 
@@ -349,7 +385,6 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void tx_abort_();
 
   bool wait_rx();
-  bool wait_idle();
 
   uint8_t count_bits(uint8_t byte);
   void calc_parity(uint8_t* msg);
@@ -369,19 +404,22 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void mark_last_raw_packet_(bool valid, const char *reason);
   void check_radio_state_();
 
-  // Dual interrupt flags: decouple RX-ready from TX-done detection.
-  // rx_ready_ is set by the ISR only when the radio is in RX (TxState::IDLE
-  // or COOLDOWN).  gdo0_fired_ is always set so the TX state machine can
-  // detect TX completion.
+  // RX interrupt flag: set by ISR when GDO0 fires (packet received).
+  // Stale flags during TX are harmlessly ignored (process_rx() only runs
+  // when tx_state_ == IDLE).
   std::atomic<bool> rx_ready_{false};
-  std::atomic<bool> gdo0_fired_{false};
 
-  // TX state machine — atomic because the ISR reads tx_state_ to decide
-  // whether to set rx_ready_ (see interrupt()).
+  // TX state machine — no longer read by ISR, but kept atomic for
+  // consistency with is_tx_idle() which may be called from other contexts.
   std::atomic<TxState> tx_state_{TxState::IDLE};
   uint32_t tx_state_entered_ms_{0};
   uint32_t last_tx_complete_ms_{0};
-  uint8_t gdo0_miss_count_{0};  // consecutive TX completions without GDO0
+
+  // RadioLib instances — standby() used for IDLE transition, SPI register
+  // access with verify-readback for init/config.
+  EspHomeRadioLibHal radio_hal_;
+  Module *radio_module_{nullptr};
+  CC1101 *radio_{nullptr};
 
   uint8_t msg_rx_[CC1101_FIFO_LENGTH];
   uint8_t msg_tx_[CC1101_FIFO_LENGTH];
