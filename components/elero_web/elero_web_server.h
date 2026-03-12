@@ -38,6 +38,7 @@ class EleroWebServer : public Component, public AsyncWebHandler {
   void handle_packets_download(AsyncWebServerRequest *request);
   void handle_get_frequency(AsyncWebServerRequest *request);
   void handle_set_frequency(AsyncWebServerRequest *request);
+  void handle_set_frequency_mhz(AsyncWebServerRequest *request);
 
   // ── New handlers ───────────────────────────────────────────────────────
   // Cover control & settings

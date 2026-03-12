@@ -195,6 +195,9 @@ void Elero::loop() {
     // 4. Periodic radio health check — detect stuck CC1101 states.
     this->check_radio_state_();
   }
+
+  // 5. Recompute dead-reckoning positions for runtime-adopted blinds.
+  this->recompute_runtime_positions_();
 }
 
 // ---------------------------------------------------------------------------
@@ -230,8 +233,10 @@ void Elero::process_rx() {
       this->read_buf(CC1101_RXFIFO, this->msg_rx_, fifo_count);
     }
 
+#if ESPHOME_LOG_LEVEL >= ESPHOME_LOG_LEVEL_VERBOSE
     ESP_LOGV(TAG, "RAW RX %d bytes: %s", fifo_count,
              format_hex_pretty(this->msg_rx_, fifo_count).c_str());
+#endif
 
     // Capture to ring buffer if dump mode is active
     this->packet_dump_pending_update_ = false;
@@ -283,7 +288,8 @@ void Elero::advance_tx() {
         // MARCSTATE left TX — verify FIFO drained (packet actually sent)
         uint8_t bytes = this->read_status(CC1101_TXBYTES) & 0x7F;
         if (bytes == 0) {
-          ESP_LOGD(TAG, "TX complete (marc=%s, %lums)",
+          this->tx_count_++;
+          ESP_LOGV(TAG, "TX complete (marc=%s, %lums)",
                    marcstate_to_string(marc), (unsigned long) elapsed);
           this->tx_state_.store(TxState::COOLDOWN, std::memory_order_release);
           this->tx_state_entered_ms_ = now;
@@ -360,6 +366,7 @@ void Elero::check_radio_state_() {
   // RXFIFO_OVERFLOW — flush and restart RX
   if (marc == CC1101_MARCSTATE_RXFIFO_OFLOW) {
     ESP_LOGW(TAG, "Radio watchdog: RX FIFO overflow, flushing");
+    this->watchdog_recovery_count_++;
     this->flush_rx();
     return;
   }
@@ -367,12 +374,14 @@ void Elero::check_radio_state_() {
   // IDLE — radio stopped listening, restart RX
   if (marc == CC1101_MARCSTATE_IDLE) {
     ESP_LOGW(TAG, "Radio watchdog: stuck in IDLE, restarting RX");
+    this->watchdog_recovery_count_++;
     this->write_cmd(CC1101_SRX);
     return;
   }
 
   // Any other unexpected state — full reinitialize
   ESP_LOGW(TAG, "Radio watchdog: unexpected state 0x%02x, reinitializing", marc);
+  this->watchdog_recovery_count_++;
   this->flush_and_rx();
 }
 
@@ -406,6 +415,83 @@ void Elero::drain_runtime_queues() {
       }
       break;  // Only one TX per loop iteration
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// update_runtime_blind_direction_ — set moving direction from RF state byte
+// ---------------------------------------------------------------------------
+void Elero::update_runtime_blind_direction_(RuntimeBlind &rb, uint8_t state) {
+  int8_t old_dir = rb.moving_direction;
+  switch (state) {
+    case ELERO_STATE_START_MOVING_UP:
+    case ELERO_STATE_MOVING_UP:
+      rb.moving_direction = 1;  // opening
+      break;
+    case ELERO_STATE_START_MOVING_DOWN:
+    case ELERO_STATE_MOVING_DOWN:
+      rb.moving_direction = -1;  // closing
+      break;
+    case ELERO_STATE_TOP:
+      rb.moving_direction = 0;
+      rb.position = 1.0f;
+      break;
+    case ELERO_STATE_BOTTOM:
+      rb.moving_direction = 0;
+      rb.position = 0.0f;
+      break;
+    case ELERO_STATE_STOPPED:
+    case ELERO_STATE_INTERMEDIATE:
+    case ELERO_STATE_TILT:
+    case ELERO_STATE_BLOCKING:
+    case ELERO_STATE_OVERHEATED:
+    case ELERO_STATE_TIMEOUT:
+      rb.moving_direction = 0;
+      break;
+    default:
+      break;
+  }
+  // Reset recompute timestamp when direction changes
+  if (old_dir != rb.moving_direction) {
+    rb.last_recompute_ms = millis();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// recompute_runtime_positions_ — dead-reckoning position update for moving
+// runtime blinds (called from loop())
+// ---------------------------------------------------------------------------
+void Elero::recompute_runtime_positions_() {
+  uint32_t now = millis();
+  for (auto &entry : this->runtime_blinds_) {
+    auto &rb = entry.second;
+    if (rb.moving_direction == 0)
+      continue;
+    // Only track position when both durations are configured
+    if (rb.open_duration_ms == 0 || rb.close_duration_ms == 0)
+      continue;
+    // If position is unknown, we can't dead-reckon
+    if (rb.position < 0.0f)
+      continue;
+
+    uint32_t elapsed = now - rb.last_recompute_ms;
+    if (elapsed == 0)
+      continue;
+
+    float delta;
+    if (rb.moving_direction > 0) {
+      // Opening: position increases
+      delta = static_cast<float>(elapsed) / static_cast<float>(rb.open_duration_ms);
+      rb.position += delta;
+    } else {
+      // Closing: position decreases
+      delta = static_cast<float>(elapsed) / static_cast<float>(rb.close_duration_ms);
+      rb.position -= delta;
+    }
+    // Clamp to [0.0, 1.0]
+    if (rb.position > 1.0f) rb.position = 1.0f;
+    if (rb.position < 0.0f) rb.position = 0.0f;
+    rb.last_recompute_ms = now;
   }
 }
 
@@ -465,6 +551,12 @@ void Elero::setup() {
 #endif
 }
 
+float Elero::registers_to_mhz(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
+  return (26.0f / 65536.0f) * ((static_cast<uint32_t>(freq2) << 16) |
+                                (static_cast<uint32_t>(freq1) << 8) |
+                                 static_cast<uint32_t>(freq0));
+}
+
 void Elero::reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
   this->rx_ready_.store(false, std::memory_order_release);
   this->tx_state_.store(TxState::IDLE, std::memory_order_release);
@@ -473,7 +565,35 @@ void Elero::reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
   this->freq0_ = freq0;
   this->reset();
   this->init();
-  ESP_LOGI(TAG, "CC1101 re-initialised: freq2=0x%02x freq1=0x%02x freq0=0x%02x", freq2, freq1, freq0);
+  float mhz = registers_to_mhz(freq2, freq1, freq0);
+  ESP_LOGI(TAG, "CC1101 re-initialised: %.2f MHz (0x%02x 0x%02x 0x%02x)", mhz, freq2, freq1, freq0);
+}
+
+bool Elero::reinit_frequency_mhz(float mhz) {
+  this->rx_ready_.store(false, std::memory_order_release);
+  this->tx_state_.store(TxState::IDLE, std::memory_order_release);
+
+  // Use RadioLib's setFrequency() to set the CC1101 frequency directly in MHz.
+  int16_t rc = this->radio_->setFrequency(mhz);
+  if (rc != RADIOLIB_ERR_NONE) {
+    ESP_LOGE(TAG, "setFrequency(%.2f MHz) failed: %d", mhz, rc);
+    return false;
+  }
+
+  // Read back the register values so our cached freq bytes stay in sync.
+  this->freq2_ = this->read_reg(CC1101_FREQ2);
+  this->freq1_ = this->read_reg(CC1101_FREQ1);
+  this->freq0_ = this->read_reg(CC1101_FREQ0);
+
+  // Full reinit to restore all custom register settings (setFrequency may
+  // alter modem config).
+  this->reset();
+  this->init();
+
+  float actual_mhz = registers_to_mhz(this->freq2_, this->freq1_, this->freq0_);
+  ESP_LOGI(TAG, "CC1101 re-initialised via setFrequency: %.2f MHz (0x%02x 0x%02x 0x%02x)",
+           actual_mhz, this->freq2_, this->freq1_, this->freq0_);
+  return true;
 }
 
 void Elero::flush_and_rx() {
@@ -564,19 +684,14 @@ void Elero::write_reg(uint8_t addr, uint8_t data) {
 }
 
 void Elero::write_burst(uint8_t addr, uint8_t *data, uint8_t len) {
-  // TXFIFO and PATABLE burst writes are in the TX-critical path.
-  // Use direct SPI with explicit burst flag for proven reliability.
-  this->enable();
-  this->transfer_byte(addr | CC1101_WRITE_BURST);
-  for (int i = 0; i < len; i++)
-    this->transfer_byte(data[i]);
-  this->disable();
-  delay_microseconds_safe(15);
+  // Use RadioLib's burst write — handles SPI framing and burst flag internally.
+  // SPIwriteRegisterBurst returns void; no error code to check.
+  this->radio_module_->SPIwriteRegisterBurst(addr, data, len);
 }
 
 void Elero::write_cmd(uint8_t cmd) {
   // Command strobes are single-byte SPI transactions — use direct SPI
-  // since RadioLib's SPIsendCommand is on the CC1101 class, not Module.
+  // since RadioLib's Module class has no dedicated command-strobe method.
   this->enable();
   this->transfer_byte(cmd);
   this->disable();
@@ -819,8 +934,8 @@ void Elero::interpret_msg() {
   // up to byte 26 + dests_len.  For 3-byte dests: max = (ELERO_MAX_PACKET_SIZE - 27) / 3 = 10.
   static const uint8_t MAX_SAFE_DESTS = (ELERO_MAX_PACKET_SIZE - 27) / 3;
   if (num_dests > MAX_SAFE_DESTS) {
-    ESP_LOGE(TAG, "Received invalid packet: too many destinations (%d)", num_dests);
-    ESP_LOGD(TAG, "  Raw [%d bytes]: %s", length + 3,
+    ESP_LOGW(TAG, "Received invalid packet: too many destinations (%d)", num_dests);
+    ESP_LOGW(TAG, "  Raw [%d bytes]: %s", length + 3,
              format_hex_pretty(this->msg_rx_, length + 3).c_str());
     if (this->packet_dump_pending_update_) {
       this->mark_last_raw_packet_(false, "too_many_dests");
@@ -841,8 +956,8 @@ void Elero::interpret_msg() {
   // so the highest index touched is 26 + dests_len. This must be within both
   // the packet (length) and the FIFO buffer.
   if((uint16_t)(26 + dests_len) > length || (uint16_t)(26 + dests_len) >= CC1101_FIFO_LENGTH) {
-    ESP_LOGE(TAG, "Received invalid packet: dests_len too long (%d) for length %d", dests_len, length);
-    ESP_LOGD(TAG, "  Raw [%d bytes]: %s", length + 3,
+    ESP_LOGW(TAG, "Received invalid packet: dests_len too long (%d) for length %d", dests_len, length);
+    ESP_LOGW(TAG, "  Raw [%d bytes]: %s", length + 3,
              format_hex_pretty(this->msg_rx_, length + 3).c_str());
     if (this->packet_dump_pending_update_) {
       this->mark_last_raw_packet_(false, "dests_len_too_long");
@@ -853,8 +968,8 @@ void Elero::interpret_msg() {
 
   // RSSI and LQI are appended by CC1101 after packet data at indices length+1 and length+2
   if ((uint16_t)(length + 2) >= CC1101_FIFO_LENGTH) {
-    ESP_LOGE(TAG, "Received invalid packet: RSSI/LQI out of buffer bounds (length=%d)", length);
-    ESP_LOGD(TAG, "  Raw [%d bytes]: %s", CC1101_FIFO_LENGTH,
+    ESP_LOGW(TAG, "Received invalid packet: RSSI/LQI out of buffer bounds (length=%d)", length);
+    ESP_LOGW(TAG, "  Raw [%d bytes]: %s", CC1101_FIFO_LENGTH,
              format_hex_pretty(this->msg_rx_, CC1101_FIFO_LENGTH).c_str());
     if (this->packet_dump_pending_update_) {
       this->mark_last_raw_packet_(false, "rssi_oob");
@@ -884,7 +999,9 @@ void Elero::interpret_msg() {
     this->mark_last_raw_packet_(true, nullptr);
     this->packet_dump_pending_update_ = false;
   }
-  ESP_LOGD(TAG, "rcv'd: len=%02d, cnt=%02d, typ=0x%02x, typ2=0x%02x, hop=0x%02x, syst=0x%02x, chl=%02d, src=0x%06x, bwd=0x%06x, fwd=0x%06x, #dst=%02d, dst=0x%06x, rssi=%2.1f, lqi=%2d, crc=%2d, payload=[0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x]", length, cnt, typ, typ2, hop, syst, chl, src, bwd, fwd, num_dests, dst, rssi, lqi, crc, payload1, payload2, payload[0], payload[1], payload[2], payload[3], payload[4], payload[5], payload[6], payload[7]);
+  this->rx_count_++;
+  ESP_LOGD(TAG, "rcv'd from 0x%06x: state=0x%02x rssi=%.1f", src, payload[6], rssi);
+  ESP_LOGV(TAG, "rcv'd: len=%02d, cnt=%02d, typ=0x%02x, typ2=0x%02x, hop=0x%02x, syst=0x%02x, chl=%02d, src=0x%06x, bwd=0x%06x, fwd=0x%06x, #dst=%02d, dst=0x%06x, rssi=%2.1f, lqi=%2d, crc=%2d, payload=[0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x]", length, cnt, typ, typ2, hop, syst, chl, src, bwd, fwd, num_dests, dst, rssi, lqi, crc, payload1, payload2, payload[0], payload[1], payload[2], payload[3], payload[4], payload[5], payload[6], payload[7]);
 
   // Update RSSI sensor for any message from a known blind
 #ifdef USE_SENSOR
@@ -957,6 +1074,7 @@ void Elero::interpret_msg() {
       it->second.last_seen_ms = millis();
       it->second.last_rssi = rssi;
       it->second.last_state = payload[6];
+      this->update_runtime_blind_direction_(it->second, payload[6]);
     }
   } else {
     // Non-status packets: still update RSSI/last_seen for any known blind
@@ -1029,6 +1147,13 @@ void Elero::register_rssi_sensor(uint32_t address, sensor::Sensor *sensor) {
 #ifdef USE_TEXT_SENSOR
 void Elero::register_text_sensor(uint32_t address, text_sensor::TextSensor *sensor) {
   this->address_to_text_sensor_[address] = sensor;
+}
+
+void Elero::publish_text_sensor_state(uint32_t address, const std::string &state) {
+  auto it = this->address_to_text_sensor_.find(address);
+  if (it != this->address_to_text_sensor_.end()) {
+    it->second->publish_state(state);
+  }
 }
 #endif
 
@@ -1163,7 +1288,12 @@ bool Elero::send_command(t_elero_command *cmd) {
   uint8_t *payload = &this->msg_tx_[22];
   msg_encode(payload);
 
-  ESP_LOGV(TAG, "send: len=%02d, cnt=%02d, typ=0x%02x, typ2=0x%02x, hop=0x%02x, syst=0x%02x, chl=%02d, src=0x%02x%02x%02x, bwd=0x%02x%02x%02x, fwd=0x%02x%02x%02x, #dst=%02d, dst=0x%02x%02x%02x, payload=[0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x]", this->msg_tx_[0], this->msg_tx_[1], this->msg_tx_[2], this->msg_tx_[3], this->msg_tx_[4], this->msg_tx_[5], this->msg_tx_[6], this->msg_tx_[7], this->msg_tx_[8], this->msg_tx_[9], this->msg_tx_[10], this->msg_tx_[11], this->msg_tx_[12], this->msg_tx_[13], this->msg_tx_[14], this->msg_tx_[15], this->msg_tx_[16], this->msg_tx_[17], this->msg_tx_[18], this->msg_tx_[19], this->msg_tx_[20], this->msg_tx_[21], this->msg_tx_[22], this->msg_tx_[23], this->msg_tx_[24], this->msg_tx_[25], this->msg_tx_[26], this->msg_tx_[27], this->msg_tx_[28], this->msg_tx_[29]);
+  ESP_LOGD(TAG, "send to 0x%06x: cmd=0x%02x ch=%02d cnt=%02d",
+           cmd->blind_addr, cmd->payload[0], cmd->channel, cmd->counter);
+#if ESPHOME_LOG_LEVEL >= ESPHOME_LOG_LEVEL_VERBOSE
+  ESP_LOGV(TAG, "  TX raw [%d bytes]: %s", ELERO_MSG_LENGTH + 1,
+           format_hex_pretty(this->msg_tx_, ELERO_MSG_LENGTH + 1).c_str());
+#endif
 
   // Synchronous TX initiation: RadioLib's standby() blocks until IDLE (~1ms),
   // then we flush, load FIFO, and send STX.  Going to IDLE first so STX is
