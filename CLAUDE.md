@@ -655,6 +655,7 @@ There are no automated tests in this repository. Validation is done manually on 
 ## Common Pitfalls
 
 - **Wrong frequency**: Most European Elero motors use 868.35 MHz (`freq0=0x7a`). Some use 868.95 MHz (`freq0=0xc0`). If discovery finds nothing, try the alternate frequency. Use the `/elero/api/frequency/set` endpoint to test at runtime.
+- **ESP32 strapping pins and SPI**: Do **not** use GPIO12 as SPI MISO (or any SPI signal). GPIO12 is a strapping pin that controls VDD_SDIO voltage at boot. If the CC1101 module pulls it HIGH, VDD_SDIO is set to 1.8V, breaking all SPI communication (symptoms: all SPI write verify fail with `rc=-16`, MARCSTATE stuck at `0x00`). Safe SPI pins: CLK=GPIO18, MISO=GPIO19, MOSI=GPIO23. Avoid GPIO0, GPIO2, GPIO5, GPIO12, GPIO15 for SPI signals. The component detects persistent SPI failure at runtime and marks itself as failed with a diagnostic error message.
 - **SPI conflicts**: The CC1101 CS pin must not be shared with any other SPI device.
 - **Using `web_server:` instead of `web_server_base:`**: Adding `web_server:` to your YAML re-enables the default ESPHome entity UI at `/`. Use `web_server_base:` (or rely on its auto-load via `elero_web`) to serve only the Elero UI at `/elero`. Navigating to `/` will redirect automatically to `/elero`.
 - **Position tracking**: Leave `open_duration` and `close_duration` at `0s` if you only need open/close without position — setting incorrect durations causes wrong position estimates. Both must be set or both zero (enforced by `_validate_duration_consistency`).

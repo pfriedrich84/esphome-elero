@@ -1,10 +1,19 @@
+import logging
+
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome import pins
 from esphome.components import spi
 from esphome.const import CONF_ID
 
+_LOGGER = logging.getLogger(__name__)
+
 DEPENDENCIES = ["spi"]
+
+# ESP32 strapping pins that can cause boot issues when used for SPI or I/O.
+# GPIO12 (MTDI) is especially problematic: if pulled HIGH at boot by an SPI
+# device, VDD_SDIO is set to 1.8V, breaking all SPI communication.
+ESP32_STRAPPING_PINS = {0, 2, 5, 12, 15}
 
 elero_ns = cg.esphome_ns.namespace("elero")
 elero = elero_ns.class_("Elero", spi.SPIDevice, cg.Component)
@@ -32,6 +41,30 @@ CONFIG_SCHEMA = (
     .extend(cv.COMPONENT_SCHEMA)
     .extend(spi.spi_device_schema(cs_pin_required=True))
 )
+
+
+def _warn_strapping_pins(config):
+    """Warn if gdo0_pin or cs_pin uses an ESP32 strapping pin."""
+    for key in (CONF_GDO0_PIN, "cs_pin"):
+        pin_conf = config.get(key)
+        if pin_conf is None:
+            continue
+        # pin_conf may be a dict with "number" or an int directly
+        pin_num = pin_conf.get("number") if isinstance(pin_conf, dict) else pin_conf
+        if isinstance(pin_num, int) and pin_num in ESP32_STRAPPING_PINS:
+            _LOGGER.warning(
+                "GPIO%d (%s) is an ESP32 strapping pin. If used for SPI "
+                "(especially GPIO12 as MISO), it can cause VDD_SDIO voltage "
+                "issues that break CC1101 communication. Consider using "
+                "non-strapping pins (e.g. CLK=18, MISO=19, MOSI=23, CS=5, "
+                "GDO0=26).",
+                pin_num,
+                key,
+            )
+    return config
+
+
+FINAL_VALIDATE_SCHEMA = _warn_strapping_pins
 
 
 async def to_code(config):
