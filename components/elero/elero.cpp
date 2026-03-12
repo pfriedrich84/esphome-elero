@@ -268,8 +268,19 @@ void Elero::advance_tx() {
       // TX completion: CC1101 auto-transitions to RX (MCSM1 TXOFF_MODE=0x3).
       // Detect by polling MARCSTATE — when it leaves TX the packet is sent.
       uint8_t marc = this->read_status(CC1101_MARCSTATE) & 0x1F;
-      if (marc != CC1101_MARCSTATE_TX) {
-        // TX finished — verify FIFO is empty for safety
+      if (marc == CC1101_MARCSTATE_TX) {
+        // Still transmitting — check for timeout
+        if (elapsed > TX_STATE_TIMEOUT_MS) {
+          ESP_LOGW(TAG, "TX timeout in TRANSMITTING (%lums), aborting",
+                   (unsigned long) elapsed);
+          this->tx_abort_();
+        }
+      } else if (marc == CC1101_MARCSTATE_TXFIFO_UFLOW) {
+        // TX FIFO underflow — data was partially sent, abort and retry
+        ESP_LOGE(TAG, "TX FIFO underflow");
+        this->tx_abort_();
+      } else {
+        // MARCSTATE left TX — verify FIFO drained (packet actually sent)
         uint8_t bytes = this->read_status(CC1101_TXBYTES) & 0x7F;
         if (bytes == 0) {
           ESP_LOGD(TAG, "TX complete (marc=%s, %lums)",
@@ -278,16 +289,13 @@ void Elero::advance_tx() {
           this->tx_state_entered_ms_ = now;
           this->last_tx_complete_ms_ = now;
         } else {
-          ESP_LOGE(TAG, "TX verify failed: %d bytes left in TX FIFO", bytes);
+          // FIFO not empty — packet was never sent.  Most likely cause is CCA
+          // (Clear Channel Assessment) rejection: the channel was busy so the
+          // CC1101 returned to RX without transmitting.
+          ESP_LOGW(TAG, "TX failed: %d bytes still in FIFO (marc=%s) — likely CCA rejection, will retry",
+                   bytes, marcstate_to_string(marc));
           this->tx_abort_();
         }
-      } else if (marc == CC1101_MARCSTATE_TXFIFO_UFLOW) {
-        ESP_LOGE(TAG, "TX FIFO underflow");
-        this->tx_abort_();
-      } else if (elapsed > TX_STATE_TIMEOUT_MS) {
-        ESP_LOGW(TAG, "TX timeout in TRANSMITTING (marc=%s (0x%02x)), aborting",
-                 marcstate_to_string(marc), marc);
-        this->tx_abort_();
       }
       break;
     }
