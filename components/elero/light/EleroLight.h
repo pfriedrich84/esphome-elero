@@ -33,6 +33,12 @@ class EleroLight : public light::LightOutput, public Component, public EleroLigh
     } else {
       ESP_LOGW("elero.light", "Command queue full for light 0x%06x, dropping cmd 0x%02x",
                this->command_.blind_addr, cmd_byte);
+#ifdef USE_TEXT_SENSOR
+      if (!this->queue_full_published_) {
+        this->parent_->publish_text_sensor_state(this->command_.blind_addr, "queue_full");
+        this->queue_full_published_ = true;
+      }
+#endif
     }
   }
   void schedule_immediate_poll() override;
@@ -79,9 +85,9 @@ class EleroLight : public light::LightOutput, public Component, public EleroLigh
 
   void handle_commands(uint32_t now);
   void recompute_brightness();
+  void increase_counter();
 
  protected:
-  void increase_counter();
 
   t_elero_command command_ = {
     .counter = 1,

@@ -163,42 +163,15 @@ void EleroLight::loop() {
   }
 }
 
-void EleroLight::handle_commands(uint32_t now) {
-  // Don't attempt TX while the radio is busy — try again next loop()
-  if (!this->parent_->is_tx_idle()) return;
+static void light_increase_counter(void *ctx) {
+  static_cast<EleroLight *>(ctx)->increase_counter();
+}
 
-  if ((now - this->last_command_) > this->parent_->get_send_delay()) {
-    if (!this->commands_to_send_.empty()) {
-      this->command_.payload[4] = this->commands_to_send_.front();
-      if (this->parent_->send_command(&this->command_)) {
-        this->send_packets_++;
-        this->send_retries_ = 0;
-        if (this->send_packets_ >= this->parent_->get_send_repeats()) {
-          this->commands_to_send_.pop();
-          this->send_packets_ = 0;
-          this->increase_counter();
-#ifdef USE_TEXT_SENSOR
-          // Auto-reset queue_full status when queue drains
-          if (this->queue_full_published_ && this->commands_to_send_.empty()) {
-            this->queue_full_published_ = false;
-          }
-#endif
-        }
-        this->last_command_ = now;
-      } else {
-        ESP_LOGD(TAG, "Retry #%d for light 0x%06x",
-                 this->send_retries_, this->command_.blind_addr);
-        this->send_retries_++;
-        if (this->send_retries_ > ELERO_SEND_RETRIES) {
-          ESP_LOGE(TAG, "Hit maximum retries for light 0x%06x, giving up.",
-                   this->command_.blind_addr);
-          this->send_retries_ = 0;
-          this->commands_to_send_.pop();
-        }
-        this->last_command_ = now;
-      }
-    }
-  }
+void EleroLight::handle_commands(uint32_t now) {
+  dispatch_commands(this->parent_, this->commands_to_send_, this->command_,
+                    this->send_packets_, this->send_retries_, this->last_command_,
+                    this->queue_full_published_, now, TAG, this->command_.blind_addr,
+                    &light_increase_counter, this);
 }
 
 void EleroLight::schedule_immediate_poll() {
@@ -212,8 +185,17 @@ void EleroLight::recompute_brightness() {
     return;
 
   const uint32_t now = millis();
+  const uint32_t elapsed = now - this->last_recompute_time_;
+
+  // Sanity check: skip recompute if elapsed time is implausibly large
+  // (e.g., millis() wraparound glitch or stale last_recompute_time_)
+  if (elapsed > ELERO_TIMEOUT_MOVEMENT) {
+    this->last_recompute_time_ = now;
+    return;
+  }
+
   float dir = this->dim_up_ ? 1.0f : -1.0f;
-  this->brightness_ += dir * (float)(now - this->last_recompute_time_) / (float)this->dim_duration_;
+  this->brightness_ += dir * (float)elapsed / (float)this->dim_duration_;
   this->brightness_ = clamp(this->brightness_, 0.0f, 1.0f);
   this->last_recompute_time_ = now;
 }
@@ -248,6 +230,21 @@ void EleroLight::set_rx_state(uint8_t state) {
         this->ignore_write_state_ = false;
       }
     }
+  } else if (state == ELERO_STATE_BLOCKING) {
+    ESP_LOGW(TAG, "Light 0x%06x reports BLOCKING", this->command_.blind_addr);
+#ifdef USE_TEXT_SENSOR
+    this->parent_->publish_text_sensor_state(this->command_.blind_addr, "blocking");
+#endif
+  } else if (state == ELERO_STATE_OVERHEATED) {
+    ESP_LOGW(TAG, "Light 0x%06x reports OVERHEATED", this->command_.blind_addr);
+#ifdef USE_TEXT_SENSOR
+    this->parent_->publish_text_sensor_state(this->command_.blind_addr, "overheated");
+#endif
+  } else if (state == ELERO_STATE_TIMEOUT) {
+    ESP_LOGW(TAG, "Light 0x%06x reports TIMEOUT", this->command_.blind_addr);
+#ifdef USE_TEXT_SENSOR
+    this->parent_->publish_text_sensor_state(this->command_.blind_addr, "timeout");
+#endif
   }
 }
 

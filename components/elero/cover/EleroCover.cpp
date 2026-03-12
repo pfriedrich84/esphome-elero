@@ -148,40 +148,15 @@ bool EleroCover::is_at_target() {
   }
 }
 
-void EleroCover::handle_commands(uint32_t now) {
-  // Don't attempt TX while the radio is busy — try again next loop()
-  if (!this->parent_->is_tx_idle()) return;
+static void cover_increase_counter(void *ctx) {
+  static_cast<EleroCover *>(ctx)->increase_counter();
+}
 
-  if((now - this->last_command_) > this->parent_->get_send_delay()) {
-    if(this->commands_to_send_.size() > 0) {
-      this->command_.payload[4] = this->commands_to_send_.front();
-      if(this->parent_->send_command(&this->command_)) {
-        this->send_packets_++;
-        this->send_retries_ = 0;
-        if(this->send_packets_ >= this->parent_->get_send_repeats()) {
-          this->commands_to_send_.pop();
-          this->send_packets_ = 0;
-          this->increase_counter();
-#ifdef USE_TEXT_SENSOR
-          // Auto-reset queue_full status when queue drains
-          if (this->queue_full_published_ && this->commands_to_send_.empty()) {
-            this->queue_full_published_ = false;
-          }
-#endif
-        }
-        this->last_command_ = now;
-      } else {
-        ESP_LOGD(TAG, "Retry #%d for blind 0x%06x", this->send_retries_, this->command_.blind_addr);
-        this->send_retries_++;
-        if(this->send_retries_ > ELERO_SEND_RETRIES) {
-          ESP_LOGE(TAG, "Hit maximum number of retries, giving up.");
-          this->send_retries_ = 0;
-          this->commands_to_send_.pop();
-        }
-        this->last_command_ = now;
-      }
-    }
-  }
+void EleroCover::handle_commands(uint32_t now) {
+  dispatch_commands(this->parent_, this->commands_to_send_, this->command_,
+                    this->send_packets_, this->send_retries_, this->last_command_,
+                    this->queue_full_published_, now, TAG, this->command_.blind_addr,
+                    &cover_increase_counter, this);
 }
 
 float EleroCover::get_setup_priority() const { return setup_priority::DATA; }
