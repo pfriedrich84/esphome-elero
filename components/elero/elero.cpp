@@ -214,7 +214,24 @@ void Elero::process_rx() {
     uint8_t len = this->read_status(CC1101_RXBYTES);
 
     if (len & 0x80) {  // overflow bit set — FIFO data unreliable
-      ESP_LOGW(TAG, "RX FIFO overflow in process_rx, flushing (recoverable)");
+      uint32_t now = millis();
+      // Rate-limit: if we already flushed recently, suppress log and skip
+      if (now - this->last_rx_overflow_ms_ < 1000) {
+        this->rx_overflow_count_++;
+        // After 5 rapid overflows, escalate to full radio reinit
+        if (this->rx_overflow_count_ >= 5) {
+          ESP_LOGW(TAG, "RX FIFO overflow persists after %d flushes, full radio reinit",
+                   this->rx_overflow_count_);
+          this->rx_overflow_count_ = 0;
+          this->last_rx_overflow_ms_ = now;
+          this->reset();
+          this->init();
+        }
+        return;
+      }
+      this->rx_overflow_count_ = 1;
+      this->last_rx_overflow_ms_ = now;
+      ESP_LOGW(TAG, "RX FIFO overflow in process_rx, flushing");
       this->flush_rx();
       return;
     }
@@ -363,11 +380,18 @@ void Elero::check_radio_state_() {
   if (marc == CC1101_MARCSTATE_RX_END || marc == CC1101_MARCSTATE_RX_RST)
     return;
 
-  // RXFIFO_OVERFLOW — flush and restart RX
+  // RXFIFO_OVERFLOW — flush and restart RX (escalate to full reinit if repeated)
   if (marc == CC1101_MARCSTATE_RXFIFO_OFLOW) {
     ESP_LOGW(TAG, "Radio watchdog: RX FIFO overflow, flushing");
     this->watchdog_recovery_count_++;
     this->flush_rx();
+    // Verify recovery worked
+    uint8_t marc_after = this->read_status(CC1101_MARCSTATE) & 0x1F;
+    if (marc_after != CC1101_MARCSTATE_RX) {
+      ESP_LOGW(TAG, "Radio watchdog: flush_rx failed (marc=0x%02x), full reinit", marc_after);
+      this->reset();
+      this->init();
+    }
     return;
   }
 
@@ -379,10 +403,14 @@ void Elero::check_radio_state_() {
     return;
   }
 
-  // Any other unexpected state — full reinitialize
-  ESP_LOGW(TAG, "Radio watchdog: unexpected state 0x%02x, reinitializing", marc);
+  // Any other unexpected state — full reset + reinitialize
+  // flush_and_rx() is insufficient when the CC1101 is unresponsive (e.g.
+  // MARCSTATE reads 0x1f = SPI returning 0xFF).  A hardware reset via
+  // SRES followed by full register configuration is needed.
+  ESP_LOGW(TAG, "Radio watchdog: unexpected state 0x%02x, full reinit", marc);
   this->watchdog_recovery_count_++;
-  this->flush_and_rx();
+  this->reset();
+  this->init();
 }
 
 // ---------------------------------------------------------------------------
@@ -599,6 +627,14 @@ bool Elero::reinit_frequency_mhz(float mhz) {
 void Elero::flush_and_rx() {
   ESP_LOGVV(TAG, "flush_and_rx");
   this->radio_->standby();  // blocks until IDLE (~1ms)
+  // Verify we actually reached IDLE — standby() may fail silently if the
+  // CC1101 is unresponsive (SPI returns 0xFF).
+  uint8_t marc = this->read_status(CC1101_MARCSTATE) & 0x1F;
+  if (marc != CC1101_MARCSTATE_IDLE) {
+    // Force IDLE via direct strobe as fallback
+    this->write_cmd(CC1101_SIDLE);
+    delay_microseconds_safe(500);
+  }
   this->write_cmd(CC1101_SFRX);
   this->write_cmd(CC1101_SFTX);
   this->write_cmd(CC1101_SRX);
@@ -608,6 +644,14 @@ void Elero::flush_and_rx() {
 void Elero::flush_rx() {
   ESP_LOGVV(TAG, "flush_rx");
   this->radio_->standby();  // blocks until IDLE (~1ms)
+  // Verify we actually reached IDLE — standby() may fail silently if the
+  // CC1101 is unresponsive (SPI returns 0xFF).
+  uint8_t marc = this->read_status(CC1101_MARCSTATE) & 0x1F;
+  if (marc != CC1101_MARCSTATE_IDLE) {
+    // Force IDLE via direct strobe as fallback
+    this->write_cmd(CC1101_SIDLE);
+    delay_microseconds_safe(500);
+  }
   this->write_cmd(CC1101_SFRX);
   this->write_cmd(CC1101_SRX);
   this->rx_ready_.store(false, std::memory_order_release);
@@ -615,11 +659,14 @@ void Elero::flush_rx() {
 
 void Elero::reset() {
   // Software reset via command strobes — direct SPI for timing control.
+  // The CC1101 datasheet specifies that after SRES, the chip needs up to
+  // ~1ms to complete its internal reset sequence before it can accept
+  // further commands.
   this->enable();
   this->transfer_byte(CC1101_SRES);
-  delay_microseconds_safe(50);
+  delay_microseconds_safe(1000);
   this->transfer_byte(CC1101_SIDLE);
-  delay_microseconds_safe(50);
+  delay_microseconds_safe(100);
   this->disable();
 }
 
@@ -1299,6 +1346,15 @@ bool Elero::send_command(t_elero_command *cmd) {
   // then we flush, load FIFO, and send STX.  Going to IDLE first so STX is
   // not subject to CCA (Elero motors actively transmit, causing CCA failures).
   this->radio_->standby();
+
+  // Verify we actually reached IDLE — if not, radio is unresponsive
+  uint8_t marc = this->read_status(CC1101_MARCSTATE) & 0x1F;
+  if (marc != CC1101_MARCSTATE_IDLE) {
+    ESP_LOGW(TAG, "send_command: radio not in IDLE (marc=0x%02x), reinitializing", marc);
+    this->reset();
+    this->init();
+    return false;
+  }
 
   // Flush both FIFOs (valid in IDLE state per CC1101 spec): TX for a clean
   // slate, RX to discard any partial packet data from the reception that
