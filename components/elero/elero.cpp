@@ -268,11 +268,14 @@ void Elero::advance_tx() {
       // TX completion: CC1101 auto-transitions to RX (MCSM1 TXOFF_MODE=0x3).
       // Detect by polling MARCSTATE — when it leaves TX the packet is sent.
       uint8_t marc = this->read_status(CC1101_MARCSTATE) & 0x1F;
-      if (marc == CC1101_MARCSTATE_TX) {
-        // Still transmitting — check for timeout
+      if (marc == CC1101_MARCSTATE_TX ||
+          marc == CC1101_MARCSTATE_STARTCAL ||
+          marc == CC1101_MARCSTATE_FSTXON) {
+        // Still in TX pipeline — radio may be calibrating before TX (STARTCAL),
+        // actively transmitting (TX), or waiting to transmit (FSTXON).
         if (elapsed > TX_STATE_TIMEOUT_MS) {
-          ESP_LOGW(TAG, "TX timeout in TRANSMITTING (%lums), aborting",
-                   (unsigned long) elapsed);
+          ESP_LOGW(TAG, "TX timeout in TRANSMITTING (%lums, marc=%s), aborting",
+                   (unsigned long) elapsed, marcstate_to_string(marc));
           this->tx_abort_();
         }
       } else if (marc == CC1101_MARCSTATE_TXFIFO_UFLOW) {
@@ -289,10 +292,9 @@ void Elero::advance_tx() {
           this->tx_state_entered_ms_ = now;
           this->last_tx_complete_ms_ = now;
         } else {
-          // FIFO not empty — packet was never sent.  Most likely cause is CCA
-          // (Clear Channel Assessment) rejection: the channel was busy so the
-          // CC1101 returned to RX without transmitting.
-          ESP_LOGW(TAG, "TX failed: %d bytes still in FIFO (marc=%s) — likely CCA rejection, will retry",
+          // FIFO not empty — packet was never sent.  The radio left the TX
+          // pipeline without draining the FIFO (unexpected state transition).
+          ESP_LOGW(TAG, "TX failed: %d bytes still in FIFO (marc=%s) — packet not transmitted, will retry",
                    bytes, marcstate_to_string(marc));
           this->tx_abort_();
         }
