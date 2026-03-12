@@ -39,19 +39,21 @@ external_components:
 esphome-elero/
 ├── .github/
 │   └── FUNDING.yml                    # GitHub Sponsors config
-├── .gitignore                         # Python cache exclusions
+├── .gitignore                         # Python cache, .esphome/ exclusions
 ├── CLAUDE.md                          # This file
+├── IMPROVEMENT_PLAN.md                # Identified improvement issues (German)
 ├── README.md                          # Main documentation (German + English)
 ├── example.yaml                       # Complete ESPHome config example
 ├── docs/
 │   ├── INSTALLATION.md                # Step-by-step hardware and software setup
 │   ├── CONFIGURATION.md               # Full parameter reference
+│   ├── RADIOLIB_EVALUATION.md         # RadioLib integration evaluation
 │   └── examples/                      # Additional YAML examples (.gitkeep)
 └── components/
     ├── elero/                         # Main hub component
     │   ├── __init__.py                # ESPHome component schema & code-gen (hub)
-    │   ├── elero.h                    # C++ hub class header (370 lines)
-    │   ├── elero.cpp                  # C++ RF protocol implementation (1151 lines)
+    │   ├── elero.h                    # C++ hub class header (~457 lines)
+    │   ├── elero.cpp                  # C++ RF protocol implementation (~1200 lines)
     │   ├── cc1101.h                   # CC1101 register map & command strobes
     │   ├── cover/                     # Cover (blind) platform
     │   │   ├── __init__.py            # Cover schema, auto-sensors, validation
@@ -59,8 +61,8 @@ esphome-elero/
     │   │   └── EleroCover.cpp         # Cover logic, position tracking (405 lines)
     │   ├── light/                     # Light (dimmer) platform
     │   │   ├── __init__.py            # Light schema & code-gen
-    │   │   ├── EleroLight.h           # Light class header (101 lines)
-    │   │   └── EleroLight.cpp         # Light logic, brightness tracking (236 lines)
+    │   │   ├── EleroLight.h           # Light class header (~127 lines)
+    │   │   └── EleroLight.cpp         # Light logic, brightness tracking (~236 lines)
     │   ├── button/                    # Scan button platform
     │   │   ├── __init__.py            # Button schema (scan + light command)
     │   │   ├── elero_button.h         # Button class header
@@ -109,6 +111,8 @@ esphome-elero/
 
 ```
 Elero (hub, SPIDevice + Component)
+├── EspHomeRadioLibHal (RadioLib HAL adapter, bridges SPIDevice → RadioLib)
+│   └── CC1101 (RadioLib, standby/SPI register access)
 ├── EleroBlindBase (abstract interface for covers)
 │   └── EleroCover (cover::Cover + Component + EleroBlindBase)
 ├── EleroLightBase (abstract interface for lights)
@@ -118,45 +122,63 @@ Elero (hub, SPIDevice + Component)
 ├── text_sensor::TextSensor (status, registered per blind address)
 ├── EleroWebServer (Component + AsyncWebHandler, wraps web_server_base)
 │   └── EleroWebSwitch (switch::Switch + Component)
-├── RuntimeBlind (adopted from web UI, stored in std::map)
+├── RuntimeBlind (adopted from web UI, stored in std::map, supports DeviceType)
 └── Auto-registered sensors/text sensors per cover (optional via auto_sensors)
 ```
 
 The abstract base classes `EleroBlindBase` and `EleroLightBase` decouple the hub (`Elero`) from the cover/light implementations so `elero.h` never needs to `#include` the cover or light headers. All communication between hub and entities goes through virtual methods.
 
+### RadioLib integration
+
+The hub uses [RadioLib](https://github.com/jgromes/RadioLib) v7.1.2 (added via PlatformIO `cg.add_library()`) as a hardware abstraction layer for the CC1101 transceiver. A custom `EspHomeRadioLibHal` adapter class bridges ESPHome's `SPIDevice` to RadioLib's HAL interface — GPIO, interrupt, and SPI lifecycle operations are forwarded to ESPHome primitives while SPI transfers delegate to the parent `Elero` component. RadioLib provides:
+
+- `radio_->standby()` — synchronous IDLE transition (~1 ms), replacing the old multi-state async SIDLE approach
+- `radio_module_->SPIsetRegValue()` / `SPIgetRegValue()` — register access with verify-readback for init/config
+- `radio_->begin()` — initial CC1101 configuration (frequency, bandwidth, data rate, etc.)
+
+The `Elero` class owns the RadioLib instances (`radio_hal_`, `radio_module_`, `radio_`) and cleans them up in its destructor.
+
 ### Non-blocking TX state machine
 
-The radio uses a non-blocking TX state machine that processes one step per `loop()` iteration, allowing RX to continue during TX operations:
+The radio uses a simplified 3-state non-blocking TX state machine that processes one step per `loop()` iteration:
 
 ```
-IDLE → GOING_IDLE → LOADING → FIRING → TRANSMITTING → VERIFYING → COOLDOWN → IDLE
+IDLE → TRANSMITTING → COOLDOWN → IDLE
 ```
 
-Each state corresponds to a phase of the CC1101 TX pipeline (see `TxState` enum in `elero.h:23–31`). The hub checks `is_tx_idle()` before accepting new commands.
+RadioLib's `standby()` handles the IDLE transition synchronously in `send_command()`, eliminating the previous `GOING_IDLE`, `LOADING`, `FIRING`, and `VERIFYING` states. See `TxState` enum in `elero.h:27–31`. The hub checks `is_tx_idle()` before accepting new commands.
 
-### Dual interrupt flags
+TX initiation in `send_command()`:
+1. `radio_->standby()` — blocks until CC1101 is in IDLE (~1 ms)
+2. Flush both TX and RX FIFOs (valid in IDLE per CC1101 spec)
+3. Load TX FIFO via burst write
+4. Issue `STX` strobe → state transitions to `TRANSMITTING`
 
-Two `std::atomic<bool>` flags decouple RX-ready detection from TX-done detection:
-- `rx_ready_` — set by ISR only when radio is in RX (`TxState::IDLE` or `COOLDOWN`)
-- `gdo0_fired_` — always set by ISR, used by TX state machine for TX completion detection
+TX completion is detected by polling MARCSTATE — when it leaves TX, the CC1101 has auto-transitioned to RX via MCSM1 TXOFF_MODE.
+
+### Interrupt handling
+
+A single `std::atomic<bool>` flag `rx_ready_` is set by the GDO0 ISR when a packet is received. All atomic operations use `std::memory_order_acquire` for loads and `std::memory_order_release` for stores to ensure correct multi-core ESP32 synchronization. The ISR always sets `rx_ready_`, but `process_rx()` only runs when TX is idle, so stale flags during TX are harmlessly ignored.
 
 ### Radio health and FIFO recovery
 
-The CC1101 can enter unrecoverable states (RXFIFO_OVERFLOW, stuck IDLE) during TX operations when the ISR cannot set `rx_ready_`. Several mechanisms prevent and recover from these:
+The CC1101 can enter unrecoverable states (RXFIFO_OVERFLOW, stuck IDLE) during TX operations. Several mechanisms prevent and recover from these:
 
-- **RX FIFO flush before TX** — When `GOING_IDLE` issues SIDLE to begin TX, any in-progress RX leaves partial corrupt data in the FIFO. The code flushes RX FIFO (SFRX) after entering IDLE to prevent `process_rx()` from misinterpreting stale data after TX completes.
+- **FIFO flush before TX** — `send_command()` uses `standby()` to enter IDLE, then flushes both TX and RX FIFOs. The RX flush discards any partial packet data from the reception that SIDLE interrupted.
 - **No SFTX after TX completion** — The CC1101 auto-transitions to RX via MCSM1 TXOFF_MODE after TX. Issuing SFTX in this state is invalid per the CC1101 datasheet (only valid in IDLE or TXFIFO_UNDERFLOW) and can corrupt radio state.
-- **Post-TX FIFO health check** — After COOLDOWN, before resuming normal RX, the code reads RXBYTES to detect overflow or pending data that arrived during TX (when `rx_ready_` was not being set by the ISR).
+- **Post-TX FIFO health check** — After COOLDOWN, before resuming normal RX, the code reads RXBYTES to detect overflow or pending data that arrived during TX.
 - **Radio watchdog** (`check_radio_state_()`, every 5 s) — Reads CC1101 MARCSTATE register and recovers from: RXFIFO_OVERFLOW (flush + restart RX), stuck IDLE (restart RX), or any other unexpected state (full radio reinit). Only runs when TX is idle.
 - **TX cooldown** — 10 ms settling time after TX before resuming RX, allowing the CC1101 PLL to stabilize.
+- **Minimum packet validation** — Packets shorter than `ELERO_MIN_PACKET_SIZE` (17 bytes) are rejected as non-Elero RF noise.
 
 ### Data flow
 
-1. `Elero::setup()` configures CC1101 registers over SPI and attaches a GPIO interrupt on `gdo0_pin`.
-2. When the CC1101 signals a received packet (GDO0 interrupt), the ISR sets `rx_ready_` and `gdo0_fired_`.
-3. `Elero::loop()` calls `check_radio_state_()` for periodic health monitoring, then calls `process_rx()` when TX is idle, reads the FIFO, decodes and decrypts the packet, then dispatches the state to the matching `EleroBlindBase`/`EleroLightBase` via `set_rx_state()`.
+1. `Elero::setup()` configures CC1101 via RadioLib's `begin()` and direct register writes, then attaches a GPIO interrupt on `gdo0_pin`.
+2. When the CC1101 signals a received packet (GDO0 interrupt), the ISR sets `rx_ready_`.
+3. `Elero::loop()` calls `process_rx()` when TX is idle or in cooldown (drains up to `ELERO_MAX_RX_PER_LOOP` packets per call), reads the FIFO, decodes and decrypts the packet, then dispatches the state to the matching `EleroBlindBase`/`EleroLightBase` via `set_rx_state()`.
 4. `Elero::loop()` calls `advance_tx()` to progress the TX state machine one step.
-5. `EleroCover::loop()` / `EleroLight::loop()` handle polling timers, position/brightness recomputation, and drain the command queue by calling `parent_->send_command()`.
+5. When TX is idle, `Elero::loop()` drains runtime blind command queues and runs `check_radio_state_()` for periodic health monitoring.
+6. `EleroCover::loop()` / `EleroLight::loop()` handle polling timers, position/brightness recomputation, and drain the command queue by calling `parent_->send_command()`.
 
 ---
 
@@ -177,21 +199,25 @@ Critical public API:
 - `register_text_sensor(uint32_t addr, text_sensor::TextSensor*)` — link text sensor to a blind address
 - `interrupt(Elero *arg)` — static ISR, sets interrupt flags
 
+Cover/light access (for web server):
+- `is_cover_configured(addr)` / `get_configured_covers()` — check/list configured covers
+- `is_light_configured(addr)` / `get_configured_lights()` — check/list configured lights
+
 Discovery and runtime:
 - `get_discovered_blinds()` / `get_discovered_count()` / `clear_discovered()` — manage discovered blinds
-- `adopt_blind(DiscoveredBlind&, name)` — adopt discovered blind for runtime control
+- `adopt_blind(DiscoveredBlind&, name, DeviceType)` — adopt discovered blind/light for runtime control
 - `remove_runtime_blind(addr)` / `send_runtime_command(addr, cmd)` — manage runtime-adopted blinds
 - `update_runtime_blind_settings(addr, open, close, poll)` — update timing at runtime
 - `get_runtime_blinds()` / `is_blind_adopted(addr)` — query runtime blinds
 
 Radio health:
 - `check_radio_state_()` — periodic watchdog (every 5 s); recovers RXFIFO_OVERFLOW, stuck IDLE, and unexpected MARCSTATE
-- RX FIFO flush in `GOING_IDLE` state — prevents stale data from corrupting post-TX RX
+- FIFO flush in `send_command()` via `standby()` + SFTX/SFRX — prevents stale data from corrupting post-TX RX
 - Post-TX FIFO health check in `COOLDOWN→IDLE` transition — detects overflow/pending data missed during TX
 
 Diagnostics:
 - `start_packet_dump()` / `stop_packet_dump()` / `get_raw_packets()` — RF packet capture (ring buffer, max 50)
-- `append_log()` / `get_log_entries()` / `set_log_capture()` — persistent log buffer (max 200 entries)
+- `append_log()` / `get_log_entries_copy()` / `set_log_capture()` — persistent log buffer (max 200 entries, mutex-protected)
 - `reinit_frequency(freq2, freq1, freq0)` — change CC1101 frequency at runtime
 
 Key constants (defined in `elero.h`):
@@ -199,15 +225,18 @@ Key constants (defined in `elero.h`):
 | Constant | Value | Purpose |
 |---|---|---|
 | `ELERO_MAX_PACKET_SIZE` | 57 | Maximum RF packet length (FCC spec) |
+| `ELERO_MIN_PACKET_SIZE` | 17 | Minimum valid Elero packet (shorter = RF noise) |
 | `ELERO_POLL_INTERVAL_MOVING` | 2 000 ms | Status poll while blind is moving |
 | `ELERO_TIMEOUT_MOVEMENT` | 120 000 ms | Give up movement tracking after 2 min |
 | `ELERO_POST_MOVEMENT_POLL_DELAY` | 5 000 ms | Poll delay after open/close duration elapses |
 | `ELERO_SEND_RETRIES` | 3 | Command retry count |
-| `ELERO_SEND_PACKETS` | 2 | Packets sent per command |
-| `ELERO_DELAY_SEND_PACKETS` | 50 ms | Delay between packet repeats |
+| `ELERO_DEFAULT_SEND_REPEATS` | 5 | Default RF packet repetitions per command (configurable 1–20) |
+| `ELERO_DEFAULT_SEND_DELAY` | 1 ms | Default delay between repeated packets (configurable) |
 | `ELERO_MAX_COMMAND_QUEUE` | 10 | Max queued commands per blind (prevents OOM) |
 | `ELERO_MAX_DISCOVERED` | 20 | Max blinds tracked in scan mode |
 | `ELERO_MAX_RAW_PACKETS` | 50 | Max raw packets in dump ring buffer |
+| `ELERO_MAX_RX_PER_LOOP` | 4 | Max packets drained per `process_rx()` call |
+| `ELERO_POLL_STAGGER_MS` | 5 000 ms | Stagger offset between cover poll timers |
 | `ELERO_STOP_REPEAT_COUNT` | 2 | Stop commands queued on auto-stop (x2 RF packets each) |
 | `ELERO_TX_LATENCY_COMPENSATION_MS` | 150 ms | Position check lead time for TX pipeline delay |
 | `ELERO_STOP_VERIFY_DELAY_MS` | 500 ms | Delay before polling to verify motor stopped |
@@ -215,16 +244,25 @@ Key constants (defined in `elero.h`):
 | `ELERO_MSG_LENGTH` | 0x1d (29) | Fixed message length for TX |
 | `ELERO_CRYPTO_MULT` | 0x708f | Encryption multiplier for counter-based code |
 | `TX_STATE_TIMEOUT_MS` | 50 ms | Per-state watchdog timeout for TX state machine |
+| `TX_COOLDOWN_MS` | 10 ms | Post-TX settle time before resuming RX |
 | `RADIO_WATCHDOG_MS` | 5 000 ms | Periodic radio health check interval |
 
 State constants (`ELERO_STATE_*`): `UNKNOWN`, `TOP`, `BOTTOM`, `INTERMEDIATE`, `TILT`, `BLOCKING`, `OVERHEATED`, `TIMEOUT`, `START_MOVING_UP`, `START_MOVING_DOWN`, `MOVING_UP`, `MOVING_DOWN`, `STOPPED`, `TOP_TILT`, `BOTTOM_TILT`, `OFF` (0x0f, same as `BOTTOM_TILT`), `ON` (0x10)
 
+Key enums:
+- `TxState` — TX state machine states (`IDLE`, `TRANSMITTING`, `COOLDOWN`)
+- `DeviceType` — device classification (`COVER = 0`, `LIGHT = 1`)
+
 Key structs:
 - `t_elero_command` — RF command parameters (counter, addresses, channel, pck_inf, hop, payload)
 - `DiscoveredBlind` — discovered blind data (address, remote, channel, RSSI, state, `params_from_command` flag)
-- `RuntimeBlind` — adopted blind data (extends discovered with name, timing config, command queue)
+- `RuntimeBlind` — adopted blind data (extends discovered with name, `device_type`, timing config, command queue)
 - `RawPacket` — captured RF packet (timestamp, FIFO data, valid flag, reject reason)
 - `LogEntry` — captured log line (timestamp, level, tag, message)
+
+Thread-safety:
+- `log_mutex_` (`std::mutex`) protects all log buffer access (`append_log`, `get_log_entries_copy`, `clear_log_entries`)
+- All `std::atomic` operations use explicit `std::memory_order_acquire`/`release` for correct multi-core ESP32 ISR synchronization
 
 ### `components/elero/cover/EleroCover.h` / `EleroCover.cpp`
 
@@ -253,6 +291,7 @@ Key behaviors:
 - Configurable command bytes: `command_on_`, `command_off_`, `command_dim_up_`, `command_dim_down_`, `command_stop_`, `command_check_`
 - `ignore_write_state_` flag prevents feedback loops when `set_rx_state()` triggers `write_state()`
 - Supports optional status checking via `command_check_`
+- Full web API support: `EleroLightBase` exposes identity, state, and configuration getters used by `EleroWebServer` for JSON serialization and the web UI
 
 ### `components/elero/button/elero_button.h` / `elero_button.cpp`
 
@@ -269,10 +308,12 @@ Key behaviors:
 
 Key behaviors:
 - Hosts the web UI at `http://<device-ip>/elero` (redirects `/` → `/elero`)
-- Exposes REST API for RF scanning, blind discovery, control, runtime adoption, and diagnostics
+- Exposes REST API for RF scanning, blind/light discovery, control, runtime adoption, and diagnostics
 - All endpoints support CORS via `add_cors_headers()`
 - `EleroWebSwitch` allows runtime enable/disable of all `/elero` endpoints (returns 503 when disabled)
-- URL parsing helper: `parse_addr_url()` extracts hex address from URLs like `/elero/api/covers/0xABCDEF/command`
+- URL parsing helper: `parse_addr_url()` extracts hex address from URLs like `/elero/api/covers/0xABCDEF/command` and `/elero/api/lights/0xABCDEF/command`
+- JSON fragment builders (`build_configured_json_()`, `build_discovered_array_json_()`, etc.) are reused by individual handlers and the combined status endpoint
+- Frontend uses a request serialization queue (max 1 in-flight request) to prevent ESP32 socket exhaustion (ENFILE error 23)
 
 ### REST API Endpoints
 
@@ -287,7 +328,8 @@ All endpoints are served at `http://<device-ip>/elero` and support CORS. A 503 r
 | `/elero/api/scan/start` | POST | Start RF discovery scan |
 | `/elero/api/scan/stop` | POST | Stop RF discovery scan |
 | `/elero/api/discovered` | GET | JSON array of discovered blinds |
-| `/elero/api/configured` | GET | JSON array of configured covers with current state |
+| `/elero/api/configured` | GET | JSON object with configured covers and lights |
+| `/elero/api/status` | GET | Combined status: covers, lights, runtime, diagnostics (single poll) |
 | `/elero/api/yaml` | GET | YAML snippet ready to paste into ESPHome config |
 | `/elero/api/info` | GET | Device info (version, discovery count, etc.) |
 | `/elero/api/runtime` | GET | JSON array of runtime-adopted blinds |
@@ -296,8 +338,9 @@ All endpoints are served at `http://<device-ip>/elero` and support CORS. A 503 r
 
 | Endpoint | Method | Description |
 |---|---|---|
-| `/elero/api/covers/0xADDRESS/command` | POST | Send command to cover/light (`{"cmd": "up"\|"down"\|"stop"\|"tilt"}`) |
+| `/elero/api/covers/0xADDRESS/command` | POST | Send command to cover (`{"cmd": "up"\|"down"\|"stop"\|"tilt"}`) |
 | `/elero/api/covers/0xADDRESS/settings` | POST | Update cover settings at runtime (timing/poll) |
+| `/elero/api/lights/0xADDRESS/command` | POST | Send command to light (`{"cmd": "on"\|"off"\|"stop"}`) |
 
 **Runtime blind adoption:**
 
@@ -356,7 +399,7 @@ The web UI is built from source files in `components/elero_web/frontend/` using 
 | C++ classes | PascalCase | `EleroCover`, `EleroWebServer`, `EleroLightBase` |
 | C++ namespaces | lowercase | `esphome::elero` |
 | C++ constants | `UPPER_SNAKE_CASE` with `ELERO_` prefix | `ELERO_COMMAND_COVER_UP`, `ELERO_TX_LATENCY_COMPENSATION_MS` |
-| C++ enums | `PascalCase` enum class with `PascalCase` values | `TxState::GOING_IDLE` |
+| C++ enums | `PascalCase` enum class with `UPPER_CASE` values | `TxState::TRANSMITTING`, `DeviceType::COVER` |
 | C++ private members | trailing underscore | `gdo0_pin_`, `scan_mode_`, `tx_state_` |
 | C++ structs | PascalCase | `DiscoveredBlind`, `RuntimeBlind`, `RawPacket` |
 | Python config keys | `snake_case` string constants | `"blind_address"`, `"gdo0_pin"` |
@@ -417,6 +460,8 @@ elero:
   freq0: 0x7a            # CC1101 FREQ0 register (optional, default 868.35 MHz)
   freq1: 0x71            # CC1101 FREQ1 register
   freq2: 0x21            # CC1101 FREQ2 register
+  send_repeats: 5        # RF packet repetitions per command (1–20, default 5)
+  send_delay: 1ms        # Delay between repeated packets (default 1ms)
 ```
 
 Default frequency registers (`freq2=0x21, freq1=0x71, freq0=0x7a`) correspond to **868.35 MHz**. Use `freq0=0xc0` for 868.95 MHz variants.
@@ -533,6 +578,11 @@ When the switch is OFF, all `/elero` endpoints return HTTP 503 (Service Unavaila
 - An existing Elero wireless blind system nearby for testing
 - Node.js (for web UI frontend development only)
 
+### External dependencies
+
+- **RadioLib v7.1.2** — added automatically via `cg.add_library("jgromes/RadioLib", "7.1.2")` in the hub's `to_code()`
+- **ESPHome 2026.1.0+ compatibility** — the hub's `to_code()` calls `request_log_listener()` to reserve a log listener slot for the StaticVector migration; gracefully falls back for older ESPHome versions
+
 ### Local development
 
 Since this is an external component consumed from GitHub, local iteration requires pointing ESPHome at a local path:
@@ -611,8 +661,8 @@ There are no automated tests in this repository. Validation is done manually on 
 - **Poll interval `never`**: Set `poll_interval: never` for blinds that reliably push state updates (avoids unnecessary RF traffic). Internally this maps to `uint32_t` max (4 294 967 295 ms).
 - **TX busy**: `send_command()` returns `false` when the TX state machine is not idle. Callers must check `is_tx_idle()` or handle the rejection.
 - **CC1101 SFTX/SFRX validity**: SFTX is only valid in IDLE or TXFIFO_UNDERFLOW states; SFRX is only valid in IDLE or RXFIFO_OVERFLOW states (per CC1101 datasheet). Issuing these strobes in other states silently corrupts radio state. The TX state machine must respect this.
-- **RX FIFO stale data after TX**: When SIDLE interrupts an in-progress packet reception, partial data remains in the RX FIFO. This must be flushed before TX to prevent `process_rx()` from misinterpreting it after TX completes.
-- **RXFIFO_OVERFLOW during TX**: While TX is active, the ISR skips setting `rx_ready_`, so RX FIFO overflow goes undetected until the radio watchdog catches it. The post-TX FIFO health check and 5-second watchdog handle this.
+- **RX FIFO stale data after TX**: When `standby()` interrupts an in-progress packet reception, partial data remains in the RX FIFO. `send_command()` flushes both FIFOs after entering IDLE to prevent `process_rx()` from misinterpreting stale data after TX completes.
+- **RXFIFO_OVERFLOW during TX**: While TX is active, `process_rx()` does not run, so RX FIFO overflow goes undetected until the post-TX FIFO health check or the 5-second radio watchdog catches it.
 - **Command queue overflow**: Each blind's command queue is capped at `ELERO_MAX_COMMAND_QUEUE` (10) to prevent OOM on ESP32.
 - **Web UI `elero_web_ui.h`**: This file is auto-generated by the frontend build system. Always rebuild via `npm run build` in the `frontend/` directory — never edit by hand.
 
