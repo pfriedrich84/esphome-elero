@@ -165,6 +165,10 @@ struct RuntimeBlind {
   uint8_t cmd_counter{1};
   std::queue<uint8_t> command_queue;
   uint8_t send_packets_count{0};
+  // Position tracking (dead-reckoning)
+  float position{-1.0f};               // 0.0 = closed, 1.0 = open, -1.0 = unknown
+  uint32_t last_recompute_ms{0};        // millis() of last position recompute
+  int8_t moving_direction{0};           // -1 = closing, 0 = stopped, +1 = opening
 };
 
 const char *elero_state_to_string(uint8_t state);
@@ -311,6 +315,9 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
 #endif
 #ifdef USE_TEXT_SENSOR
   void register_text_sensor(uint32_t address, text_sensor::TextSensor *sensor);
+  /// Publish a string to the text sensor registered for a given blind address.
+  /// No-op if no text sensor is registered for the address.
+  void publish_text_sensor_state(uint32_t address, const std::string &state);
 #endif
 
   // Discovery / scan mode
@@ -364,6 +371,11 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void set_log_capture(bool en) { log_capture_ = en; }
   bool is_log_capture_active() const { return log_capture_; }
 
+  // Diagnostic counters for radio health monitoring
+  uint32_t get_rx_count() const { return rx_count_; }
+  uint32_t get_tx_count() const { return tx_count_; }
+  uint32_t get_watchdog_recovery_count() const { return watchdog_recovery_count_; }
+
   void set_gdo0_pin(InternalGPIOPin *pin) { gdo0_pin_ = pin; }
   void set_freq0(uint8_t freq) { freq0_ = freq; }
   void set_freq1(uint8_t freq) { freq1_ = freq; }
@@ -373,6 +385,8 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   uint8_t get_send_repeats() const { return send_repeats_; }
   uint32_t get_send_delay() const { return send_delay_; }
   void reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0);
+  bool reinit_frequency_mhz(float mhz);
+  static float registers_to_mhz(uint8_t freq2, uint8_t freq1, uint8_t freq0);
   uint8_t get_freq0() const { return freq0_; }
   uint8_t get_freq1() const { return freq1_; }
   uint8_t get_freq2() const { return freq2_; }
@@ -382,6 +396,8 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void process_rx();
   void advance_tx();
   void drain_runtime_queues();
+  void recompute_runtime_positions_();
+  void update_runtime_blind_direction_(RuntimeBlind &rb, uint8_t state);
   void tx_abort_();
 
   bool wait_rx();
@@ -444,6 +460,11 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   std::vector<RawPacket> raw_packets_;
   uint16_t raw_packet_write_idx_{0};
   std::map<uint32_t, RuntimeBlind> runtime_blinds_;
+  // Diagnostic counters
+  uint32_t rx_count_{0};
+  uint32_t tx_count_{0};
+  uint32_t watchdog_recovery_count_{0};
+
   // Log buffer (protected by log_mutex_ — logger callback runs in a different context)
   uint32_t last_radio_check_ms_{0};
   bool log_capture_{false};

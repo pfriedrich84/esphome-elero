@@ -51,8 +51,18 @@ void EleroLight::write_state(LightState *state) {
   float new_brightness = state->current_values.get_brightness();
 
   if (!new_on) {
-    if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE)
+    if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE) {
       this->commands_to_send_.push(this->command_off_);
+    } else {
+      ESP_LOGW(TAG, "Command queue full for light 0x%06x, dropping OFF command",
+               this->command_.blind_addr);
+#ifdef USE_TEXT_SENSOR
+      if (!this->queue_full_published_) {
+        this->parent_->publish_text_sensor_state(this->command_.blind_addr, "queue_full");
+        this->queue_full_published_ = true;
+      }
+#endif
+    }
     this->is_on_ = false;
     this->is_dimming_ = false;
     this->brightness_ = 0.0f;
@@ -64,8 +74,18 @@ void EleroLight::write_state(LightState *state) {
 
   if (this->dim_duration_ == 0) {
     // No brightness support: just toggle on
-    if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE)
+    if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE) {
       this->commands_to_send_.push(this->command_on_);
+    } else {
+      ESP_LOGW(TAG, "Command queue full for light 0x%06x, dropping ON command",
+               this->command_.blind_addr);
+#ifdef USE_TEXT_SENSOR
+      if (!this->queue_full_published_) {
+        this->parent_->publish_text_sensor_state(this->command_.blind_addr, "queue_full");
+        this->queue_full_published_ = true;
+      }
+#endif
+    }
     this->brightness_ = 1.0f;
     return;
   }
@@ -157,6 +177,12 @@ void EleroLight::handle_commands(uint32_t now) {
           this->commands_to_send_.pop();
           this->send_packets_ = 0;
           this->increase_counter();
+#ifdef USE_TEXT_SENSOR
+          // Auto-reset queue_full status when queue drains
+          if (this->queue_full_published_ && this->commands_to_send_.empty()) {
+            this->queue_full_published_ = false;
+          }
+#endif
         }
         this->last_command_ = now;
       } else {
