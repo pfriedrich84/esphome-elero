@@ -22,13 +22,12 @@ namespace elero {
 
 /// Non-blocking TX state machine states.
 /// The radio is always in RX when IDLE; TX progresses one step per loop().
+/// RadioLib's standby() handles the IDLE transition synchronously in
+/// send_command(), so only 3 states remain.
 enum class TxState : uint8_t {
   IDLE,           ///< Radio in RX, ready for TX
-  GOING_IDLE,     ///< Sent SIDLE strobe, waiting for MARCSTATE=IDLE
-  FIRING,         ///< STX sent, waiting for MARCSTATE=TX
-  TRANSMITTING,   ///< In TX, waiting for MARCSTATE to leave TX (packet sent)
-  VERIFYING,      ///< TX finished, verifying TXBYTES==0
-  COOLDOWN,       ///< Brief pause before accepting next TX
+  TRANSMITTING,   ///< Packet loaded and STX sent, waiting for TX to complete
+  COOLDOWN,       ///< Brief pause before resuming RX
 };
 
 }  // namespace elero
@@ -93,7 +92,6 @@ static const uint8_t ELERO_MAX_DISCOVERED = 20; // max discovered blinds to trac
 static const uint8_t ELERO_MAX_RAW_PACKETS = 50; // max raw packets in dump ring buffer
 
 // Diagnostics thresholds
-static const uint8_t  ELERO_GDO0_MISS_WARN_THRESHOLD = 10; // warn after N consecutive TX completions without GDO0
 static const uint8_t  ELERO_MAX_RX_PER_LOOP = 4;           // max packets drained per process_rx() call
 static const uint32_t ELERO_POLL_STAGGER_MS = 5000;         // stagger offset between cover poll timers
 
@@ -387,7 +385,6 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void tx_abort_();
 
   bool wait_rx();
-  bool wait_idle();
 
   uint8_t count_bits(uint8_t byte);
   void calc_parity(uint8_t* msg);
@@ -407,21 +404,19 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void mark_last_raw_packet_(bool valid, const char *reason);
   void check_radio_state_();
 
-  // Dual interrupt flags: decouple RX-ready from TX-done detection.
-  // rx_ready_ is set by the ISR only when the radio is in RX (TxState::IDLE
-  // or COOLDOWN).  gdo0_fired_ is always set so the TX state machine can
-  // detect TX completion.
+  // RX interrupt flag: set by ISR when GDO0 fires (packet received).
+  // Stale flags during TX are harmlessly ignored (process_rx() only runs
+  // when tx_state_ == IDLE).
   std::atomic<bool> rx_ready_{false};
-  std::atomic<bool> gdo0_fired_{false};
 
-  // TX state machine — atomic because the ISR reads tx_state_ to decide
-  // whether to set rx_ready_ (see interrupt()).
+  // TX state machine — no longer read by ISR, but kept atomic for
+  // consistency with is_tx_idle() which may be called from other contexts.
   std::atomic<TxState> tx_state_{TxState::IDLE};
   uint32_t tx_state_entered_ms_{0};
   uint32_t last_tx_complete_ms_{0};
-  uint8_t gdo0_miss_count_{0};  // consecutive TX completions without GDO0
 
-  // RadioLib instances (hybrid mode: used only for SPI register access)
+  // RadioLib instances — standby() used for IDLE transition, SPI register
+  // access with verify-readback for init/config.
   EspHomeRadioLibHal radio_hal_;
   Module *radio_module_{nullptr};
   CC1101 *radio_{nullptr};
