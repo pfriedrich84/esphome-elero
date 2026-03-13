@@ -694,8 +694,9 @@ void Elero::setup() {
   // Forward all ESP_LOG messages into the ring buffer so the web UI Log tab
   // can display them when capture is enabled.
   if (logger::global_logger != nullptr) {
-    this->log_listener_ = new EleroLogListener(this);
-    logger::global_logger->add_log_listener(this->log_listener_);
+    auto *listener = new EleroLogListener(this);
+    this->log_listener_ = listener;
+    logger::global_logger->add_log_listener(listener);
   }
 #endif
 }
