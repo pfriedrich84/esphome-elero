@@ -443,7 +443,9 @@ void Elero::check_radio_state_() {
     if (marc_after != CC1101_MARCSTATE_RX) {
       ESP_LOGW(TAG, "Radio watchdog: flush_rx failed (marc=0x%02x), full reinit", marc_after);
       this->reset();
-      this->init();
+      if (!this->init()) {
+        this->consecutive_watchdog_failures_++;
+      }
     }
     return;
   }
@@ -465,10 +467,10 @@ void Elero::check_radio_state_() {
   this->watchdog_recovery_count_++;
   this->consecutive_watchdog_failures_++;
 
-  // If the watchdog has failed 3+ times in a row without recovery, SPI is
+  // If the watchdog has failed 2+ times in a row without recovery, SPI is
   // likely permanently broken (e.g. GPIO12 strapping pin issue).  Stop
   // retrying to avoid flooding the log.
-  if (this->consecutive_watchdog_failures_ >= 3) {
+  if (this->consecutive_watchdog_failures_ >= 2) {
     ESP_LOGE(TAG, "Radio watchdog: %d consecutive failures — SPI appears permanently broken.",
              this->consecutive_watchdog_failures_);
     ESP_LOGE(TAG, "  If GPIO12 is used for SPI MISO, it may be pulling VDD_SDIO to 1.8V at boot.");
@@ -479,7 +481,10 @@ void Elero::check_radio_state_() {
   }
 
   this->reset();
-  this->init();
+  if (!this->init()) {
+    // init() detected SPI failure — escalate immediately on next watchdog
+    this->consecutive_watchdog_failures_++;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -673,16 +678,7 @@ void Elero::setup() {
   this->gdo0_pin_->setup();
   this->gdo0_pin_->attach_interrupt(Elero::interrupt, this, gpio::INTERRUPT_FALLING_EDGE);
   this->reset();
-  this->init();
-
-  // SPI health check: verify that register writes actually stick by reading
-  // back a known config register.  If SPI is completely broken (e.g. due to
-  // GPIO12 strapping pin pulling VDD_SDIO to 1.8V), every read returns 0x00
-  // or 0xFF and the radio can never initialize.
-  uint8_t test_val = this->read_reg(CC1101_FREQ2);
-  if (test_val != this->freq2_) {
-    ESP_LOGE(TAG, "SPI health check FAILED: wrote 0x%02x to FREQ2, read back 0x%02x",
-             this->freq2_, test_val);
+  if (!this->init()) {
     ESP_LOGE(TAG, "CC1101 SPI communication is broken — the radio is non-functional.");
     ESP_LOGE(TAG, "Common cause: GPIO12 is an ESP32 strapping pin that controls flash voltage.");
     ESP_LOGE(TAG, "  If GPIO12 is used as SPI MISO, the CC1101 can pull it HIGH at boot,");
@@ -804,10 +800,19 @@ void Elero::reset() {
   this->disable();
 }
 
-void Elero::init() {
+bool Elero::init() {
+  // Early SPI health check: write one register and verify readback.
+  // If SPI is broken (e.g. GPIO12 strapping pin pulling VDD_SDIO to 1.8V),
+  // this catches it immediately instead of logging ~25 individual failures.
+  this->write_reg(CC1101_FSCTRL1, 0x08);
+  uint8_t check = this->read_reg(CC1101_FSCTRL1);
+  if (check != 0x08) {
+    ESP_LOGE(TAG, "init: SPI health check failed (wrote 0x08, read 0x%02x) — aborting init", check);
+    return false;
+  }
+
   uint8_t patable_data[] = {0xc0, 0xc0, 0xc0, 0xc0, 0xc0, 0xc0, 0xc0, 0xc0};
 
-  this->write_reg(CC1101_FSCTRL1, 0x08);
   this->write_reg(CC1101_FSCTRL0, 0x00);
   this->write_reg(CC1101_FREQ2, this->freq2_);
   this->write_reg(CC1101_FREQ1, this->freq1_);
@@ -848,7 +853,9 @@ void Elero::init() {
   this->write_cmd(CC1101_SRX);
   if (!this->wait_rx()) {
     ESP_LOGW(TAG, "init: CC1101 failed to enter RX after configuration");
+    return false;
   }
+  return true;
 }
 
 void Elero::write_reg(uint8_t addr, uint8_t data) {
@@ -1504,7 +1511,11 @@ bool Elero::send_command(t_elero_command *cmd) {
     ESP_LOGW(TAG, "send_command: radio not in IDLE (marc=0x%02x), reinitializing (%d/%d)",
              marc, this->send_cmd_reinit_failures_, 3);
     this->reset();
-    this->init();
+    if (!this->init()) {
+      // init() SPI health check failed — escalate failure count so we bail
+      // faster on the next call instead of spamming 25+ register-write warnings.
+      this->send_cmd_reinit_failures_++;
+    }
     return false;
   }
   this->send_cmd_reinit_failures_ = 0;
