@@ -679,15 +679,23 @@ void Elero::setup() {
   this->gdo0_pin_->attach_interrupt(Elero::interrupt, this, gpio::INTERRUPT_FALLING_EDGE);
   this->reset();
   if (!this->init()) {
-    ESP_LOGE(TAG, "CC1101 SPI communication is broken — the radio is non-functional.");
-    ESP_LOGE(TAG, "Common cause: GPIO12 is an ESP32 strapping pin that controls flash voltage.");
-    ESP_LOGE(TAG, "  If GPIO12 is used as SPI MISO, the CC1101 can pull it HIGH at boot,");
-    ESP_LOGE(TAG, "  setting VDD_SDIO to 1.8V and breaking all SPI communication.");
-    ESP_LOGE(TAG, "  Solution: use non-strapping pins for SPI (e.g. CLK=18, MISO=19, MOSI=23).");
-    ESP_LOGE(TAG, "  ESP32 strapping pins to avoid: GPIO0, GPIO2, GPIO5, GPIO12, GPIO15.");
-    this->spi_failed_ = true;
-    this->mark_failed(LOG_STR("CC1101 SPI communication broken — check pin assignments"));
-    return;
+    // First reset+init failed — try once more with a longer post-reset delay.
+    // Some CC1101 modules or ESP32 boot sequences need additional settling time.
+    ESP_LOGW(TAG, "First init failed, retrying reset+init with extended delay...");
+    delay(10);  // 10ms extra settling time
+    this->reset();
+    if (!this->init()) {
+      ESP_LOGE(TAG, "CC1101 SPI communication is broken — the radio is non-functional.");
+      ESP_LOGE(TAG, "Common cause: GPIO12 is an ESP32 strapping pin that controls flash voltage.");
+      ESP_LOGE(TAG, "  If GPIO12 is used as SPI MISO, the CC1101 can pull it HIGH at boot,");
+      ESP_LOGE(TAG, "  setting VDD_SDIO to 1.8V and breaking all SPI communication.");
+      ESP_LOGE(TAG, "  Solution: use non-strapping pins for SPI (e.g. CLK=18, MISO=19, MOSI=23).");
+      ESP_LOGE(TAG, "  ESP32 strapping pins to avoid: GPIO0, GPIO2, GPIO5, GPIO12, GPIO15.");
+      this->spi_failed_ = true;
+      this->mark_failed(LOG_STR("CC1101 SPI communication broken — check pin assignments"));
+      return;
+    }
+    ESP_LOGI(TAG, "CC1101 init succeeded on second attempt after extended reset delay");
   }
 
 #ifdef USE_LOGGER
@@ -803,12 +811,31 @@ void Elero::reset() {
 
 bool Elero::init() {
   // Early SPI health check: write one register and verify readback.
-  // If SPI is broken (e.g. GPIO12 strapping pin pulling VDD_SDIO to 1.8V),
-  // this catches it immediately instead of logging ~25 individual failures.
-  this->write_reg(CC1101_FSCTRL1, 0x08);
-  uint8_t check = this->read_reg(CC1101_FSCTRL1);
-  if (check != 0x08) {
-    ESP_LOGE(TAG, "init: SPI health check failed (wrote 0x08, read 0x%02x) — aborting init", check);
+  // Retry up to 3 times with increasing delays — after reset(), some CC1101
+  // modules need additional stabilization time before SPI responds correctly.
+  const uint8_t max_spi_retries = 3;
+  bool spi_ok = false;
+  for (uint8_t attempt = 1; attempt <= max_spi_retries; attempt++) {
+    this->write_reg(CC1101_FSCTRL1, 0x08);
+    uint8_t check = this->read_reg(CC1101_FSCTRL1);
+    if (check == 0x08) {
+      spi_ok = true;
+      if (attempt > 1) {
+        ESP_LOGI(TAG, "init: SPI health check passed on attempt %d/%d", attempt, max_spi_retries);
+      }
+      break;
+    }
+    if (attempt < max_spi_retries) {
+      uint32_t delay_us = (attempt == 1) ? 1000 : 5000;
+      ESP_LOGW(TAG, "init: SPI health check attempt %d/%d failed (wrote 0x08, read 0x%02x), retrying in %d us",
+               attempt, max_spi_retries, check, delay_us);
+      delay_microseconds_safe(delay_us);
+    } else {
+      ESP_LOGE(TAG, "init: SPI health check failed after %d attempts (wrote 0x08, read 0x%02x) — aborting init",
+               max_spi_retries, check);
+    }
+  }
+  if (!spi_ok) {
     return false;
   }
 
