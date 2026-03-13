@@ -112,6 +112,7 @@ void EspHomeRadioLibHal::spiTransfer(uint8_t *out, size_t len, uint8_t *in) {
 void EspHomeRadioLibHal::spiEndTransaction() {
   if (this->spi_parent_ != nullptr) {
     static_cast<Elero *>(this->spi_parent_)->disable();
+    delay_microseconds_safe(15);  // Match main's inter-transaction settling time for CC1101
   }
 }
 void EspHomeRadioLibHal::spiEnd() {
@@ -641,7 +642,7 @@ void Elero::dump_config() {
   LOG_PIN("  GDO0 Pin: ", this->gdo0_pin_);
   ESP_LOGCONFIG(TAG, "  freq2: 0x%02x, freq1: 0x%02x, freq0: 0x%02x", this->freq2_, this->freq1_, this->freq0_);
   ESP_LOGCONFIG(TAG, "  Send repeats: %d, send delay: %d ms", this->send_repeats_, this->send_delay_);
-  ESP_LOGCONFIG(TAG, "  RadioLib: standby() + SPI register access with verify-readback");
+  ESP_LOGCONFIG(TAG, "  RadioLib: standby() + SPI register access with verify-readback (15us settling)");
   if (this->spi_failed_) {
     ESP_LOGCONFIG(TAG, "  SPI Status: FAILED — CC1101 communication broken");
     ESP_LOGCONFIG(TAG, "  Check SPI pin assignments — avoid ESP32 strapping pins (GPIO0/2/5/12/15)");
@@ -803,7 +804,7 @@ void Elero::reset() {
   // further commands.
   this->enable();
   this->transfer_byte(CC1101_SRES);
-  delay_microseconds_safe(1000);
+  delay_microseconds_safe(5000);  // 5ms — give CC1101 crystal oscillator time to stabilize after SRES
   this->transfer_byte(CC1101_SIDLE);
   delay_microseconds_safe(100);
   this->disable();
@@ -811,9 +812,11 @@ void Elero::reset() {
 
 bool Elero::init() {
   // Early SPI health check: write one register and verify readback.
-  // Retry up to 3 times with increasing delays — after reset(), some CC1101
+  // Retry up to 5 times with exponential backoff — after reset(), some CC1101
   // modules need additional stabilization time before SPI responds correctly.
-  const uint8_t max_spi_retries = 3;
+  // RadioLib's SPIsetRegValue does read-before-write + verify, so each attempt
+  // involves 3 SPI transactions.
+  const uint8_t max_spi_retries = 5;
   bool spi_ok = false;
   for (uint8_t attempt = 1; attempt <= max_spi_retries; attempt++) {
     this->write_reg(CC1101_FSCTRL1, 0x08);
@@ -826,8 +829,8 @@ bool Elero::init() {
       break;
     }
     if (attempt < max_spi_retries) {
-      uint32_t delay_us = (attempt == 1) ? 1000 : 5000;
-      ESP_LOGW(TAG, "init: SPI health check attempt %d/%d failed (wrote 0x08, read 0x%02x), retrying in %d us",
+      uint32_t delay_us = 2000u * (1u << (attempt - 1));  // 2ms, 4ms, 8ms, 16ms
+      ESP_LOGW(TAG, "init: SPI health check attempt %d/%d failed (wrote 0x08, read 0x%02x), retrying in %u us",
                attempt, max_spi_retries, check, delay_us);
       delay_microseconds_safe(delay_us);
     } else {
