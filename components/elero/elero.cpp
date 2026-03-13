@@ -112,6 +112,7 @@ void EspHomeRadioLibHal::spiTransfer(uint8_t *out, size_t len, uint8_t *in) {
 void EspHomeRadioLibHal::spiEndTransaction() {
   if (this->spi_parent_ != nullptr) {
     static_cast<Elero *>(this->spi_parent_)->disable();
+    delay_microseconds_safe(15);  // Match main's inter-transaction settling time for CC1101
   }
 }
 void EspHomeRadioLibHal::spiEnd() {
@@ -641,7 +642,7 @@ void Elero::dump_config() {
   LOG_PIN("  GDO0 Pin: ", this->gdo0_pin_);
   ESP_LOGCONFIG(TAG, "  freq2: 0x%02x, freq1: 0x%02x, freq0: 0x%02x", this->freq2_, this->freq1_, this->freq0_);
   ESP_LOGCONFIG(TAG, "  Send repeats: %d, send delay: %d ms", this->send_repeats_, this->send_delay_);
-  ESP_LOGCONFIG(TAG, "  RadioLib: standby() + SPI register access with verify-readback");
+  ESP_LOGCONFIG(TAG, "  RadioLib: begin() + standby() + setFrequency(); direct SPI for register access");
   if (this->spi_failed_) {
     ESP_LOGCONFIG(TAG, "  SPI Status: FAILED — CC1101 communication broken");
     ESP_LOGCONFIG(TAG, "  Check SPI pin assignments — avoid ESP32 strapping pins (GPIO0/2/5/12/15)");
@@ -679,15 +680,23 @@ void Elero::setup() {
   this->gdo0_pin_->attach_interrupt(Elero::interrupt, this, gpio::INTERRUPT_FALLING_EDGE);
   this->reset();
   if (!this->init()) {
-    ESP_LOGE(TAG, "CC1101 SPI communication is broken — the radio is non-functional.");
-    ESP_LOGE(TAG, "Common cause: GPIO12 is an ESP32 strapping pin that controls flash voltage.");
-    ESP_LOGE(TAG, "  If GPIO12 is used as SPI MISO, the CC1101 can pull it HIGH at boot,");
-    ESP_LOGE(TAG, "  setting VDD_SDIO to 1.8V and breaking all SPI communication.");
-    ESP_LOGE(TAG, "  Solution: use non-strapping pins for SPI (e.g. CLK=18, MISO=19, MOSI=23).");
-    ESP_LOGE(TAG, "  ESP32 strapping pins to avoid: GPIO0, GPIO2, GPIO5, GPIO12, GPIO15.");
-    this->spi_failed_ = true;
-    this->mark_failed(LOG_STR("CC1101 SPI communication broken — check pin assignments"));
-    return;
+    // First reset+init failed — try once more with a longer post-reset delay.
+    // Some CC1101 modules or ESP32 boot sequences need additional settling time.
+    ESP_LOGW(TAG, "First init failed, retrying reset+init with extended delay...");
+    delay(10);  // 10ms extra settling time
+    this->reset();
+    if (!this->init()) {
+      ESP_LOGE(TAG, "CC1101 SPI communication is broken — the radio is non-functional.");
+      ESP_LOGE(TAG, "Common cause: GPIO12 is an ESP32 strapping pin that controls flash voltage.");
+      ESP_LOGE(TAG, "  If GPIO12 is used as SPI MISO, the CC1101 can pull it HIGH at boot,");
+      ESP_LOGE(TAG, "  setting VDD_SDIO to 1.8V and breaking all SPI communication.");
+      ESP_LOGE(TAG, "  Solution: use non-strapping pins for SPI (e.g. CLK=18, MISO=19, MOSI=23).");
+      ESP_LOGE(TAG, "  ESP32 strapping pins to avoid: GPIO0, GPIO2, GPIO5, GPIO12, GPIO15.");
+      this->spi_failed_ = true;
+      this->mark_failed(LOG_STR("CC1101 SPI communication broken — check pin assignments"));
+      return;
+    }
+    ESP_LOGI(TAG, "CC1101 init succeeded on second attempt after extended reset delay");
   }
 
 #ifdef USE_LOGGER
@@ -795,7 +804,7 @@ void Elero::reset() {
   // further commands.
   this->enable();
   this->transfer_byte(CC1101_SRES);
-  delay_microseconds_safe(1000);
+  delay_microseconds_safe(5000);  // 5ms — give CC1101 crystal oscillator time to stabilize after SRES
   this->transfer_byte(CC1101_SIDLE);
   delay_microseconds_safe(100);
   this->disable();
@@ -803,12 +812,33 @@ void Elero::reset() {
 
 bool Elero::init() {
   // Early SPI health check: write one register and verify readback.
-  // If SPI is broken (e.g. GPIO12 strapping pin pulling VDD_SDIO to 1.8V),
-  // this catches it immediately instead of logging ~25 individual failures.
-  this->write_reg(CC1101_FSCTRL1, 0x08);
-  uint8_t check = this->read_reg(CC1101_FSCTRL1);
-  if (check != 0x08) {
-    ESP_LOGE(TAG, "init: SPI health check failed (wrote 0x08, read 0x%02x) — aborting init", check);
+  // Retry up to 5 times with exponential backoff — after reset(), some CC1101
+  // modules need additional stabilization time before SPI responds correctly.
+  // RadioLib's SPIsetRegValue does read-before-write + verify, so each attempt
+  // involves 3 SPI transactions.
+  const uint8_t max_spi_retries = 5;
+  bool spi_ok = false;
+  for (uint8_t attempt = 1; attempt <= max_spi_retries; attempt++) {
+    this->write_reg(CC1101_FSCTRL1, 0x08);
+    uint8_t check = this->read_reg(CC1101_FSCTRL1);
+    if (check == 0x08) {
+      spi_ok = true;
+      if (attempt > 1) {
+        ESP_LOGI(TAG, "init: SPI health check passed on attempt %d/%d", attempt, max_spi_retries);
+      }
+      break;
+    }
+    if (attempt < max_spi_retries) {
+      uint32_t delay_us = 2000u * (1u << (attempt - 1));  // 2ms, 4ms, 8ms, 16ms
+      ESP_LOGW(TAG, "init: SPI health check attempt %d/%d failed (wrote 0x08, read 0x%02x), retrying in %u us",
+               attempt, max_spi_retries, check, delay_us);
+      delay_microseconds_safe(delay_us);
+    } else {
+      ESP_LOGE(TAG, "init: SPI health check failed after %d attempts (wrote 0x08, read 0x%02x) — aborting init",
+               max_spi_retries, check);
+    }
+  }
+  if (!spi_ok) {
     return false;
   }
 
@@ -860,22 +890,20 @@ bool Elero::init() {
 }
 
 void Elero::write_reg(uint8_t addr, uint8_t data) {
-  // RadioLib SPIsetRegValue does verify-readback for config registers (0x00-0x2E).
-  // Status registers and FIFOs are write-only — use raw write for those.
-  if (addr <= CC1101_TEST0) {
-    int16_t rc = this->radio_module_->SPIsetRegValue(addr, data);
-    if (rc != RADIOLIB_ERR_NONE) {
-      ESP_LOGW(TAG, "SPI write verify failed: reg=0x%02x val=0x%02x rc=%d", addr, data, rc);
-    }
-  } else {
-    this->radio_module_->SPIwriteRegister(addr, data);
-  }
+  this->enable();
+  this->write_byte(addr);
+  this->write_byte(data);
+  this->disable();
+  delay_microseconds_safe(15);
 }
 
 void Elero::write_burst(uint8_t addr, uint8_t *data, uint8_t len) {
-  // Use RadioLib's burst write — handles SPI framing and burst flag internally.
-  // SPIwriteRegisterBurst returns void; no error code to check.
-  this->radio_module_->SPIwriteRegisterBurst(addr, data, len);
+  this->enable();
+  this->write_byte(addr | CC1101_WRITE_BURST);
+  for (uint8_t i = 0; i < len; i++)
+    this->write_byte(data[i]);
+  this->disable();
+  delay_microseconds_safe(15);
 }
 
 void Elero::write_cmd(uint8_t cmd) {
@@ -905,12 +933,13 @@ bool Elero::wait_rx() {
 // use send_command() which kicks off the state machine instead.
 
 uint8_t Elero::read_reg(uint8_t addr) {
-  int16_t val = this->radio_module_->SPIgetRegValue(addr);
-  if (val < 0) {
-    ESP_LOGW(TAG, "SPI read failed: reg=0x%02x rc=%d", addr, val);
-    return 0;
-  }
-  return (uint8_t) val;
+  uint8_t data;
+  this->enable();
+  this->write_byte(addr | CC1101_READ_SINGLE);
+  data = this->read_byte();
+  this->disable();
+  delay_microseconds_safe(15);
+  return data;
 }
 
 uint8_t Elero::read_status(uint8_t addr) {
