@@ -642,7 +642,7 @@ void Elero::dump_config() {
   LOG_PIN("  GDO0 Pin: ", this->gdo0_pin_);
   ESP_LOGCONFIG(TAG, "  freq2: 0x%02x, freq1: 0x%02x, freq0: 0x%02x", this->freq2_, this->freq1_, this->freq0_);
   ESP_LOGCONFIG(TAG, "  Send repeats: %d, send delay: %d ms", this->send_repeats_, this->send_delay_);
-  ESP_LOGCONFIG(TAG, "  RadioLib: standby() + SPI register access with verify-readback (15us settling)");
+  ESP_LOGCONFIG(TAG, "  RadioLib: begin() + standby() + setFrequency(); direct SPI for register access");
   if (this->spi_failed_) {
     ESP_LOGCONFIG(TAG, "  SPI Status: FAILED — CC1101 communication broken");
     ESP_LOGCONFIG(TAG, "  Check SPI pin assignments — avoid ESP32 strapping pins (GPIO0/2/5/12/15)");
@@ -890,22 +890,20 @@ bool Elero::init() {
 }
 
 void Elero::write_reg(uint8_t addr, uint8_t data) {
-  // RadioLib SPIsetRegValue does verify-readback for config registers (0x00-0x2E).
-  // Status registers and FIFOs are write-only — use raw write for those.
-  if (addr <= CC1101_TEST0) {
-    int16_t rc = this->radio_module_->SPIsetRegValue(addr, data);
-    if (rc != RADIOLIB_ERR_NONE) {
-      ESP_LOGW(TAG, "SPI write verify failed: reg=0x%02x val=0x%02x rc=%d", addr, data, rc);
-    }
-  } else {
-    this->radio_module_->SPIwriteRegister(addr, data);
-  }
+  this->enable();
+  this->write_byte(addr);
+  this->write_byte(data);
+  this->disable();
+  delay_microseconds_safe(15);
 }
 
 void Elero::write_burst(uint8_t addr, uint8_t *data, uint8_t len) {
-  // Use RadioLib's burst write — handles SPI framing and burst flag internally.
-  // SPIwriteRegisterBurst returns void; no error code to check.
-  this->radio_module_->SPIwriteRegisterBurst(addr, data, len);
+  this->enable();
+  this->write_byte(addr | CC1101_WRITE_BURST);
+  for (uint8_t i = 0; i < len; i++)
+    this->write_byte(data[i]);
+  this->disable();
+  delay_microseconds_safe(15);
 }
 
 void Elero::write_cmd(uint8_t cmd) {
@@ -935,12 +933,13 @@ bool Elero::wait_rx() {
 // use send_command() which kicks off the state machine instead.
 
 uint8_t Elero::read_reg(uint8_t addr) {
-  int16_t val = this->radio_module_->SPIgetRegValue(addr);
-  if (val < 0) {
-    ESP_LOGW(TAG, "SPI read failed: reg=0x%02x rc=%d", addr, val);
-    return 0;
-  }
-  return (uint8_t) val;
+  uint8_t data;
+  this->enable();
+  this->write_byte(addr | CC1101_READ_SINGLE);
+  data = this->read_byte();
+  this->disable();
+  delay_microseconds_safe(15);
+  return data;
 }
 
 uint8_t Elero::read_status(uint8_t addr) {
