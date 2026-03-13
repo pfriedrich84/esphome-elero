@@ -174,6 +174,8 @@ struct RuntimeBlind {
 
 const char *elero_state_to_string(uint8_t state);
 
+class Elero;  // forward declaration for dispatch_commands
+
 /// Shared command dispatch logic used by both EleroCover and EleroLight.
 /// Returns true if a command was sent or a retry was attempted.
 void dispatch_commands(Elero *parent, std::queue<uint8_t> &queue,

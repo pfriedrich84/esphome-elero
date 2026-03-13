@@ -65,14 +65,12 @@ def _validate_strapping_pins(config):
                 f"Use non-strapping pins instead: CLK=GPIO18, MISO=GPIO19, "
                 f"MOSI=GPIO23, CS=GPIO5, GDO0=GPIO26."
             )
-        # Other strapping pins — warn but allow (e.g. GPIO5 as CS is safe).
+        # Other strapping pins — warn but allow (e.g. GPIO5 as CS is common and safe).
         if pin_num in ESP32_STRAPPING_PINS:
             _LOGGER.warning(
-                "GPIO%d (%s) is an ESP32 strapping pin. If used for SPI "
-                "(especially GPIO12 as MISO), it can cause VDD_SDIO voltage "
-                "issues that break CC1101 communication. Consider using "
-                "non-strapping pins (e.g. CLK=18, MISO=19, MOSI=23, CS=5, "
-                "GDO0=26).",
+                "GPIO%d (%s) is an ESP32 strapping pin. Attaching external "
+                "pull-up/down resistors or peripherals can cause unexpected "
+                "boot failures. GPIO5 as CS is generally safe.",
                 pin_num,
                 key,
             )

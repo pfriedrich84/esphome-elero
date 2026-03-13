@@ -476,7 +476,7 @@ void Elero::check_radio_state_() {
     ESP_LOGE(TAG, "  If GPIO12 is used for SPI MISO, it may be pulling VDD_SDIO to 1.8V at boot.");
     ESP_LOGE(TAG, "  Use non-strapping pins for SPI (e.g. CLK=18, MISO=19, MOSI=23).");
     this->spi_failed_ = true;
-    this->mark_failed();
+    this->mark_failed(LOG_STR("SPI permanently broken — check pin assignments"));
     return;
   }
 
@@ -669,7 +669,7 @@ void Elero::setup() {
     ESP_LOGI(TAG, "RadioLib CC1101 initialized (chip version verified)");
   } else if (rc == RADIOLIB_ERR_CHIP_NOT_FOUND) {
     ESP_LOGE(TAG, "RadioLib: CC1101 chip not found! Check SPI wiring. rc=%d", rc);
-    this->mark_failed();
+    this->mark_failed(LOG_STR("CC1101 chip not found — check SPI wiring"));
     return;
   } else {
     ESP_LOGW(TAG, "RadioLib begin() returned rc=%d, continuing with custom init", rc);
@@ -686,7 +686,7 @@ void Elero::setup() {
     ESP_LOGE(TAG, "  Solution: use non-strapping pins for SPI (e.g. CLK=18, MISO=19, MOSI=23).");
     ESP_LOGE(TAG, "  ESP32 strapping pins to avoid: GPIO0, GPIO2, GPIO5, GPIO12, GPIO15.");
     this->spi_failed_ = true;
-    this->mark_failed();
+    this->mark_failed(LOG_STR("CC1101 SPI communication broken — check pin assignments"));
     return;
   }
 
@@ -694,8 +694,9 @@ void Elero::setup() {
   // Forward all ESP_LOG messages into the ring buffer so the web UI Log tab
   // can display them when capture is enabled.
   if (logger::global_logger != nullptr) {
-    this->log_listener_ = new EleroLogListener(this);
-    logger::global_logger->add_log_listener(this->log_listener_);
+    auto *listener = new EleroLogListener(this);
+    this->log_listener_ = listener;
+    logger::global_logger->add_log_listener(listener);
   }
 #endif
 }
@@ -1504,7 +1505,7 @@ bool Elero::send_command(t_elero_command *cmd) {
         ESP_LOGE(TAG, "  If GPIO12 is used for SPI MISO, it may be pulling VDD_SDIO to 1.8V at boot.");
         ESP_LOGE(TAG, "  Use non-strapping pins for SPI (e.g. CLK=18, MISO=19, MOSI=23).");
         this->spi_failed_ = true;
-        this->mark_failed();
+        this->mark_failed(LOG_STR("SPI permanently broken — check pin assignments"));
       }
       return false;
     }
