@@ -262,7 +262,7 @@ cover:
 | `remote_address` | Hex (24-bit) | Ja | - | Adresse der zu simulierenden Fernbedienung |
 | `open_duration` | Zeitdauer | Nein | `0s` | Fahrzeit zum vollständigen Öffnen |
 | `close_duration` | Zeitdauer | Nein | `0s` | Fahrzeit zum vollständigen Schließen |
-| `poll_interval` | Zeitdauer / `never` | Nein | `5min` | Status-Abfrageintervall |
+| `poll_interval` | Zeitdauer / `never` | Nein | `5min` | Status-Abfrageintervall (`never` deaktiviert; während Fahrt alle 2 s) |
 | `supports_tilt` | Boolean | Nein | `false` | Tilt/Kipp-Unterstützung aktivieren |
 | `payload_1` | Hex (0x00-0xFF) | Nein | `0x00` | Erstes Payload-Byte |
 | `payload_2` | Hex (0x00-0xFF) | Nein | `0x04` | Zweites Payload-Byte |
