@@ -174,6 +174,8 @@ void dispatch_commands(Elero *parent, std::queue<uint8_t> &queue,
                        bool &queue_full_published, uint32_t now,
                        const char *tag, uint32_t blind_addr,
                        void (*increase_counter_fn)(void *ctx), void *ctx) {
+  // Skip immediately if hub SPI is permanently broken — no point retrying.
+  if (parent->is_failed()) return;
   if (!parent->is_tx_idle()) return;
 
   if ((now - last_command) > parent->get_send_delay()) {
@@ -1481,14 +1483,31 @@ bool Elero::send_command(t_elero_command *cmd) {
   // not subject to CCA (Elero motors actively transmit, causing CCA failures).
   this->radio_->standby();
 
-  // Verify we actually reached IDLE — if not, radio is unresponsive
+  // Verify we actually reached IDLE — if not, radio is unresponsive.
+  // Track consecutive reinit failures to detect permanent SPI breakage early
+  // (e.g. GPIO12 strapping pin) without waiting for the 5-second watchdog.
   uint8_t marc = this->read_status(CC1101_MARCSTATE) & 0x1F;
   if (marc != CC1101_MARCSTATE_IDLE) {
-    ESP_LOGW(TAG, "send_command: radio not in IDLE (marc=0x%02x), reinitializing", marc);
+    this->send_cmd_reinit_failures_++;
+    if (this->send_cmd_reinit_failures_ >= 3) {
+      // SPI is permanently broken — stop retrying to avoid log spam.
+      if (!this->spi_failed_) {
+        ESP_LOGE(TAG, "send_command: %d consecutive reinit failures — SPI appears permanently broken.",
+                 this->send_cmd_reinit_failures_);
+        ESP_LOGE(TAG, "  If GPIO12 is used for SPI MISO, it may be pulling VDD_SDIO to 1.8V at boot.");
+        ESP_LOGE(TAG, "  Use non-strapping pins for SPI (e.g. CLK=18, MISO=19, MOSI=23).");
+        this->spi_failed_ = true;
+        this->mark_failed();
+      }
+      return false;
+    }
+    ESP_LOGW(TAG, "send_command: radio not in IDLE (marc=0x%02x), reinitializing (%d/%d)",
+             marc, this->send_cmd_reinit_failures_, 3);
     this->reset();
     this->init();
     return false;
   }
+  this->send_cmd_reinit_failures_ = 0;
 
   // Flush both FIFOs (valid in IDLE state per CC1101 spec): TX for a clean
   // slate, RX to discard any partial packet data from the reception that

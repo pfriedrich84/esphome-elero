@@ -43,15 +43,30 @@ CONFIG_SCHEMA = (
 )
 
 
-def _warn_strapping_pins(config):
-    """Warn if gdo0_pin or cs_pin uses an ESP32 strapping pin."""
+def _validate_strapping_pins(config):
+    """Block GPIO12 for SPI signals; warn about other strapping pins."""
     for key in (CONF_GDO0_PIN, "cs_pin"):
         pin_conf = config.get(key)
         if pin_conf is None:
             continue
         # pin_conf may be a dict with "number" or an int directly
         pin_num = pin_conf.get("number") if isinstance(pin_conf, dict) else pin_conf
-        if isinstance(pin_num, int) and pin_num in ESP32_STRAPPING_PINS:
+        if not isinstance(pin_num, int):
+            continue
+        # GPIO12 is catastrophic for any SPI signal — block compilation.
+        # It controls VDD_SDIO voltage at boot; if the CC1101 pulls it HIGH,
+        # VDD_SDIO locks at 1.8V and breaks all SPI communication permanently.
+        if pin_num == 12:
+            raise cv.Invalid(
+                f"GPIO12 cannot be used for {key} (ESP32 strapping pin controlling "
+                f"VDD_SDIO). If the CC1101 pulls GPIO12 HIGH at boot, VDD_SDIO is "
+                f"set to 1.8V, breaking all SPI communication (symptoms: "
+                f"'SPI write verify failed: rc=-16', MARCSTATE stuck at 0x00). "
+                f"Use non-strapping pins instead: CLK=GPIO18, MISO=GPIO19, "
+                f"MOSI=GPIO23, CS=GPIO5, GDO0=GPIO26."
+            )
+        # Other strapping pins — warn but allow (e.g. GPIO5 as CS is safe).
+        if pin_num in ESP32_STRAPPING_PINS:
             _LOGGER.warning(
                 "GPIO%d (%s) is an ESP32 strapping pin. If used for SPI "
                 "(especially GPIO12 as MISO), it can cause VDD_SDIO voltage "
@@ -64,7 +79,7 @@ def _warn_strapping_pins(config):
     return config
 
 
-FINAL_VALIDATE_SCHEMA = _warn_strapping_pins
+FINAL_VALIDATE_SCHEMA = _validate_strapping_pins
 
 
 async def to_code(config):

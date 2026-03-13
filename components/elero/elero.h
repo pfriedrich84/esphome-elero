@@ -490,6 +490,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   // SPI health tracking: detect persistent SPI failures (e.g. strapping pin issues)
   bool spi_failed_{false};            // set when SPI is permanently broken
   uint8_t consecutive_watchdog_failures_{0};  // consecutive check_radio_state_ failures
+  uint8_t send_cmd_reinit_failures_{0};  // consecutive send_command() reinit failures
 
   // RX overflow recovery: rate-limit flush attempts and escalate to full reinit
   uint32_t last_rx_overflow_ms_{0};
