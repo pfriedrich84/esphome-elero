@@ -78,7 +78,7 @@ cover:
 |---|---|---|---|
 | `open_duration` | Zeitdauer | `0s` | Fahrzeit zum vollständigen Öffnen. Wird für die zeitbasierte Positionssteuerung benötigt. Wenn gesetzt, muss auch `close_duration` gesetzt werden. |
 | `close_duration` | Zeitdauer | `0s` | Fahrzeit zum vollständigen Schließen. Wird für die zeitbasierte Positionssteuerung benötigt. Wenn gesetzt, muss auch `open_duration` gesetzt werden. |
-| `poll_interval` | Zeitdauer / `never` | `5min` | Intervall für Status-Abfragen. `never` deaktiviert das Polling. |
+| `poll_interval` | Zeitdauer / `never` | `5min` | Intervall für Status-Abfragen. `never` deaktiviert das Polling. Während der Fahrt wird automatisch alle 2 s abgefragt. |
 | `supports_tilt` | Boolean | `false` | Aktiviert Tilt/Kipp-Unterstützung (z.B. für Raffstore). |
 | `auto_sensors` | Boolean | `true` | Erstellt automatisch RSSI- und Status-Sensoren für diesen Rollladen. Setzen Sie auf `false`, um diese manuell zu konfigurieren. |
 

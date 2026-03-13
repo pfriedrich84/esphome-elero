@@ -60,6 +60,8 @@ class EleroWebServer : public Component, public AsyncWebHandler {
   void handle_webui_enable(AsyncWebServerRequest *request);
   // Device info
   void handle_get_info(AsyncWebServerRequest *request);
+  // Diagnostics
+  void handle_reset_diagnostics(AsyncWebServerRequest *request);
   // Combined status (reduces poll requests to one per cycle)
   void handle_get_status(AsyncWebServerRequest *request);
 

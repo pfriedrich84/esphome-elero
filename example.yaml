@@ -30,6 +30,7 @@ cover:
     name: Schlafzimmer
     open_duration: 25s
     close_duration: 22s
+    poll_interval: 5min              # Optional: Status polling (default 5min, or "never")
 
 # Light - Elero light receiver (on/off or dimmable)
 light:

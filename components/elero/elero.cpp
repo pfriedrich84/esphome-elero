@@ -168,11 +168,54 @@ const char *elero_state_to_string(uint8_t state) {
   }
 }
 
+void dispatch_commands(Elero *parent, std::queue<uint8_t> &queue,
+                       t_elero_command &cmd, uint8_t &send_packets,
+                       uint8_t &send_retries, uint32_t &last_command,
+                       bool &queue_full_published, uint32_t now,
+                       const char *tag, uint32_t blind_addr,
+                       void (*increase_counter_fn)(void *ctx), void *ctx) {
+  if (!parent->is_tx_idle()) return;
+
+  if ((now - last_command) > parent->get_send_delay()) {
+    if (!queue.empty()) {
+      cmd.payload[4] = queue.front();
+      if (parent->send_command(&cmd)) {
+        send_packets++;
+        send_retries = 0;
+        if (send_packets >= parent->get_send_repeats()) {
+          queue.pop();
+          send_packets = 0;
+          increase_counter_fn(ctx);
+#ifdef USE_TEXT_SENSOR
+          if (queue_full_published && queue.empty()) {
+            queue_full_published = false;
+          }
+#endif
+        }
+        last_command = now;
+      } else {
+        ESP_LOGD(tag, "Retry #%d for 0x%06x", send_retries, blind_addr);
+        send_retries++;
+        if (send_retries > ELERO_SEND_RETRIES) {
+          ESP_LOGE(tag, "Hit maximum retries for 0x%06x, giving up.", blind_addr);
+          send_retries = 0;
+          queue.pop();
+        }
+        last_command = now;
+      }
+    }
+  }
+}
+
 Elero::~Elero() {
   delete this->radio_;
   this->radio_ = nullptr;
   delete this->radio_module_;
   this->radio_module_ = nullptr;
+#ifdef USE_LOGGER
+  delete static_cast<EleroLogListener *>(this->log_listener_);
+  this->log_listener_ = nullptr;
+#endif
 }
 
 void Elero::loop() {
@@ -196,6 +239,8 @@ void Elero::loop() {
   // 3. Drain runtime blind command queues (only when TX is idle).
   if (this->tx_state_.load(std::memory_order_acquire) == TxState::IDLE) {
     this->drain_runtime_queues();
+    // 3b. Enqueue periodic status polls for runtime blinds.
+    this->poll_runtime_blinds_();
     // 4. Periodic radio health check — detect stuck CC1101 states.
     this->check_radio_state_();
   }
@@ -459,11 +504,36 @@ void Elero::drain_runtime_queues() {
         if (rb.send_packets_count >= this->send_repeats_) {
           rb.command_queue.pop();
           rb.send_packets_count = 0;
-          rb.cmd_counter++;
-          if (rb.cmd_counter > 255) rb.cmd_counter = 1;
+          if (rb.cmd_counter == 0xFF)
+            rb.cmd_counter = 1;
+          else
+            rb.cmd_counter++;
         }
       }
       break;  // Only one TX per loop iteration
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// poll_runtime_blinds_ — enqueue periodic status checks for runtime blinds
+// ---------------------------------------------------------------------------
+void Elero::poll_runtime_blinds_() {
+  uint32_t now = millis();
+  for (auto &entry : this->runtime_blinds_) {
+    auto &rb = entry.second;
+    // Skip if poll interval is effectively disabled (uint32_t max)
+    if (rb.poll_intvl_ms == 0 || rb.poll_intvl_ms == UINT32_MAX)
+      continue;
+    // Skip if command queue already has pending commands
+    if (!rb.command_queue.empty())
+      continue;
+    if ((now - rb.last_poll_ms) >= rb.poll_intvl_ms) {
+      rb.last_poll_ms = now;
+      if (rb.command_queue.size() < ELERO_MAX_COMMAND_QUEUE) {
+        rb.command_queue.push(ELERO_COMMAND_COVER_CHECK);
+        ESP_LOGD(TAG, "Periodic poll for runtime blind 0x%06x", rb.blind_address);
+      }
     }
   }
 }
@@ -527,6 +597,13 @@ void Elero::recompute_runtime_positions_() {
     uint32_t elapsed = now - rb.last_recompute_ms;
     if (elapsed == 0)
       continue;
+
+    // Sanity check: skip recompute if elapsed time is implausibly large
+    // (e.g., millis() wraparound glitch or stale last_recompute_ms)
+    if (elapsed > ELERO_TIMEOUT_MOVEMENT) {
+      rb.last_recompute_ms = now;
+      continue;
+    }
 
     float delta;
     if (rb.moving_direction > 0) {
@@ -619,7 +696,8 @@ void Elero::setup() {
   // Forward all ESP_LOG messages into the ring buffer so the web UI Log tab
   // can display them when capture is enabled.
   if (logger::global_logger != nullptr) {
-    logger::global_logger->add_log_listener(new EleroLogListener(this));
+    this->log_listener_ = new EleroLogListener(this);
+    logger::global_logger->add_log_listener(this->log_listener_);
   }
 #endif
 }
@@ -630,7 +708,11 @@ float Elero::registers_to_mhz(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
                                  static_cast<uint32_t>(freq0));
 }
 
-void Elero::reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
+bool Elero::reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
+  if (!this->is_tx_idle()) {
+    ESP_LOGW(TAG, "Cannot reinit frequency while TX is in progress");
+    return false;
+  }
   this->rx_ready_.store(false, std::memory_order_release);
   this->tx_state_.store(TxState::IDLE, std::memory_order_release);
   this->freq2_ = freq2;
@@ -640,9 +722,14 @@ void Elero::reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
   this->init();
   float mhz = registers_to_mhz(freq2, freq1, freq0);
   ESP_LOGI(TAG, "CC1101 re-initialised: %.2f MHz (0x%02x 0x%02x 0x%02x)", mhz, freq2, freq1, freq0);
+  return true;
 }
 
 bool Elero::reinit_frequency_mhz(float mhz) {
+  if (!this->is_tx_idle()) {
+    ESP_LOGW(TAG, "Cannot reinit frequency while TX is in progress");
+    return false;
+  }
   this->rx_ready_.store(false, std::memory_order_release);
   this->tx_state_.store(TxState::IDLE, std::memory_order_release);
 
@@ -1502,9 +1589,10 @@ void Elero::append_log(uint8_t level, const char *tag, const char *fmt, ...) {
   vsnprintf(entry.message, sizeof(entry.message), fmt, args);
   va_end(args);
   std::lock_guard<std::mutex> lock(this->log_mutex_);
-  if (this->log_entries_.size() < ELERO_LOG_BUFFER_SIZE) {
+  if (!this->log_buffer_full_ && this->log_entries_.size() < ELERO_LOG_BUFFER_SIZE) {
     this->log_entries_.push_back(entry);
   } else {
+    this->log_buffer_full_ = true;
     this->log_entries_[this->log_write_idx_] = entry;
     this->log_write_idx_ = (this->log_write_idx_ + 1) % ELERO_LOG_BUFFER_SIZE;
   }

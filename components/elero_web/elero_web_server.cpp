@@ -214,6 +214,9 @@ void EleroWebServer::handleRequest(AsyncWebServerRequest *request) {
   if (url == "/elero/api/ui/status" && method == HTTP_GET)  { handle_webui_status(request); return; }
   if (url == "/elero/api/ui/enable" && method == HTTP_POST) { handle_webui_enable(request); return; }
 
+  // ── Diagnostics ──
+  if (url == "/elero/api/diagnostics/reset" && method == HTTP_POST) { handle_reset_diagnostics(request); return; }
+
   // ── Info ──
   if (url == "/elero/api/info" && method == HTTP_GET) { handle_get_info(request); return; }
 
@@ -587,7 +590,7 @@ void EleroWebServer::handle_cover_command(AsyncWebServerRequest *request, uint32
     this->add_cors_headers(response);
     request->send(response);
   } else {
-    this->send_json_error(request, 404, "Cover not found");
+    this->send_json_error(request, 404, "Device not found");
   }
 }
 
@@ -681,7 +684,7 @@ void EleroWebServer::handle_cover_settings(AsyncWebServerRequest *request, uint3
     this->add_cors_headers(response);
     request->send(response);
   } else {
-    this->send_json_error(request, 404, "Cover not found");
+    this->send_json_error(request, 404, "Device not found");
   }
 }
 
@@ -959,7 +962,9 @@ void EleroWebServer::build_packets_array_json_(std::string &out) {
 void EleroWebServer::handle_get_packets(AsyncWebServerRequest *request) {
   const auto &packets = this->parent_->get_raw_packets();
 
-  std::string json = "{\"dump_active\":";
+  std::string json;
+  json.reserve(4096);
+  json += "{\"dump_active\":";
   json += this->parent_->is_packet_dump_active() ? "true" : "false";
   json += ",\"count\":";
   char cnt_buf[12];
@@ -1091,7 +1096,10 @@ void EleroWebServer::handle_set_frequency(AsyncWebServerRequest *request) {
     this->send_json_error(request, 400, "Invalid frequency value (0x00-0xFF)");
     return;
   }
-  this->parent_->reinit_frequency(f2, f1, f0);
+  if (!this->parent_->reinit_frequency(f2, f1, f0)) {
+    this->send_json_error(request, 409, "TX in progress — retry when idle");
+    return;
+  }
   float mhz = Elero::registers_to_mhz(f2, f1, f0);
   char buf[128];
   snprintf(buf, sizeof(buf),
@@ -1119,7 +1127,8 @@ void EleroWebServer::handle_set_frequency_mhz(AsyncWebServerRequest *request) {
     return;
   }
   if (!this->parent_->reinit_frequency_mhz(mhz)) {
-    this->send_json_error(request, 400, "setFrequency failed — value may be outside CC1101 supported bands");
+    // reinit_frequency_mhz returns false for both TX-busy and setFrequency failure
+    this->send_json_error(request, 409, "Frequency change failed — TX may be in progress or value outside CC1101 supported bands");
     return;
   }
   float actual_mhz = Elero::registers_to_mhz(this->parent_->get_freq2(),
@@ -1168,7 +1177,9 @@ void EleroWebServer::handle_get_logs(AsyncWebServerRequest *request) {
       since_ms = (uint32_t)strtoul(since_param->value().c_str(), nullptr, 10);
   }
 
-  std::string json = "{\"capture_active\":";
+  std::string json;
+  json.reserve(4096);
+  json += "{\"capture_active\":";
   json += this->parent_->is_log_capture_active() ? "true" : "false";
   json += ",\"entries\":[";
   this->build_log_entries_array_json_(json, since_ms);
@@ -1305,6 +1316,16 @@ void EleroWebServer::handle_get_status(AsyncWebServerRequest *request) {
 
   json += "}";
   auto *response = request->beginResponse(200, "application/json", json.c_str());
+  this->add_cors_headers(response);
+  request->send(response);
+}
+
+// ─── Diagnostics ──────────────────────────────────────────────────────────────
+
+void EleroWebServer::handle_reset_diagnostics(AsyncWebServerRequest *request) {
+  this->parent_->reset_diagnostic_counters();
+  AsyncWebServerResponse *response =
+      request->beginResponse(200, "application/json", "{\"status\":\"reset\"}");
   this->add_cors_headers(response);
   request->send(response);
 }

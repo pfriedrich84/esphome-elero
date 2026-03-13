@@ -72,6 +72,12 @@ class EleroCover : public cover::Cover, public Component, public EleroBlindBase 
     } else {
       ESP_LOGW("elero.cover", "Command queue full for blind 0x%06x, dropping cmd 0x%02x",
                this->command_.blind_addr, cmd_byte);
+#ifdef USE_TEXT_SENSOR
+      if (!this->queue_full_published_) {
+        this->parent_->publish_text_sensor_state(this->command_.blind_addr, "queue_full");
+        this->queue_full_published_ = true;
+      }
+#endif
     }
   }
   void apply_runtime_settings(uint32_t open_dur_ms, uint32_t close_dur_ms,
@@ -86,10 +92,10 @@ class EleroCover : public cover::Cover, public Component, public EleroBlindBase 
   void recompute_position();
   void start_movement(cover::CoverOperation op);
   bool is_at_target();
-  
+  void increase_counter();
+
  protected:
   void control(const cover::CoverCall &call) override;
-  void increase_counter();
 
   t_elero_command command_ = {
     .counter = 1,
