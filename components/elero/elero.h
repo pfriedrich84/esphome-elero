@@ -303,7 +303,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void dump_config() override;
   float get_setup_priority() const override { return setup_priority::DATA; }
   void reset();
-  void init();
+  bool init();  // returns false if SPI is broken (early bail after first write failure)
   void write_reg(uint8_t addr, uint8_t data);
   void write_burst(uint8_t addr, uint8_t *data, uint8_t len);
   void write_cmd(uint8_t cmd);
