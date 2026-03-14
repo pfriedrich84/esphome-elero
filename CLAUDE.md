@@ -52,17 +52,17 @@ esphome-elero/
 └── components/
     ├── elero/                         # Main hub component
     │   ├── __init__.py                # ESPHome component schema & code-gen (hub)
-    │   ├── elero.h                    # C++ hub class header (~457 lines)
-    │   ├── elero.cpp                  # C++ RF protocol implementation (~1200 lines)
+    │   ├── elero.h                    # C++ hub class header (~516 lines)
+    │   ├── elero.cpp                  # C++ RF protocol implementation (~1662 lines)
     │   ├── cc1101.h                   # CC1101 register map & command strobes
     │   ├── cover/                     # Cover (blind) platform
     │   │   ├── __init__.py            # Cover schema, auto-sensors, validation
-    │   │   ├── EleroCover.h           # Cover class header (120 lines)
-    │   │   └── EleroCover.cpp         # Cover logic, position tracking (405 lines)
+    │   │   ├── EleroCover.h           # Cover class header (~135 lines)
+    │   │   └── EleroCover.cpp         # Cover logic, position tracking (~472 lines)
     │   ├── light/                     # Light (dimmer) platform
-    │   │   ├── __init__.py            # Light schema & code-gen
-    │   │   ├── EleroLight.h           # Light class header (~127 lines)
-    │   │   └── EleroLight.cpp         # Light logic, brightness tracking (~236 lines)
+    │   │   ├── __init__.py            # Light schema, auto-sensors, validation
+    │   │   ├── EleroLight.h           # Light class header (~133 lines)
+    │   │   └── EleroLight.cpp         # Light logic, brightness tracking (~259 lines)
     │   ├── button/                    # Scan button platform
     │   │   ├── __init__.py            # Button schema (scan + light command)
     │   │   ├── elero_button.h         # Button class header
@@ -74,7 +74,7 @@ esphome-elero/
     └── elero_web/                     # Optional web UI component
         ├── __init__.py                # Web server schema & code-gen
         ├── elero_web_server.h         # Web server class header
-        ├── elero_web_server.cpp       # REST API + CORS (878 lines)
+        ├── elero_web_server.cpp       # REST API + CORS (~1334 lines)
         ├── elero_web_ui.h             # AUTO-GENERATED: embedded HTML/JS/CSS
         ├── switch/                    # Web UI enable/disable switch sub-platform
         │   ├── __init__.py            # Switch schema (depends on elero_web)
@@ -84,11 +84,11 @@ esphome-elero/
             ├── package.json           # npm project (Vite + Alpine.js)
             ├── package-lock.json      # Dependency lockfile
             ├── vite.config.js         # Vite bundler config (single-file output)
-            ├── index.html             # HTML template (336 lines)
+            ├── index.html             # HTML template (~383 lines)
             ├── scripts/
             │   └── generate_header.mjs  # Post-build: HTML → elero_web_ui.h
             └── src/
-                ├── main.js            # Frontend application logic (408 lines)
+                ├── main.js            # Frontend application logic (~527 lines)
                 └── style.css          # Frontend styles (386 lines)
 ```
 
@@ -123,7 +123,7 @@ Elero (hub, SPIDevice + Component)
 ├── EleroWebServer (Component + AsyncWebHandler, wraps web_server_base)
 │   └── EleroWebSwitch (switch::Switch + Component)
 ├── RuntimeBlind (adopted from web UI, stored in std::map, supports DeviceType)
-└── Auto-registered sensors/text sensors per cover (optional via auto_sensors)
+└── Auto-registered sensors/text sensors per cover and light (optional via auto_sensors)
 ```
 
 The abstract base classes `EleroBlindBase` and `EleroLightBase` decouple the hub (`Elero`) from the cover/light implementations so `elero.h` never needs to `#include` the cover or light headers. All communication between hub and entities goes through virtual methods.
@@ -219,13 +219,15 @@ Diagnostics:
 - `start_packet_dump()` / `stop_packet_dump()` / `get_raw_packets()` — RF packet capture (ring buffer, max 50)
 - `append_log()` / `get_log_entries_copy()` / `set_log_capture()` — persistent log buffer (max 200 entries, mutex-protected)
 - `reinit_frequency(freq2, freq1, freq0)` — change CC1101 frequency at runtime
+- `get_rx_count()` / `get_tx_count()` / `get_watchdog_recovery_count()` — diagnostic counters for radio activity
+- `reset_diagnostic_counters()` — reset all diagnostic counters to zero
 
-Key constants (defined in `elero.h`):
+Key constants (defined in `elero.h` unless noted):
 
 | Constant | Value | Purpose |
 |---|---|---|
 | `ELERO_MAX_PACKET_SIZE` | 57 | Maximum RF packet length (FCC spec) |
-| `ELERO_MIN_PACKET_SIZE` | 17 | Minimum valid Elero packet (shorter = RF noise) |
+| `ELERO_MIN_PACKET_SIZE` | 17 | Minimum valid Elero packet (shorter = RF noise) — defined in `elero.cpp` |
 | `ELERO_POLL_INTERVAL_MOVING` | 2 000 ms | Status poll while blind is moving |
 | `ELERO_TIMEOUT_MOVEMENT` | 120 000 ms | Give up movement tracking after 2 min |
 | `ELERO_POST_MOVEMENT_POLL_DELAY` | 5 000 ms | Poll delay after open/close duration elapses |
@@ -243,9 +245,9 @@ Key constants (defined in `elero.h`):
 | `ELERO_STOP_VERIFY_MAX_RETRIES` | 3 | Max stop-verify cycles before giving up |
 | `ELERO_MSG_LENGTH` | 0x1d (29) | Fixed message length for TX |
 | `ELERO_CRYPTO_MULT` | 0x708f | Encryption multiplier for counter-based code |
-| `TX_STATE_TIMEOUT_MS` | 50 ms | Per-state watchdog timeout for TX state machine |
-| `TX_COOLDOWN_MS` | 10 ms | Post-TX settle time before resuming RX |
-| `RADIO_WATCHDOG_MS` | 5 000 ms | Periodic radio health check interval |
+| `TX_STATE_TIMEOUT_MS` | 50 ms | Per-state watchdog timeout for TX state machine — defined in `elero.cpp` |
+| `TX_COOLDOWN_MS` | 10 ms | Post-TX settle time before resuming RX — defined in `elero.cpp` |
+| `RADIO_WATCHDOG_MS` | 5 000 ms | Periodic radio health check interval — defined in `elero.cpp` |
 
 State constants (`ELERO_STATE_*`): `UNKNOWN`, `TOP`, `BOTTOM`, `INTERMEDIATE`, `TILT`, `BLOCKING`, `OVERHEATED`, `TIMEOUT`, `START_MOVING_UP`, `START_MOVING_DOWN`, `MOVING_UP`, `MOVING_DOWN`, `STOPPED`, `TOP_TILT`, `BOTTOM_TILT`, `OFF` (0x0f, same as `BOTTOM_TILT`), `ON` (0x10)
 
@@ -291,6 +293,7 @@ Key behaviors:
 - Configurable command bytes: `command_on_`, `command_off_`, `command_dim_up_`, `command_dim_down_`, `command_stop_`, `command_check_`
 - `ignore_write_state_` flag prevents feedback loops when `set_rx_state()` triggers `write_state()`
 - Supports optional status checking via `command_check_`
+- Auto-generates RSSI and status text sensors unless `auto_sensors: false` is set (same pattern as covers)
 - Full web API support: `EleroLightBase` exposes identity, state, and configuration getters used by `EleroWebServer` for JSON serialization and the web UI
 
 ### `components/elero/button/elero_button.h` / `elero_button.cpp`
@@ -357,6 +360,7 @@ All endpoints are served at `http://<device-ip>/elero` and support CORS. A 503 r
 |---|---|---|
 | `/elero/api/frequency` | GET | Current CC1101 frequency settings |
 | `/elero/api/frequency/set` | POST | Update CC1101 frequency (`{"freq0": 0x7a, "freq1": 0x71, "freq2": 0x21}`) |
+| `/elero/api/frequency/set_mhz` | POST | Set CC1101 frequency by MHz value (`{"mhz": 868.35}`) |
 | `/elero/api/logs` | GET | Recent log entries (supports `since` query parameter) |
 | `/elero/api/logs/clear` | POST | Clear captured logs |
 | `/elero/api/logs/capture/start` | POST | Start capturing logs |
@@ -365,6 +369,8 @@ All endpoints are served at `http://<device-ip>/elero` and support CORS. A 503 r
 | `/elero/api/dump/stop` | POST | Stop RF packet dump |
 | `/elero/api/packets` | GET | Recent captured RF packets |
 | `/elero/api/packets/clear` | POST | Clear captured packets |
+| `/elero/api/packets/download` | GET | Download captured RF packets as file |
+| `/elero/api/diagnostics/reset` | POST | Reset diagnostic counters (rx, tx, watchdog recovery) |
 
 **Web UI state (elero_web switch sub-platform):**
 
@@ -434,7 +440,7 @@ cg.add(var.set_elero_parent(parent))
 |---|---|---|
 | `elero` (hub) | `["spi"]` | — |
 | `elero` cover | `["elero"]` | `["sensor", "text_sensor"]` |
-| `elero` light | `["elero"]` | — |
+| `elero` light | `["elero"]` | `["sensor", "text_sensor"]` |
 | `elero` button | `["elero"]` | — |
 | `elero` sensor | `["elero"]` | — |
 | `elero` text_sensor | `["elero"]` | — |
@@ -443,8 +449,9 @@ cg.add(var.set_elero_parent(parent))
 
 ### Schema validation patterns
 
-- **Cover auto-sensors:** `_auto_sensor_validator()` injects RSSI and status sensor sub-configs at validation time when `auto_sensors: true` (default). This ensures `cv.declare_id()` is called in the correct ESPHome phase.
+- **Auto-sensors:** `_auto_sensor_validator()` injects RSSI and status sensor sub-configs at validation time when `auto_sensors: true` (default). Used by both cover and light platforms. This ensures `cv.declare_id()` is called in the correct ESPHome phase.
 - **Duration consistency:** `_validate_duration_consistency()` ensures position tracking has both `open_duration` AND `close_duration` set, or both at zero.
+- **Cross-platform address validation:** The light platform's `FINAL_VALIDATE_SCHEMA` checks for duplicate `blind_address` usage across covers and lights, preventing two entities from sharing the same address.
 - **Poll interval:** The `poll_interval()` function converts the string `"never"` to `uint32_t` max (4 294 967 295 ms).
 
 ---
@@ -501,6 +508,8 @@ Required parameters:
 
 Optional parameters (with defaults):
 - `dim_duration` (default `0s`) — time for dimming from 0% to 100%; `0s` = on/off only, `>0` = brightness control
+- `auto_sensors` (default `true`) — auto-generate RSSI and status text sensors for this light
+- `rssi_sensor` / `status_sensor` — explicit sensor config (overrides auto-generated ones)
 - `payload_1` (default `0x00`), `payload_2` (default `0x04`)
 - `pck_inf1` (default `0x6a`), `pck_inf2` (default `0x00`)
 - `hop` (default `0x0a`)
