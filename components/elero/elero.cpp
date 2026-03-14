@@ -1443,8 +1443,8 @@ void Elero::track_discovered_blind(uint32_t src, uint32_t remote, uint8_t channe
         blind.payload_1 = payload_1;
         blind.payload_2 = payload_2;
         blind.params_from_command = true;
-        ESP_LOGI(TAG, "Upgraded blind 0x%06x params from command packet: ch=%d, pck_inf=0x%02x/0x%02x, hop=0x%02x",
-                 src, channel, pck_inf0, pck_inf1, hop);
+        ESP_LOGI(TAG, "Upgraded blind 0x%06x params from command packet: ch=%d, pck_inf=0x%02x/0x%02x, hop=0x%02x, payload=0x%02x/0x%02x",
+                 src, channel, pck_inf0, pck_inf1, hop, payload_1, payload_2);
       }
       return;
     }
@@ -1509,7 +1509,7 @@ bool Elero::send_command(t_elero_command *cmd) {
   msg_encode(payload);
 
   ESP_LOGD(TAG, "send to 0x%06x: cmd=0x%02x ch=%02d cnt=%02d",
-           cmd->blind_addr, cmd->payload[0], cmd->channel, cmd->counter);
+           cmd->blind_addr, cmd->payload[4], cmd->channel, cmd->counter);
 #if ESPHOME_LOG_LEVEL >= ESPHOME_LOG_LEVEL_VERBOSE
   ESP_LOGV(TAG, "  TX raw [%d bytes]: %s", ELERO_MSG_LENGTH + 1,
            format_hex_pretty(this->msg_tx_, ELERO_MSG_LENGTH + 1).c_str());
