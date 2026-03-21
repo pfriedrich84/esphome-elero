@@ -5,15 +5,20 @@ import esphome.config_validation as cv
 from esphome import pins
 from esphome.components import spi
 from esphome.const import CONF_ID
+from esphome.core import CORE
 
 _LOGGER = logging.getLogger(__name__)
 
 DEPENDENCIES = ["spi"]
 
 # ESP32 strapping pins that can cause boot issues when used for SPI or I/O.
-# GPIO12 (MTDI) is especially problematic: if pulled HIGH at boot by an SPI
-# device, VDD_SDIO is set to 1.8V, breaking all SPI communication.
+# GPIO12 (MTDI) is especially problematic on original ESP32: if pulled HIGH at
+# boot by an SPI device, VDD_SDIO is set to 1.8V, breaking all SPI communication.
 ESP32_STRAPPING_PINS = {0, 2, 5, 12, 15}
+
+# ESP32-S3 has different strapping pins. GPIO12 is NOT a strapping pin on S3.
+# GPIO3 = JTAG signal source select (harmless in practice).
+ESP32_S3_STRAPPING_PINS = {0, 3, 45, 46}
 
 elero_ns = cg.esphome_ns.namespace("elero")
 elero = elero_ns.class_("Elero", spi.SPIDevice, cg.Component)
@@ -44,7 +49,11 @@ CONFIG_SCHEMA = (
 
 
 def _validate_strapping_pins(config):
-    """Block GPIO12 for SPI signals; warn about other strapping pins."""
+    """Validate pin usage based on ESP32 variant strapping pins."""
+    variant = CORE.data.get("esp32", {}).get("variant", "esp32")
+    is_s3 = variant in ("esp32s3", "esp32-s3")
+    strapping_pins = ESP32_S3_STRAPPING_PINS if is_s3 else ESP32_STRAPPING_PINS
+
     for key in (CONF_GDO0_PIN, "cs_pin"):
         pin_conf = config.get(key)
         if pin_conf is None:
@@ -53,26 +62,30 @@ def _validate_strapping_pins(config):
         pin_num = pin_conf.get("number") if isinstance(pin_conf, dict) else pin_conf
         if not isinstance(pin_num, int):
             continue
-        # GPIO12 is catastrophic for any SPI signal — block compilation.
+        # GPIO12 is catastrophic on original ESP32 — block compilation.
         # It controls VDD_SDIO voltage at boot; if the CC1101 pulls it HIGH,
         # VDD_SDIO locks at 1.8V and breaks all SPI communication permanently.
-        if pin_num == 12:
+        # On ESP32-S3, GPIO12 is NOT a strapping pin and is safe to use.
+        if pin_num == 12 and not is_s3:
             raise cv.Invalid(
-                f"GPIO12 cannot be used for {key} (ESP32 strapping pin controlling "
-                f"VDD_SDIO). If the CC1101 pulls GPIO12 HIGH at boot, VDD_SDIO is "
-                f"set to 1.8V, breaking all SPI communication (symptoms: "
-                f"'SPI write verify failed: rc=-16', MARCSTATE stuck at 0x00). "
-                f"Use non-strapping pins instead: CLK=GPIO18, MISO=GPIO19, "
+                f"GPIO12 cannot be used for {key} on original ESP32 (strapping pin "
+                f"controlling VDD_SDIO). If the CC1101 pulls GPIO12 HIGH at boot, "
+                f"VDD_SDIO is set to 1.8V, breaking all SPI communication "
+                f"(symptoms: 'SPI write verify failed: rc=-16', MARCSTATE stuck at "
+                f"0x00). Use non-strapping pins instead: CLK=GPIO18, MISO=GPIO19, "
                 f"MOSI=GPIO23, CS=GPIO5, GDO0=GPIO26."
             )
-        # Other strapping pins — warn but allow (e.g. GPIO5 as CS is common and safe).
-        if pin_num in ESP32_STRAPPING_PINS:
+        # Warn about strapping pins (variant-specific set).
+        if pin_num in strapping_pins:
+            variant_label = "ESP32-S3" if is_s3 else "ESP32"
             _LOGGER.warning(
-                "GPIO%d (%s) is an ESP32 strapping pin. Attaching external "
+                "GPIO%d (%s) is an %s strapping pin. Attaching external "
                 "pull-up/down resistors or peripherals can cause unexpected "
-                "boot failures. GPIO5 as CS is generally safe.",
+                "boot failures. This is usually safe for GDO0/CS if no "
+                "external pull resistors conflict with boot requirements.",
                 pin_num,
                 key,
+                variant_label,
             )
     return config
 
