@@ -50,8 +50,8 @@ CONFIG_SCHEMA = (
 
 def _validate_strapping_pins(config):
     """Validate pin usage based on ESP32 variant strapping pins."""
-    variant = CORE.data.get("esp32", {}).get("variant", "esp32")
-    is_s3 = variant in ("esp32s3", "esp32-s3")
+    variant = CORE.data.get("esp32", {}).get("variant", "ESP32")
+    is_s3 = variant == "ESP32S3"
     strapping_pins = ESP32_S3_STRAPPING_PINS if is_s3 else ESP32_STRAPPING_PINS
 
     for key in (CONF_GDO0_PIN, "cs_pin"):
