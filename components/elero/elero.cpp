@@ -417,6 +417,26 @@ void Elero::tx_abort_() {
 }
 
 // ---------------------------------------------------------------------------
+// is_duplicate_packet_ — suppress relay-hop duplicates of the same packet
+// ---------------------------------------------------------------------------
+bool Elero::is_duplicate_packet_(uint32_t src, uint8_t cnt) {
+  uint32_t now = millis();
+  for (uint8_t i = 0; i < ELERO_DEDUP_BUFFER_SIZE; i++) {
+    if (recent_packets_[i].src == src &&
+        recent_packets_[i].cnt == cnt &&
+        (now - recent_packets_[i].timestamp_ms) < ELERO_DEDUP_WINDOW_MS) {
+      return true;  // already seen
+    }
+  }
+  // Not seen — record it
+  recent_packets_[recent_packet_idx_].src = src;
+  recent_packets_[recent_packet_idx_].cnt = cnt;
+  recent_packets_[recent_packet_idx_].timestamp_ms = now;
+  recent_packet_idx_ = (recent_packet_idx_ + 1) % ELERO_DEDUP_BUFFER_SIZE;
+  return false;
+}
+
+// ---------------------------------------------------------------------------
 // check_radio_state_ — periodic watchdog to detect and recover stuck CC1101
 // ---------------------------------------------------------------------------
 void Elero::check_radio_state_() {
@@ -1297,6 +1317,11 @@ void Elero::interpret_msg() {
   }
 
   if((typ == 0xca) || (typ == 0xc9)) { // Status message from a blind
+    // Deduplicate relay-hop copies: same (src, cnt) within a time window
+    if (this->is_duplicate_packet_(src, cnt)) {
+      ESP_LOGV(TAG, "Duplicate status from 0x%06x cnt=%d (relay hop), skipping", src, cnt);
+      return;
+    }
     // Update text sensor
 #ifdef USE_TEXT_SENSOR
     {
@@ -1349,23 +1374,29 @@ void Elero::interpret_msg() {
     // Trigger an immediate status poll on each configured blind/light that is
     // targeted, so HA state updates within ~50 ms instead of waiting for the
     // normal poll interval.
+    // Skip if src matches one of our own remote addresses — that means this is
+    // a relayed echo of a command we sent, not a third-party remote.
     if ((typ == 0x6a) || (typ == 0x69)) {
-      for (uint8_t i = 0; i < num_dests; i++) {
-        uint32_t dest_addr;
-        if (typ > 0x60) {  // 3-byte addressing
-          dest_addr = ((uint32_t)this->msg_rx_[17 + i * 3] << 16) |
-                      ((uint32_t)this->msg_rx_[18 + i * 3] << 8) |
-                      this->msg_rx_[19 + i * 3];
-        } else {            // 1-byte addressing
-          dest_addr = this->msg_rx_[17 + i];
-        }
-        auto c_it = this->address_to_cover_mapping_.find(dest_addr);
-        if (c_it != this->address_to_cover_mapping_.end()) {
-          c_it->second->schedule_immediate_poll();
-        }
-        auto l_it = this->address_to_light_mapping_.find(dest_addr);
-        if (l_it != this->address_to_light_mapping_.end()) {
-          l_it->second->schedule_immediate_poll();
+      if (this->own_remote_addresses_.count(src) > 0) {
+        ESP_LOGD(TAG, "Ignoring echo of own command from 0x%06x", src);
+      } else {
+        for (uint8_t i = 0; i < num_dests; i++) {
+          uint32_t dest_addr;
+          if (typ > 0x60) {  // 3-byte addressing
+            dest_addr = ((uint32_t)this->msg_rx_[17 + i * 3] << 16) |
+                        ((uint32_t)this->msg_rx_[18 + i * 3] << 8) |
+                        this->msg_rx_[19 + i * 3];
+          } else {            // 1-byte addressing
+            dest_addr = this->msg_rx_[17 + i];
+          }
+          auto c_it = this->address_to_cover_mapping_.find(dest_addr);
+          if (c_it != this->address_to_cover_mapping_.end()) {
+            c_it->second->schedule_immediate_poll();
+          }
+          auto l_it = this->address_to_light_mapping_.find(dest_addr);
+          if (l_it != this->address_to_light_mapping_.end()) {
+            l_it->second->schedule_immediate_poll();
+          }
         }
       }
     }
@@ -1379,6 +1410,7 @@ void Elero::register_cover(EleroBlindBase *cover) {
     return;
   }
   this->address_to_cover_mapping_.insert({address, cover});
+  this->own_remote_addresses_.insert(cover->get_remote_address());
   cover->set_poll_offset((this->address_to_cover_mapping_.size() - 1) * ELERO_POLL_STAGGER_MS);
 }
 
@@ -1389,6 +1421,7 @@ void Elero::register_light(EleroLightBase *light) {
     return;
   }
   this->address_to_light_mapping_.insert({address, light});
+  this->own_remote_addresses_.insert(light->get_remote_address());
 }
 
 #ifdef USE_SENSOR
@@ -1627,6 +1660,7 @@ bool Elero::adopt_blind(const DiscoveredBlind &discovered, const std::string &na
   rb.last_rssi = discovered.rssi;
   rb.last_state = discovered.last_state;
   this->runtime_blinds_.insert({discovered.blind_address, std::move(rb)});
+  this->own_remote_addresses_.insert(discovered.remote_address);
   ESP_LOGI(TAG, "Adopted runtime %s 0x%06x as \"%s\"",
            type == DeviceType::LIGHT ? "light" : "blind",
            discovered.blind_address, rb.name.c_str());

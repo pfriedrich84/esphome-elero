@@ -127,6 +127,7 @@ class EleroCover : public cover::Cover, public Component, public EleroBlindBase 
   cover::CoverOperation last_operation_{cover::COVER_OPERATION_OPENING};
   uint32_t stop_verify_at_{0};          // millis() when to poll for stop confirmation (0 = inactive)
   uint8_t  stop_verify_retries_{ELERO_STOP_VERIFY_MAX_RETRIES};  // verification counter (MAX = inactive)
+  uint32_t last_immediate_poll_ms_{0};  // rate-limit schedule_immediate_poll()
   bool queue_full_published_{false};    // true when "queue_full" has been published to text sensor
 };
 
