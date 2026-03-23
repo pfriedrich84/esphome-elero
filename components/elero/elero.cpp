@@ -18,36 +18,31 @@ namespace esphome {
 namespace elero {
 
 #ifdef USE_LOGGER
-// Small adapter that implements the LogListener interface so the Elero hub
-// can forward ESPHome log messages into its ring buffer for the web UI.
-class EleroLogListener : public logger::LogListener {
- public:
-  explicit EleroLogListener(Elero *parent) : parent_(parent) {}
-  void on_log(uint8_t level, const char *tag, const char *message, size_t message_len) override {
-    // Map ESPHome levels (1-7) to the 5-level scheme used by the web UI:
-    //   ESPHome 1 ERROR         → 1 error
-    //   ESPHome 2 WARN          → 2 warn
-    //   ESPHome 3 INFO          → 3 info
-    //   ESPHome 4 CONFIG        → 3 info
-    //   ESPHome 5 DEBUG         → 4 debug
-    //   ESPHome 6/7 VERBOSE+    → 5 verbose
-    uint8_t mapped;
-    if (level <= 1)
-      mapped = 1;
-    else if (level == 2)
-      mapped = 2;
-    else if (level <= 4)
-      mapped = 3;
-    else if (level == 5)
-      mapped = 4;
-    else
-      mapped = 5;
-    this->parent_->append_log(mapped, tag, "%s", message);
-  }
-
- protected:
-  Elero *parent_;
-};
+// Static callback forwarding ESPHome log messages into the Elero ring buffer
+// for the web UI.  Uses the add_log_callback() API (ESPHome 2025.x+).
+static void elero_log_callback(void *instance, uint8_t level, const char *tag,
+                                const char *message, size_t message_len) {
+  auto *hub = static_cast<Elero *>(instance);
+  // Map ESPHome levels (1-7) to the 5-level scheme used by the web UI:
+  //   ESPHome 1 ERROR         → 1 error
+  //   ESPHome 2 WARN          → 2 warn
+  //   ESPHome 3 INFO          → 3 info
+  //   ESPHome 4 CONFIG        → 3 info
+  //   ESPHome 5 DEBUG         → 4 debug
+  //   ESPHome 6/7 VERBOSE+    → 5 verbose
+  uint8_t mapped;
+  if (level <= 1)
+    mapped = 1;
+  else if (level == 2)
+    mapped = 2;
+  else if (level <= 4)
+    mapped = 3;
+  else if (level == 5)
+    mapped = 4;
+  else
+    mapped = 5;
+  hub->append_log(mapped, tag, "%s", message);
+}
 #endif
 
 static const char *TAG = "elero";
@@ -112,6 +107,7 @@ void EspHomeRadioLibHal::spiTransfer(uint8_t *out, size_t len, uint8_t *in) {
 void EspHomeRadioLibHal::spiEndTransaction() {
   if (this->spi_parent_ != nullptr) {
     static_cast<Elero *>(this->spi_parent_)->disable();
+    delay_microseconds_safe(15);  // Match main's inter-transaction settling time for CC1101
   }
 }
 void EspHomeRadioLibHal::spiEnd() {
@@ -168,14 +164,63 @@ const char *elero_state_to_string(uint8_t state) {
   }
 }
 
+void dispatch_commands(Elero *parent, std::queue<uint8_t> &queue,
+                       t_elero_command &cmd, uint8_t &send_packets,
+                       uint8_t &send_retries, uint32_t &last_command,
+                       bool &queue_full_published, uint32_t now,
+                       const char *tag, uint32_t blind_addr,
+                       void (*increase_counter_fn)(void *ctx), void *ctx) {
+  // Skip immediately if hub SPI is permanently broken — no point retrying.
+  if (parent->is_failed()) return;
+  if (!parent->is_tx_idle()) return;
+
+  if ((now - last_command) > parent->get_send_delay()) {
+    if (!queue.empty()) {
+      cmd.payload[4] = queue.front();
+      if (parent->send_command(&cmd)) {
+        send_packets++;
+        send_retries = 0;
+        if (send_packets >= parent->get_send_repeats()) {
+          queue.pop();
+          send_packets = 0;
+          increase_counter_fn(ctx);
+#ifdef USE_TEXT_SENSOR
+          if (queue_full_published && queue.empty()) {
+            queue_full_published = false;
+          }
+#endif
+        }
+        last_command = now;
+      } else {
+        ESP_LOGD(tag, "Retry #%d for 0x%06x", send_retries, blind_addr);
+        send_retries++;
+        if (send_retries > ELERO_SEND_RETRIES) {
+          ESP_LOGE(tag, "Hit maximum retries for 0x%06x, giving up.", blind_addr);
+          send_retries = 0;
+          queue.pop();
+        }
+        last_command = now;
+      }
+    }
+  }
+}
+
 Elero::~Elero() {
   delete this->radio_;
   this->radio_ = nullptr;
   delete this->radio_module_;
   this->radio_module_ = nullptr;
+#ifdef USE_LOGGER
+  // Callback-based log listener — no heap allocation to clean up.
+  this->log_listener_ = nullptr;
+#endif
 }
 
 void Elero::loop() {
+  // Skip all processing if SPI is permanently broken (e.g. strapping pin issue).
+  if (this->spi_failed_)
+    return;
+
   // 1. ALWAYS process pending RX packets first (highest priority).
   //    Only safe when not mid-TX — process_rx() ignores stale rx_ready_
   //    flags by only running when TX is idle or in cooldown.
@@ -192,9 +237,14 @@ void Elero::loop() {
   // 3. Drain runtime blind command queues (only when TX is idle).
   if (this->tx_state_.load(std::memory_order_acquire) == TxState::IDLE) {
     this->drain_runtime_queues();
+    // 3b. Enqueue periodic status polls for runtime blinds.
+    this->poll_runtime_blinds_();
     // 4. Periodic radio health check — detect stuck CC1101 states.
     this->check_radio_state_();
   }
+
+  // 5. Recompute dead-reckoning positions for runtime-adopted blinds.
+  this->recompute_runtime_positions_();
 }
 
 // ---------------------------------------------------------------------------
@@ -211,7 +261,24 @@ void Elero::process_rx() {
     uint8_t len = this->read_status(CC1101_RXBYTES);
 
     if (len & 0x80) {  // overflow bit set — FIFO data unreliable
-      ESP_LOGW(TAG, "RX FIFO overflow in process_rx, flushing (recoverable)");
+      uint32_t now = millis();
+      // Rate-limit: if we already flushed recently, suppress log and skip
+      if (now - this->last_rx_overflow_ms_ < 1000) {
+        this->rx_overflow_count_++;
+        // After 5 rapid overflows, escalate to full radio reinit
+        if (this->rx_overflow_count_ >= 5) {
+          ESP_LOGW(TAG, "RX FIFO overflow persists after %d flushes, full radio reinit",
+                   this->rx_overflow_count_);
+          this->rx_overflow_count_ = 0;
+          this->last_rx_overflow_ms_ = now;
+          this->reset();
+          this->init();
+        }
+        return;
+      }
+      this->rx_overflow_count_ = 1;
+      this->last_rx_overflow_ms_ = now;
+      ESP_LOGW(TAG, "RX FIFO overflow in process_rx, flushing");
       this->flush_rx();
       return;
     }
@@ -230,8 +297,10 @@ void Elero::process_rx() {
       this->read_buf(CC1101_RXFIFO, this->msg_rx_, fifo_count);
     }
 
+#if ESPHOME_LOG_LEVEL >= ESPHOME_LOG_LEVEL_VERBOSE
     ESP_LOGV(TAG, "RAW RX %d bytes: %s", fifo_count,
              format_hex_pretty(this->msg_rx_, fifo_count).c_str());
+#endif
 
     // Capture to ring buffer if dump mode is active
     this->packet_dump_pending_update_ = false;
@@ -286,7 +355,8 @@ void Elero::advance_tx() {
         // MARCSTATE left TX — verify FIFO drained (packet actually sent)
         uint8_t bytes = this->read_status(CC1101_TXBYTES) & 0x7F;
         if (bytes == 0) {
-          ESP_LOGD(TAG, "TX complete (marc=%s, %lums)",
+          this->tx_count_++;
+          ESP_LOGV(TAG, "TX complete (marc=%s, %lums)",
                    marcstate_to_string(marc), (unsigned long) elapsed);
           this->tx_state_.store(TxState::COOLDOWN, std::memory_order_release);
           this->tx_state_entered_ms_ = now;
@@ -349,8 +419,10 @@ void Elero::check_radio_state_() {
   uint8_t marc = this->read_status(CC1101_MARCSTATE) & 0x1F;
 
   // RX is the expected state when tx_state_ is IDLE
-  if (marc == CC1101_MARCSTATE_RX)
+  if (marc == CC1101_MARCSTATE_RX) {
+    this->consecutive_watchdog_failures_ = 0;
     return;
+  }
 
   // Transient calibration / synthesizer states — let them complete
   if (marc >= CC1101_MARCSTATE_VCOON_MC && marc <= CC1101_MARCSTATE_ENDCAL)
@@ -359,23 +431,58 @@ void Elero::check_radio_state_() {
   if (marc == CC1101_MARCSTATE_RX_END || marc == CC1101_MARCSTATE_RX_RST)
     return;
 
-  // RXFIFO_OVERFLOW — flush and restart RX
+  // RXFIFO_OVERFLOW — flush and restart RX (escalate to full reinit if repeated)
   if (marc == CC1101_MARCSTATE_RXFIFO_OFLOW) {
     ESP_LOGW(TAG, "Radio watchdog: RX FIFO overflow, flushing");
+    this->watchdog_recovery_count_++;
     this->flush_rx();
+    // Verify recovery worked
+    uint8_t marc_after = this->read_status(CC1101_MARCSTATE) & 0x1F;
+    if (marc_after != CC1101_MARCSTATE_RX) {
+      ESP_LOGW(TAG, "Radio watchdog: flush_rx failed (marc=0x%02x), full reinit", marc_after);
+      this->reset();
+      if (!this->init()) {
+        this->consecutive_watchdog_failures_++;
+      }
+    }
     return;
   }
 
   // IDLE — radio stopped listening, restart RX
   if (marc == CC1101_MARCSTATE_IDLE) {
     ESP_LOGW(TAG, "Radio watchdog: stuck in IDLE, restarting RX");
+    this->watchdog_recovery_count_++;
+    this->consecutive_watchdog_failures_ = 0;  // IDLE is a valid CC1101 state, not SPI failure
     this->write_cmd(CC1101_SRX);
     return;
   }
 
-  // Any other unexpected state — full reinitialize
-  ESP_LOGW(TAG, "Radio watchdog: unexpected state 0x%02x, reinitializing", marc);
-  this->flush_and_rx();
+  // Any other unexpected state — full reset + reinitialize
+  // flush_and_rx() is insufficient when the CC1101 is unresponsive (e.g.
+  // MARCSTATE reads 0x1f = SPI returning 0xFF).  A hardware reset via
+  // SRES followed by full register configuration is needed.
+  ESP_LOGW(TAG, "Radio watchdog: unexpected state 0x%02x, full reinit", marc);
+  this->watchdog_recovery_count_++;
+  this->consecutive_watchdog_failures_++;
+
+  // If the watchdog has failed 2+ times in a row without recovery, SPI is
+  // likely permanently broken (e.g. GPIO12 strapping pin issue).  Stop
+  // retrying to avoid flooding the log.
+  if (this->consecutive_watchdog_failures_ >= 2) {
+    ESP_LOGE(TAG, "Radio watchdog: %d consecutive failures — SPI appears permanently broken.",
+             this->consecutive_watchdog_failures_);
+    ESP_LOGE(TAG, "  If GPIO12 is used for SPI MISO, it may be pulling VDD_SDIO to 1.8V at boot.");
+    ESP_LOGE(TAG, "  Use non-strapping pins for SPI (e.g. CLK=18, MISO=19, MOSI=23).");
+    this->spi_failed_ = true;
+    this->mark_failed(LOG_STR("SPI permanently broken — check pin assignments"));
+    return;
+  }
+
+  this->reset();
+  if (!this->init()) {
+    // init() detected SPI failure — escalate immediately on next watchdog
+    this->consecutive_watchdog_failures_++;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -402,12 +509,121 @@ void Elero::drain_runtime_queues() {
         if (rb.send_packets_count >= this->send_repeats_) {
           rb.command_queue.pop();
           rb.send_packets_count = 0;
-          rb.cmd_counter++;
-          if (rb.cmd_counter > 255) rb.cmd_counter = 1;
+          if (rb.cmd_counter == 0xFF)
+            rb.cmd_counter = 1;
+          else
+            rb.cmd_counter++;
         }
       }
       break;  // Only one TX per loop iteration
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// poll_runtime_blinds_ — enqueue periodic status checks for runtime blinds
+// ---------------------------------------------------------------------------
+void Elero::poll_runtime_blinds_() {
+  uint32_t now = millis();
+  for (auto &entry : this->runtime_blinds_) {
+    auto &rb = entry.second;
+    // Skip if poll interval is effectively disabled (uint32_t max)
+    if (rb.poll_intvl_ms == 0 || rb.poll_intvl_ms == UINT32_MAX)
+      continue;
+    // Skip if command queue already has pending commands
+    if (!rb.command_queue.empty())
+      continue;
+    if ((now - rb.last_poll_ms) >= rb.poll_intvl_ms) {
+      rb.last_poll_ms = now;
+      if (rb.command_queue.size() < ELERO_MAX_COMMAND_QUEUE) {
+        rb.command_queue.push(ELERO_COMMAND_COVER_CHECK);
+        ESP_LOGD(TAG, "Periodic poll for runtime blind 0x%06x", rb.blind_address);
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// update_runtime_blind_direction_ — set moving direction from RF state byte
+// ---------------------------------------------------------------------------
+void Elero::update_runtime_blind_direction_(RuntimeBlind &rb, uint8_t state) {
+  int8_t old_dir = rb.moving_direction;
+  switch (state) {
+    case ELERO_STATE_START_MOVING_UP:
+    case ELERO_STATE_MOVING_UP:
+      rb.moving_direction = 1;  // opening
+      break;
+    case ELERO_STATE_START_MOVING_DOWN:
+    case ELERO_STATE_MOVING_DOWN:
+      rb.moving_direction = -1;  // closing
+      break;
+    case ELERO_STATE_TOP:
+      rb.moving_direction = 0;
+      rb.position = 1.0f;
+      break;
+    case ELERO_STATE_BOTTOM:
+      rb.moving_direction = 0;
+      rb.position = 0.0f;
+      break;
+    case ELERO_STATE_STOPPED:
+    case ELERO_STATE_INTERMEDIATE:
+    case ELERO_STATE_TILT:
+    case ELERO_STATE_BLOCKING:
+    case ELERO_STATE_OVERHEATED:
+    case ELERO_STATE_TIMEOUT:
+      rb.moving_direction = 0;
+      break;
+    default:
+      break;
+  }
+  // Reset recompute timestamp when direction changes
+  if (old_dir != rb.moving_direction) {
+    rb.last_recompute_ms = millis();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// recompute_runtime_positions_ — dead-reckoning position update for moving
+// runtime blinds (called from loop())
+// ---------------------------------------------------------------------------
+void Elero::recompute_runtime_positions_() {
+  uint32_t now = millis();
+  for (auto &entry : this->runtime_blinds_) {
+    auto &rb = entry.second;
+    if (rb.moving_direction == 0)
+      continue;
+    // Only track position when both durations are configured
+    if (rb.open_duration_ms == 0 || rb.close_duration_ms == 0)
+      continue;
+    // If position is unknown, we can't dead-reckon
+    if (rb.position < 0.0f)
+      continue;
+
+    uint32_t elapsed = now - rb.last_recompute_ms;
+    if (elapsed == 0)
+      continue;
+
+    // Sanity check: skip recompute if elapsed time is implausibly large
+    // (e.g., millis() wraparound glitch or stale last_recompute_ms)
+    if (elapsed > ELERO_TIMEOUT_MOVEMENT) {
+      rb.last_recompute_ms = now;
+      continue;
+    }
+
+    float delta;
+    if (rb.moving_direction > 0) {
+      // Opening: position increases
+      delta = static_cast<float>(elapsed) / static_cast<float>(rb.open_duration_ms);
+      rb.position += delta;
+    } else {
+      // Closing: position decreases
+      delta = static_cast<float>(elapsed) / static_cast<float>(rb.close_duration_ms);
+      rb.position -= delta;
+    }
+    // Clamp to [0.0, 1.0]
+    if (rb.position > 1.0f) rb.position = 1.0f;
+    if (rb.position < 0.0f) rb.position = 0.0f;
+    rb.last_recompute_ms = now;
   }
 }
 
@@ -423,12 +639,25 @@ void Elero::dump_config() {
   LOG_PIN("  GDO0 Pin: ", this->gdo0_pin_);
   ESP_LOGCONFIG(TAG, "  freq2: 0x%02x, freq1: 0x%02x, freq0: 0x%02x", this->freq2_, this->freq1_, this->freq0_);
   ESP_LOGCONFIG(TAG, "  Send repeats: %d, send delay: %d ms", this->send_repeats_, this->send_delay_);
-  ESP_LOGCONFIG(TAG, "  RadioLib: standby() + SPI register access with verify-readback");
+  ESP_LOGCONFIG(TAG, "  RadioLib: begin() + standby() + setFrequency(); direct SPI for register access");
+  if (this->spi_failed_) {
+    ESP_LOGCONFIG(TAG, "  SPI Status: FAILED — CC1101 communication broken");
+    ESP_LOGCONFIG(TAG, "  Check SPI pin assignments — avoid ESP32 strapping pins (GPIO0/2/5/12/15)");
+  }
   ESP_LOGCONFIG(TAG, "  Registered covers: %d", this->address_to_cover_mapping_.size());
 }
 
 void Elero::setup() {
   ESP_LOGI(TAG, "Setting up Elero Component...");
+
+  // Allow the CC1101 to stabilize after power-on.  On boards like the LilyGo
+  // T-Embed CC1101 the radio sits behind a GPIO-controlled power rail that may
+  // have been enabled only moments before setup() runs (ESPHome on_boot delays
+  // are non-blocking coroutines).  The CC1101 datasheet requires a minimum of
+  // ~40 µs after power-on, but real-world modules with slow voltage regulators
+  // need significantly more.  150 ms covers typical RC rise-times.
+  delay(150);
+
   this->spi_setup();
 
   // Initialize RadioLib HAL adapter — bridge ESPHome SPI to RadioLib Module.
@@ -447,7 +676,7 @@ void Elero::setup() {
     ESP_LOGI(TAG, "RadioLib CC1101 initialized (chip version verified)");
   } else if (rc == RADIOLIB_ERR_CHIP_NOT_FOUND) {
     ESP_LOGE(TAG, "RadioLib: CC1101 chip not found! Check SPI wiring. rc=%d", rc);
-    this->mark_failed();
+    this->mark_failed(LOG_STR("CC1101 chip not found — check SPI wiring"));
     return;
   } else {
     ESP_LOGW(TAG, "RadioLib begin() returned rc=%d, continuing with custom init", rc);
@@ -456,18 +685,68 @@ void Elero::setup() {
   this->gdo0_pin_->setup();
   this->gdo0_pin_->attach_interrupt(Elero::interrupt, this, gpio::INTERRUPT_FALLING_EDGE);
   this->reset();
-  this->init();
+  if (!this->init()) {
+    // First reset+init failed — try once more with a longer post-reset delay.
+    // Some CC1101 modules or ESP32 boot sequences need additional settling time.
+    ESP_LOGW(TAG, "First init failed, retrying reset+init with extended delay...");
+    delay(10);  // 10ms extra settling time
+    this->reset();
+    if (!this->init()) {
+      // SPI diagnostic dump — read chip ID registers and test multiple register
+      // writes to help the user identify wiring or pin assignment issues.
+      uint8_t partnum = this->read_status(CC1101_PARTNUM);  // Expected: 0x00 for CC1101
+      uint8_t version = this->read_status(CC1101_VERSION);  // Expected: 0x14 for CC1101
+      ESP_LOGE(TAG, "CC1101 SPI diagnostic: PARTNUM=0x%02x (expect 0x00), VERSION=0x%02x (expect 0x14)", partnum, version);
+
+      // Test raw SPI: write different values to a writable register and read back
+      const uint8_t test_vals[] = {0xAA, 0x55, 0x0F, 0x00};
+      for (uint8_t tv : test_vals) {
+        this->write_reg(CC1101_FSCTRL1, tv);
+        uint8_t rb = this->read_reg(CC1101_FSCTRL1);
+        ESP_LOGE(TAG, "  SPI write/read test: wrote 0x%02x, read 0x%02x %s", tv, rb, (tv == rb) ? "OK" : "MISMATCH");
+      }
+
+      ESP_LOGE(TAG, "CC1101 SPI communication is broken — the radio is non-functional.");
+      if (partnum == 0x00 && version == 0x14) {
+        ESP_LOGE(TAG, "  CC1101 chip IS detected but register writes fail.");
+        ESP_LOGE(TAG, "  This may indicate MOSI is not connected or the SPI bus has a conflict.");
+      } else if (partnum == 0x00 && version == 0x00) {
+        ESP_LOGE(TAG, "  SPI returns all zeros — MISO may be stuck LOW or CS not reaching the CC1101.");
+      } else if (partnum == 0xFF && version == 0xFF) {
+        ESP_LOGE(TAG, "  SPI returns all ones — MISO may be stuck HIGH or the CC1101 is not powered.");
+      } else {
+        ESP_LOGE(TAG, "  Unexpected chip ID — verify the radio module is a CC1101 on this SPI bus.");
+      }
+      ESP_LOGE(TAG, "  Configured SPI: CS=pin_cc1101_cs, GDO0=pin_cc1101_gdo0");
+      ESP_LOGE(TAG, "  Verify SPI wiring: CLK, MOSI, MISO, CS must match the board schematic.");
+      this->spi_failed_ = true;
+      this->mark_failed(LOG_STR("CC1101 SPI communication broken — check pin assignments"));
+      return;
+    }
+    ESP_LOGI(TAG, "CC1101 init succeeded on second attempt after extended reset delay");
+  }
 
 #ifdef USE_LOGGER
   // Forward all ESP_LOG messages into the ring buffer so the web UI Log tab
   // can display them when capture is enabled.
   if (logger::global_logger != nullptr) {
-    logger::global_logger->add_log_listener(new EleroLogListener(this));
+    logger::global_logger->add_log_callback(this, elero_log_callback);
+    this->log_listener_ = this;  // non-null sentinel so destructor knows it was registered
   }
 #endif
 }
 
-void Elero::reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
+float Elero::registers_to_mhz(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
+  return (26.0f / 65536.0f) * ((static_cast<uint32_t>(freq2) << 16) |
+                                (static_cast<uint32_t>(freq1) << 8) |
+                                 static_cast<uint32_t>(freq0));
+}
+
+bool Elero::reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
+  if (!this->is_tx_idle()) {
+    ESP_LOGW(TAG, "Cannot reinit frequency while TX is in progress");
+    return false;
+  }
   this->rx_ready_.store(false, std::memory_order_release);
   this->tx_state_.store(TxState::IDLE, std::memory_order_release);
   this->freq2_ = freq2;
@@ -475,12 +754,53 @@ void Elero::reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
   this->freq0_ = freq0;
   this->reset();
   this->init();
-  ESP_LOGI(TAG, "CC1101 re-initialised: freq2=0x%02x freq1=0x%02x freq0=0x%02x", freq2, freq1, freq0);
+  float mhz = registers_to_mhz(freq2, freq1, freq0);
+  ESP_LOGI(TAG, "CC1101 re-initialised: %.2f MHz (0x%02x 0x%02x 0x%02x)", mhz, freq2, freq1, freq0);
+  return true;
+}
+
+bool Elero::reinit_frequency_mhz(float mhz) {
+  if (!this->is_tx_idle()) {
+    ESP_LOGW(TAG, "Cannot reinit frequency while TX is in progress");
+    return false;
+  }
+  this->rx_ready_.store(false, std::memory_order_release);
+  this->tx_state_.store(TxState::IDLE, std::memory_order_release);
+
+  // Use RadioLib's setFrequency() to set the CC1101 frequency directly in MHz.
+  int16_t rc = this->radio_->setFrequency(mhz);
+  if (rc != RADIOLIB_ERR_NONE) {
+    ESP_LOGE(TAG, "setFrequency(%.2f MHz) failed: %d", mhz, rc);
+    return false;
+  }
+
+  // Read back the register values so our cached freq bytes stay in sync.
+  this->freq2_ = this->read_reg(CC1101_FREQ2);
+  this->freq1_ = this->read_reg(CC1101_FREQ1);
+  this->freq0_ = this->read_reg(CC1101_FREQ0);
+
+  // Full reinit to restore all custom register settings (setFrequency may
+  // alter modem config).
+  this->reset();
+  this->init();
+
+  float actual_mhz = registers_to_mhz(this->freq2_, this->freq1_, this->freq0_);
+  ESP_LOGI(TAG, "CC1101 re-initialised via setFrequency: %.2f MHz (0x%02x 0x%02x 0x%02x)",
+           actual_mhz, this->freq2_, this->freq1_, this->freq0_);
+  return true;
 }
 
 void Elero::flush_and_rx() {
   ESP_LOGVV(TAG, "flush_and_rx");
   this->radio_->standby();  // blocks until IDLE (~1ms)
+  // Verify we actually reached IDLE — standby() may fail silently if the
+  // CC1101 is unresponsive (SPI returns 0xFF).
+  uint8_t marc = this->read_status(CC1101_MARCSTATE) & 0x1F;
+  if (marc != CC1101_MARCSTATE_IDLE) {
+    // Force IDLE via direct strobe as fallback
+    this->write_cmd(CC1101_SIDLE);
+    delay_microseconds_safe(500);
+  }
   this->write_cmd(CC1101_SFRX);
   this->write_cmd(CC1101_SFTX);
   this->write_cmd(CC1101_SRX);
@@ -490,6 +810,14 @@ void Elero::flush_and_rx() {
 void Elero::flush_rx() {
   ESP_LOGVV(TAG, "flush_rx");
   this->radio_->standby();  // blocks until IDLE (~1ms)
+  // Verify we actually reached IDLE — standby() may fail silently if the
+  // CC1101 is unresponsive (SPI returns 0xFF).
+  uint8_t marc = this->read_status(CC1101_MARCSTATE) & 0x1F;
+  if (marc != CC1101_MARCSTATE_IDLE) {
+    // Force IDLE via direct strobe as fallback
+    this->write_cmd(CC1101_SIDLE);
+    delay_microseconds_safe(500);
+  }
   this->write_cmd(CC1101_SFRX);
   this->write_cmd(CC1101_SRX);
   this->rx_ready_.store(false, std::memory_order_release);
@@ -497,18 +825,51 @@ void Elero::flush_rx() {
 
 void Elero::reset() {
   // Software reset via command strobes — direct SPI for timing control.
+  // The CC1101 datasheet specifies that after SRES, the chip needs up to
+  // ~1ms to complete its internal reset sequence before it can accept
+  // further commands.
   this->enable();
   this->transfer_byte(CC1101_SRES);
-  delay_microseconds_safe(50);
+  delay_microseconds_safe(5000);  // 5ms — give CC1101 crystal oscillator time to stabilize after SRES
   this->transfer_byte(CC1101_SIDLE);
-  delay_microseconds_safe(50);
+  delay_microseconds_safe(100);
   this->disable();
 }
 
-void Elero::init() {
+bool Elero::init() {
+  // Early SPI health check: write one register and verify readback.
+  // Retry up to 5 times with exponential backoff — after reset(), some CC1101
+  // modules need additional stabilization time before SPI responds correctly.
+  // RadioLib's SPIsetRegValue does read-before-write + verify, so each attempt
+  // involves 3 SPI transactions.
+  const uint8_t max_spi_retries = 5;
+  bool spi_ok = false;
+  for (uint8_t attempt = 1; attempt <= max_spi_retries; attempt++) {
+    this->write_reg(CC1101_FSCTRL1, 0x08);
+    uint8_t check = this->read_reg(CC1101_FSCTRL1);
+    if (check == 0x08) {
+      spi_ok = true;
+      if (attempt > 1) {
+        ESP_LOGI(TAG, "init: SPI health check passed on attempt %d/%d", attempt, max_spi_retries);
+      }
+      break;
+    }
+    if (attempt < max_spi_retries) {
+      uint32_t delay_us = 2000u * (1u << (attempt - 1));  // 2ms, 4ms, 8ms, 16ms
+      ESP_LOGW(TAG, "init: SPI health check attempt %d/%d failed (wrote 0x08, read 0x%02x), retrying in %u us",
+               attempt, max_spi_retries, check, delay_us);
+      delay_microseconds_safe(delay_us);
+    } else {
+      ESP_LOGE(TAG, "init: SPI health check failed after %d attempts (wrote 0x08, read 0x%02x) — aborting init",
+               max_spi_retries, check);
+    }
+  }
+  if (!spi_ok) {
+    return false;
+  }
+
   uint8_t patable_data[] = {0xc0, 0xc0, 0xc0, 0xc0, 0xc0, 0xc0, 0xc0, 0xc0};
 
-  this->write_reg(CC1101_FSCTRL1, 0x08);
   this->write_reg(CC1101_FSCTRL0, 0x00);
   this->write_reg(CC1101_FREQ2, this->freq2_);
   this->write_reg(CC1101_FREQ1, this->freq1_);
@@ -549,36 +910,31 @@ void Elero::init() {
   this->write_cmd(CC1101_SRX);
   if (!this->wait_rx()) {
     ESP_LOGW(TAG, "init: CC1101 failed to enter RX after configuration");
+    return false;
   }
+  return true;
 }
 
 void Elero::write_reg(uint8_t addr, uint8_t data) {
-  // RadioLib SPIsetRegValue does verify-readback for config registers (0x00-0x2E).
-  // Status registers and FIFOs are write-only — use raw write for those.
-  if (addr <= CC1101_TEST0) {
-    int16_t rc = this->radio_module_->SPIsetRegValue(addr, data);
-    if (rc != RADIOLIB_ERR_NONE) {
-      ESP_LOGW(TAG, "SPI write verify failed: reg=0x%02x val=0x%02x rc=%d", addr, data, rc);
-    }
-  } else {
-    this->radio_module_->SPIwriteRegister(addr, data);
-  }
+  this->enable();
+  this->write_byte(addr);
+  this->write_byte(data);
+  this->disable();
+  delay_microseconds_safe(15);
 }
 
 void Elero::write_burst(uint8_t addr, uint8_t *data, uint8_t len) {
-  // TXFIFO and PATABLE burst writes are in the TX-critical path.
-  // Use direct SPI with explicit burst flag for proven reliability.
   this->enable();
-  this->transfer_byte(addr | CC1101_WRITE_BURST);
-  for (int i = 0; i < len; i++)
-    this->transfer_byte(data[i]);
+  this->write_byte(addr | CC1101_WRITE_BURST);
+  for (uint8_t i = 0; i < len; i++)
+    this->write_byte(data[i]);
   this->disable();
   delay_microseconds_safe(15);
 }
 
 void Elero::write_cmd(uint8_t cmd) {
   // Command strobes are single-byte SPI transactions — use direct SPI
-  // since RadioLib's SPIsendCommand is on the CC1101 class, not Module.
+  // since RadioLib's Module class has no dedicated command-strobe method.
   this->enable();
   this->transfer_byte(cmd);
   this->disable();
@@ -603,12 +959,13 @@ bool Elero::wait_rx() {
 // use send_command() which kicks off the state machine instead.
 
 uint8_t Elero::read_reg(uint8_t addr) {
-  int16_t val = this->radio_module_->SPIgetRegValue(addr);
-  if (val < 0) {
-    ESP_LOGW(TAG, "SPI read failed: reg=0x%02x rc=%d", addr, val);
-    return 0;
-  }
-  return (uint8_t) val;
+  uint8_t data;
+  this->enable();
+  this->write_byte(addr | CC1101_READ_SINGLE);
+  data = this->read_byte();
+  this->disable();
+  delay_microseconds_safe(15);
+  return data;
 }
 
 uint8_t Elero::read_status(uint8_t addr) {
@@ -821,8 +1178,8 @@ void Elero::interpret_msg() {
   // up to byte 26 + dests_len.  For 3-byte dests: max = (ELERO_MAX_PACKET_SIZE - 27) / 3 = 10.
   static const uint8_t MAX_SAFE_DESTS = (ELERO_MAX_PACKET_SIZE - 27) / 3;
   if (num_dests > MAX_SAFE_DESTS) {
-    ESP_LOGE(TAG, "Received invalid packet: too many destinations (%d)", num_dests);
-    ESP_LOGD(TAG, "  Raw [%d bytes]: %s", length + 3,
+    ESP_LOGW(TAG, "Received invalid packet: too many destinations (%d)", num_dests);
+    ESP_LOGW(TAG, "  Raw [%d bytes]: %s", length + 3,
              format_hex_pretty(this->msg_rx_, length + 3).c_str());
     if (this->packet_dump_pending_update_) {
       this->mark_last_raw_packet_(false, "too_many_dests");
@@ -843,8 +1200,8 @@ void Elero::interpret_msg() {
   // so the highest index touched is 26 + dests_len. This must be within both
   // the packet (length) and the FIFO buffer.
   if((uint16_t)(26 + dests_len) > length || (uint16_t)(26 + dests_len) >= CC1101_FIFO_LENGTH) {
-    ESP_LOGE(TAG, "Received invalid packet: dests_len too long (%d) for length %d", dests_len, length);
-    ESP_LOGD(TAG, "  Raw [%d bytes]: %s", length + 3,
+    ESP_LOGW(TAG, "Received invalid packet: dests_len too long (%d) for length %d", dests_len, length);
+    ESP_LOGW(TAG, "  Raw [%d bytes]: %s", length + 3,
              format_hex_pretty(this->msg_rx_, length + 3).c_str());
     if (this->packet_dump_pending_update_) {
       this->mark_last_raw_packet_(false, "dests_len_too_long");
@@ -855,8 +1212,8 @@ void Elero::interpret_msg() {
 
   // RSSI and LQI are appended by CC1101 after packet data at indices length+1 and length+2
   if ((uint16_t)(length + 2) >= CC1101_FIFO_LENGTH) {
-    ESP_LOGE(TAG, "Received invalid packet: RSSI/LQI out of buffer bounds (length=%d)", length);
-    ESP_LOGD(TAG, "  Raw [%d bytes]: %s", CC1101_FIFO_LENGTH,
+    ESP_LOGW(TAG, "Received invalid packet: RSSI/LQI out of buffer bounds (length=%d)", length);
+    ESP_LOGW(TAG, "  Raw [%d bytes]: %s", CC1101_FIFO_LENGTH,
              format_hex_pretty(this->msg_rx_, CC1101_FIFO_LENGTH).c_str());
     if (this->packet_dump_pending_update_) {
       this->mark_last_raw_packet_(false, "rssi_oob");
@@ -886,7 +1243,9 @@ void Elero::interpret_msg() {
     this->mark_last_raw_packet_(true, nullptr);
     this->packet_dump_pending_update_ = false;
   }
-  ESP_LOGD(TAG, "rcv'd: len=%02d, cnt=%02d, typ=0x%02x, typ2=0x%02x, hop=0x%02x, syst=0x%02x, chl=%02d, src=0x%06x, bwd=0x%06x, fwd=0x%06x, #dst=%02d, dst=0x%06x, rssi=%2.1f, lqi=%2d, crc=%2d, payload=[0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x]", length, cnt, typ, typ2, hop, syst, chl, src, bwd, fwd, num_dests, dst, rssi, lqi, crc, payload1, payload2, payload[0], payload[1], payload[2], payload[3], payload[4], payload[5], payload[6], payload[7]);
+  this->rx_count_++;
+  ESP_LOGD(TAG, "rcv'd from 0x%06x: state=0x%02x rssi=%.1f", src, payload[6], rssi);
+  ESP_LOGV(TAG, "rcv'd: len=%02d, cnt=%02d, typ=0x%02x, typ2=0x%02x, hop=0x%02x, syst=0x%02x, chl=%02d, src=0x%06x, bwd=0x%06x, fwd=0x%06x, #dst=%02d, dst=0x%06x, rssi=%2.1f, lqi=%2d, crc=%2d, payload=[0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x]", length, cnt, typ, typ2, hop, syst, chl, src, bwd, fwd, num_dests, dst, rssi, lqi, crc, payload1, payload2, payload[0], payload[1], payload[2], payload[3], payload[4], payload[5], payload[6], payload[7]);
 
   // Update RSSI sensor for any message from a known blind
 #ifdef USE_SENSOR
@@ -959,6 +1318,7 @@ void Elero::interpret_msg() {
       it->second.last_seen_ms = millis();
       it->second.last_rssi = rssi;
       it->second.last_state = payload[6];
+      this->update_runtime_blind_direction_(it->second, payload[6]);
     }
   } else {
     // Non-status packets: still update RSSI/last_seen for any known blind
@@ -1032,6 +1392,13 @@ void Elero::register_rssi_sensor(uint32_t address, sensor::Sensor *sensor) {
 void Elero::register_text_sensor(uint32_t address, text_sensor::TextSensor *sensor) {
   this->address_to_text_sensor_[address] = sensor;
 }
+
+void Elero::publish_text_sensor_state(uint32_t address, const std::string &state) {
+  auto it = this->address_to_text_sensor_.find(address);
+  if (it != this->address_to_text_sensor_.end()) {
+    it->second->publish_state(state);
+  }
+}
 #endif
 
 void Elero::start_packet_dump() {
@@ -1102,8 +1469,8 @@ void Elero::track_discovered_blind(uint32_t src, uint32_t remote, uint8_t channe
         blind.payload_1 = payload_1;
         blind.payload_2 = payload_2;
         blind.params_from_command = true;
-        ESP_LOGI(TAG, "Upgraded blind 0x%06x params from command packet: ch=%d, pck_inf=0x%02x/0x%02x, hop=0x%02x",
-                 src, channel, pck_inf0, pck_inf1, hop);
+        ESP_LOGI(TAG, "Upgraded blind 0x%06x params from command packet: ch=%d, pck_inf=0x%02x/0x%02x, hop=0x%02x, payload=0x%02x/0x%02x",
+                 src, channel, pck_inf0, pck_inf1, hop, payload_1, payload_2);
       }
       return;
     }
@@ -1131,7 +1498,9 @@ void Elero::track_discovered_blind(uint32_t src, uint32_t remote, uint8_t channe
 }
 
 bool Elero::send_command(t_elero_command *cmd) {
-  // Reject if a TX is already in progress — caller should retry next loop.
+  // Reject if SPI is permanently broken or TX is already in progress.
+  if (this->spi_failed_)
+    return false;
   if (this->tx_state_.load(std::memory_order_acquire) != TxState::IDLE)
     return false;
 
@@ -1165,12 +1534,47 @@ bool Elero::send_command(t_elero_command *cmd) {
   uint8_t *payload = &this->msg_tx_[22];
   msg_encode(payload);
 
-  ESP_LOGV(TAG, "send: len=%02d, cnt=%02d, typ=0x%02x, typ2=0x%02x, hop=0x%02x, syst=0x%02x, chl=%02d, src=0x%02x%02x%02x, bwd=0x%02x%02x%02x, fwd=0x%02x%02x%02x, #dst=%02d, dst=0x%02x%02x%02x, payload=[0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x]", this->msg_tx_[0], this->msg_tx_[1], this->msg_tx_[2], this->msg_tx_[3], this->msg_tx_[4], this->msg_tx_[5], this->msg_tx_[6], this->msg_tx_[7], this->msg_tx_[8], this->msg_tx_[9], this->msg_tx_[10], this->msg_tx_[11], this->msg_tx_[12], this->msg_tx_[13], this->msg_tx_[14], this->msg_tx_[15], this->msg_tx_[16], this->msg_tx_[17], this->msg_tx_[18], this->msg_tx_[19], this->msg_tx_[20], this->msg_tx_[21], this->msg_tx_[22], this->msg_tx_[23], this->msg_tx_[24], this->msg_tx_[25], this->msg_tx_[26], this->msg_tx_[27], this->msg_tx_[28], this->msg_tx_[29]);
+  ESP_LOGD(TAG, "send to 0x%06x: cmd=0x%02x ch=%02d cnt=%02d",
+           cmd->blind_addr, cmd->payload[4], cmd->channel, cmd->counter);
+#if ESPHOME_LOG_LEVEL >= ESPHOME_LOG_LEVEL_VERBOSE
+  ESP_LOGV(TAG, "  TX raw [%d bytes]: %s", ELERO_MSG_LENGTH + 1,
+           format_hex_pretty(this->msg_tx_, ELERO_MSG_LENGTH + 1).c_str());
+#endif
 
   // Synchronous TX initiation: RadioLib's standby() blocks until IDLE (~1ms),
   // then we flush, load FIFO, and send STX.  Going to IDLE first so STX is
   // not subject to CCA (Elero motors actively transmit, causing CCA failures).
   this->radio_->standby();
+
+  // Verify we actually reached IDLE — if not, radio is unresponsive.
+  // Track consecutive reinit failures to detect permanent SPI breakage early
+  // (e.g. GPIO12 strapping pin) without waiting for the 5-second watchdog.
+  uint8_t marc = this->read_status(CC1101_MARCSTATE) & 0x1F;
+  if (marc != CC1101_MARCSTATE_IDLE) {
+    this->send_cmd_reinit_failures_++;
+    if (this->send_cmd_reinit_failures_ >= 3) {
+      // SPI is permanently broken — stop retrying to avoid log spam.
+      if (!this->spi_failed_) {
+        ESP_LOGE(TAG, "send_command: %d consecutive reinit failures — SPI appears permanently broken.",
+                 this->send_cmd_reinit_failures_);
+        ESP_LOGE(TAG, "  If GPIO12 is used for SPI MISO, it may be pulling VDD_SDIO to 1.8V at boot.");
+        ESP_LOGE(TAG, "  Use non-strapping pins for SPI (e.g. CLK=18, MISO=19, MOSI=23).");
+        this->spi_failed_ = true;
+        this->mark_failed(LOG_STR("SPI permanently broken — check pin assignments"));
+      }
+      return false;
+    }
+    ESP_LOGW(TAG, "send_command: radio not in IDLE (marc=0x%02x), reinitializing (%d/%d)",
+             marc, this->send_cmd_reinit_failures_, 3);
+    this->reset();
+    if (!this->init()) {
+      // init() SPI health check failed — escalate failure count so we bail
+      // faster on the next call instead of spamming 25+ register-write warnings.
+      this->send_cmd_reinit_failures_++;
+    }
+    return false;
+  }
+  this->send_cmd_reinit_failures_ = 0;
 
   // Flush both FIFOs (valid in IDLE state per CC1101 spec): TX for a clean
   // slate, RX to discard any partial packet data from the reception that
@@ -1271,9 +1675,10 @@ void Elero::append_log(uint8_t level, const char *tag, const char *fmt, ...) {
   vsnprintf(entry.message, sizeof(entry.message), fmt, args);
   va_end(args);
   std::lock_guard<std::mutex> lock(this->log_mutex_);
-  if (this->log_entries_.size() < ELERO_LOG_BUFFER_SIZE) {
+  if (!this->log_buffer_full_ && this->log_entries_.size() < ELERO_LOG_BUFFER_SIZE) {
     this->log_entries_.push_back(entry);
   } else {
+    this->log_buffer_full_ = true;
     this->log_entries_[this->log_write_idx_] = entry;
     this->log_write_idx_ = (this->log_write_idx_ + 1) % ELERO_LOG_BUFFER_SIZE;
   }

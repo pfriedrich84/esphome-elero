@@ -165,9 +165,25 @@ struct RuntimeBlind {
   uint8_t cmd_counter{1};
   std::queue<uint8_t> command_queue;
   uint8_t send_packets_count{0};
+  uint32_t last_poll_ms{0};  // millis() of last periodic status poll
+  // Position tracking (dead-reckoning)
+  float position{-1.0f};               // 0.0 = closed, 1.0 = open, -1.0 = unknown
+  uint32_t last_recompute_ms{0};        // millis() of last position recompute
+  int8_t moving_direction{0};           // -1 = closing, 0 = stopped, +1 = opening
 };
 
 const char *elero_state_to_string(uint8_t state);
+
+class Elero;  // forward declaration for dispatch_commands
+
+/// Shared command dispatch logic used by both EleroCover and EleroLight.
+/// Returns true if a command was sent or a retry was attempted.
+void dispatch_commands(Elero *parent, std::queue<uint8_t> &queue,
+                       t_elero_command &cmd, uint8_t &send_packets,
+                       uint8_t &send_retries, uint32_t &last_command,
+                       bool &queue_full_published, uint32_t now,
+                       const char *tag, uint32_t blind_addr,
+                       void (*increase_counter_fn)(void *ctx), void *ctx);
 
 /// Abstract base class for light actuators registered with the Elero hub.
 /// EleroLight inherits from this so the hub never needs the light header.
@@ -289,7 +305,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void dump_config() override;
   float get_setup_priority() const override { return setup_priority::DATA; }
   void reset();
-  void init();
+  bool init();  // returns false if SPI is broken (early bail after first write failure)
   void write_reg(uint8_t addr, uint8_t data);
   void write_burst(uint8_t addr, uint8_t *data, uint8_t len);
   void write_cmd(uint8_t cmd);
@@ -311,6 +327,9 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
 #endif
 #ifdef USE_TEXT_SENSOR
   void register_text_sensor(uint32_t address, text_sensor::TextSensor *sensor);
+  /// Publish a string to the text sensor registered for a given blind address.
+  /// No-op if no text sensor is registered for the address.
+  void publish_text_sensor_state(uint32_t address, const std::string &state);
 #endif
 
   // Discovery / scan mode
@@ -351,7 +370,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   bool is_blind_adopted(uint32_t addr) const;
 
   // Log buffer
-  static const uint8_t ELERO_LOG_BUFFER_SIZE = 200;
+  static const uint16_t ELERO_LOG_BUFFER_SIZE = 200;
   struct LogEntry {
     uint32_t timestamp_ms;
     uint8_t level;
@@ -359,10 +378,26 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
     char message[160];
   };
   void append_log(uint8_t level, const char *tag, const char *fmt, ...);
-  void clear_log_entries() { std::lock_guard<std::mutex> lock(log_mutex_); log_entries_.clear(); log_write_idx_ = 0; }
-  std::vector<LogEntry> get_log_entries_copy() const { std::lock_guard<std::mutex> lock(log_mutex_); return log_entries_; }
+  void clear_log_entries() { std::lock_guard<std::mutex> lock(log_mutex_); log_entries_.clear(); log_write_idx_ = 0; log_buffer_full_ = false; }
+  std::vector<LogEntry> get_log_entries_copy() const {
+    std::lock_guard<std::mutex> lock(log_mutex_);
+    if (!log_buffer_full_) return log_entries_;
+    // Ring buffer has wrapped — return entries in chronological order:
+    // oldest entries start at log_write_idx_, newest end at log_write_idx_-1
+    std::vector<LogEntry> ordered;
+    ordered.reserve(log_entries_.size());
+    ordered.insert(ordered.end(), log_entries_.begin() + log_write_idx_, log_entries_.end());
+    ordered.insert(ordered.end(), log_entries_.begin(), log_entries_.begin() + log_write_idx_);
+    return ordered;
+  }
   void set_log_capture(bool en) { log_capture_ = en; }
   bool is_log_capture_active() const { return log_capture_; }
+
+  // Diagnostic counters for radio health monitoring
+  uint32_t get_rx_count() const { return rx_count_; }
+  uint32_t get_tx_count() const { return tx_count_; }
+  uint32_t get_watchdog_recovery_count() const { return watchdog_recovery_count_; }
+  void reset_diagnostic_counters() { rx_count_ = 0; tx_count_ = 0; watchdog_recovery_count_ = 0; }
 
   void set_gdo0_pin(InternalGPIOPin *pin) { gdo0_pin_ = pin; }
   void set_freq0(uint8_t freq) { freq0_ = freq; }
@@ -372,7 +407,9 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void set_send_delay(uint32_t delay_ms) { send_delay_ = delay_ms; }
   uint8_t get_send_repeats() const { return send_repeats_; }
   uint32_t get_send_delay() const { return send_delay_; }
-  void reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0);
+  bool reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0);
+  bool reinit_frequency_mhz(float mhz);
+  static float registers_to_mhz(uint8_t freq2, uint8_t freq1, uint8_t freq0);
   uint8_t get_freq0() const { return freq0_; }
   uint8_t get_freq1() const { return freq1_; }
   uint8_t get_freq2() const { return freq2_; }
@@ -382,6 +419,9 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void process_rx();
   void advance_tx();
   void drain_runtime_queues();
+  void poll_runtime_blinds_();
+  void recompute_runtime_positions_();
+  void update_runtime_blind_direction_(RuntimeBlind &rb, uint8_t state);
   void tx_abort_();
 
   bool wait_rx();
@@ -444,12 +484,32 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   std::vector<RawPacket> raw_packets_;
   uint16_t raw_packet_write_idx_{0};
   std::map<uint32_t, RuntimeBlind> runtime_blinds_;
+  // Diagnostic counters
+  uint32_t rx_count_{0};
+  uint32_t tx_count_{0};
+  uint32_t watchdog_recovery_count_{0};
+
+  // SPI health tracking: detect persistent SPI failures (e.g. strapping pin issues)
+  bool spi_failed_{false};            // set when SPI is permanently broken
+  uint8_t consecutive_watchdog_failures_{0};  // consecutive check_radio_state_ failures
+  uint8_t send_cmd_reinit_failures_{0};  // consecutive send_command() reinit failures
+
+  // RX overflow recovery: rate-limit flush attempts and escalate to full reinit
+  uint32_t last_rx_overflow_ms_{0};
+  uint8_t rx_overflow_count_{0};
+
   // Log buffer (protected by log_mutex_ — logger callback runs in a different context)
   uint32_t last_radio_check_ms_{0};
   bool log_capture_{false};
   mutable std::mutex log_mutex_;
   std::vector<LogEntry> log_entries_;
-  uint8_t log_write_idx_{0};
+  uint16_t log_write_idx_{0};
+  bool log_buffer_full_{false};
+
+  // Log listener (stored for cleanup in destructor)
+#ifdef USE_LOGGER
+  void *log_listener_{nullptr};
+#endif
 };
 
 }  // namespace elero

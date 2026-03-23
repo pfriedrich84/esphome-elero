@@ -82,6 +82,12 @@ void EleroCover::loop() {
       ESP_LOGW(TAG, "Stop verification exhausted %d retries for blind 0x%06x",
                ELERO_STOP_VERIFY_MAX_RETRIES, this->command_.blind_addr);
       this->stop_verify_at_ = 0;
+#ifdef USE_TEXT_SENSOR
+      this->parent_->publish_text_sensor_state(this->command_.blind_addr, "stop_failed");
+#endif
+      // Position is uncertain after failed stop verification
+      this->position = NAN;
+      this->publish_state(false);
     }
   }
 
@@ -142,34 +148,15 @@ bool EleroCover::is_at_target() {
   }
 }
 
-void EleroCover::handle_commands(uint32_t now) {
-  // Don't attempt TX while the radio is busy — try again next loop()
-  if (!this->parent_->is_tx_idle()) return;
+static void cover_increase_counter(void *ctx) {
+  static_cast<EleroCover *>(ctx)->increase_counter();
+}
 
-  if((now - this->last_command_) > this->parent_->get_send_delay()) {
-    if(this->commands_to_send_.size() > 0) {
-      this->command_.payload[4] = this->commands_to_send_.front();
-      if(this->parent_->send_command(&this->command_)) {
-        this->send_packets_++;
-        this->send_retries_ = 0;
-        if(this->send_packets_ >= this->parent_->get_send_repeats()) {
-          this->commands_to_send_.pop();
-          this->send_packets_ = 0;
-          this->increase_counter();
-        }
-        this->last_command_ = now;
-      } else {
-        ESP_LOGD(TAG, "Retry #%d for blind 0x%06x", this->send_retries_, this->command_.blind_addr);
-        this->send_retries_++;
-        if(this->send_retries_ > ELERO_SEND_RETRIES) {
-          ESP_LOGE(TAG, "Hit maximum number of retries, giving up.");
-          this->send_retries_ = 0;
-          this->commands_to_send_.pop();
-        }
-        this->last_command_ = now;
-      }
-    }
-  }
+void EleroCover::handle_commands(uint32_t now) {
+  dispatch_commands(this->parent_, this->commands_to_send_, this->command_,
+                    this->send_packets_, this->send_retries_, this->last_command_,
+                    this->queue_full_published_, now, TAG, this->command_.blind_addr,
+                    &cover_increase_counter, this);
 }
 
 float EleroCover::get_setup_priority() const { return setup_priority::DATA; }
@@ -241,14 +228,23 @@ void EleroCover::set_rx_state(uint8_t state) {
   case ELERO_STATE_BLOCKING:
     ESP_LOGW(TAG, "Blind 0x%06x reports BLOCKING", this->command_.blind_addr);
     op = COVER_OPERATION_IDLE;
+#ifdef USE_TEXT_SENSOR
+    this->parent_->publish_text_sensor_state(this->command_.blind_addr, "blocking");
+#endif
     break;
   case ELERO_STATE_OVERHEATED:
     ESP_LOGW(TAG, "Blind 0x%06x reports OVERHEATED", this->command_.blind_addr);
     op = COVER_OPERATION_IDLE;
+#ifdef USE_TEXT_SENSOR
+    this->parent_->publish_text_sensor_state(this->command_.blind_addr, "overheated");
+#endif
     break;
   case ELERO_STATE_TIMEOUT:
     ESP_LOGW(TAG, "Blind 0x%06x reports TIMEOUT", this->command_.blind_addr);
     op = COVER_OPERATION_IDLE;
+#ifdef USE_TEXT_SENSOR
+    this->parent_->publish_text_sensor_state(this->command_.blind_addr, "timeout");
+#endif
     break;
   default:
     op = COVER_OPERATION_IDLE;
@@ -363,6 +359,15 @@ void EleroCover::start_movement(CoverOperation dir) {
         // Reset tilt state on movement
         this->tilt = 0.0;
         this->last_operation_ = COVER_OPERATION_OPENING;
+      } else {
+        ESP_LOGW(TAG, "Command queue full for blind 0x%06x, dropping OPEN command",
+                 this->command_.blind_addr);
+#ifdef USE_TEXT_SENSOR
+        if (!this->queue_full_published_) {
+          this->parent_->publish_text_sensor_state(this->command_.blind_addr, "queue_full");
+          this->queue_full_published_ = true;
+        }
+#endif
       }
     break;
     case COVER_OPERATION_CLOSING:
@@ -372,6 +377,15 @@ void EleroCover::start_movement(CoverOperation dir) {
         // Reset tilt state on movement
         this->tilt = 0.0;
         this->last_operation_ = COVER_OPERATION_CLOSING;
+      } else {
+        ESP_LOGW(TAG, "Command queue full for blind 0x%06x, dropping CLOSE command",
+                 this->command_.blind_addr);
+#ifdef USE_TEXT_SENSOR
+        if (!this->queue_full_published_) {
+          this->parent_->publish_text_sensor_state(this->command_.blind_addr, "queue_full");
+          this->queue_full_published_ = true;
+        }
+#endif
       }
     break;
     case COVER_OPERATION_IDLE:
@@ -437,7 +451,18 @@ void EleroCover::recompute_position() {
     return;
 
   const uint32_t now = millis();
-  this->position += dir * (now - this->last_recompute_time_) / action_dur;
+  const uint32_t elapsed = (uint32_t)(now - this->last_recompute_time_);
+
+  // Sanity check: skip recompute if elapsed time is implausibly large
+  // (e.g., millis() wraparound glitch or stale last_recompute_time_)
+  if (elapsed > ELERO_TIMEOUT_MOVEMENT) {
+    ESP_LOGW(TAG, "Position recompute skipped for blind 0x%06x: elapsed %u ms exceeds timeout",
+             this->command_.blind_addr, elapsed);
+    this->last_recompute_time_ = now;
+    return;
+  }
+
+  this->position += dir * (float)elapsed / action_dur;
   this->position = clamp(this->position, 0.0f, 1.0f);
 
   this->last_recompute_time_ = now;

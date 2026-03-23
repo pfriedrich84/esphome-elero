@@ -7,6 +7,9 @@ esp32:
 external_components:
   - source: github://pfriedrich84/esphome-elero
 
+# IMPORTANT: Avoid ESP32 strapping pins (GPIO0, GPIO2, GPIO5, GPIO12, GPIO15)
+# for SPI signals. GPIO12 as MISO is especially problematic — the CC1101 can
+# pull it HIGH at boot, setting VDD_SDIO to 1.8V and breaking all SPI.
 spi:
   clk_pin: GPIO18
   mosi_pin: GPIO23
@@ -27,6 +30,7 @@ cover:
     name: Schlafzimmer
     open_duration: 25s
     close_duration: 22s
+    poll_interval: 5min              # Optional: Status polling (default 5min, or "never")
 
 # Light - Elero light receiver (on/off or dimmable)
 light:

@@ -36,7 +36,7 @@
 |---|---|
 | Rollläden hoch/runter/stopp steuern | Stabil |
 | Bidirektionale Kommunikation (Status empfangen) | Stabil |
-| Positionssteuerung (zeitbasiert) | Experimentell |
+| Positionssteuerung (zeitbasiert) | Stabil |
 | Tilt/Kipp-Steuerung | Experimentell |
 | RSSI-Signalstärke als Sensor | Stabil |
 | Blind-Status als Text-Sensor | Stabil |
@@ -44,7 +44,7 @@
 | Web-UI fuer Discovery und YAML-Export | Stabil |
 | Mehrere Blinds gleichzeitig | Stabil |
 | TempoTel 2 Kompatibilität | Getestet |
-| Lichter schalten (Ein/Aus und Dimmen) | Stabil |
+| Lichter schalten (Ein/Aus und Dimmen) | Experimentell |
 
 ## Voraussetzungen
 
@@ -262,7 +262,7 @@ cover:
 | `remote_address` | Hex (24-bit) | Ja | - | Adresse der zu simulierenden Fernbedienung |
 | `open_duration` | Zeitdauer | Nein | `0s` | Fahrzeit zum vollständigen Öffnen |
 | `close_duration` | Zeitdauer | Nein | `0s` | Fahrzeit zum vollständigen Schließen |
-| `poll_interval` | Zeitdauer / `never` | Nein | `5min` | Status-Abfrageintervall |
+| `poll_interval` | Zeitdauer / `never` | Nein | `5min` | Status-Abfrageintervall (`never` deaktiviert; während Fahrt alle 2 s) |
 | `supports_tilt` | Boolean | Nein | `false` | Tilt/Kipp-Unterstützung aktivieren |
 | `payload_1` | Hex (0x00-0xFF) | Nein | `0x00` | Erstes Payload-Byte |
 | `payload_2` | Hex (0x00-0xFF) | Nein | `0x04` | Zweites Payload-Byte |

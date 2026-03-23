@@ -59,6 +59,10 @@ GDO0 ──────>    GPIO26
 
 > **WARNUNG:** CC1101 arbeitet mit **3.3V**. Niemals an 5V anschließen!
 
+> **WICHTIG:** Verwende **keine ESP32 Strapping-Pins** (GPIO0, GPIO2, GPIO5, GPIO12, GPIO15) für die SPI-Leitungen (SCK, MOSI, MISO). Besonders **GPIO12 als MISO** ist problematisch: Das CC1101-Modul kann GPIO12 beim Boot auf HIGH ziehen, was VDD_SDIO auf 1.8V setzt und die gesamte SPI-Kommunikation zerstört. Die oben empfohlenen Pins (GPIO18/23/19) sind sicher. GPIO5 für CSN ist akzeptabel, da es als Chip-Select nur kurz aktiv ist.
+>
+> **IMPORTANT:** Do **not** use ESP32 strapping pins (GPIO0, GPIO2, GPIO5, GPIO12, GPIO15) for SPI signals (SCK, MOSI, MISO). **GPIO12 as MISO** is especially problematic: the CC1101 module can pull GPIO12 HIGH at boot, setting VDD_SDIO to 1.8V and breaking all SPI communication. The recommended pins above (GPIO18/23/19) are safe.
+
 ### Schritt 2.2: Verkabelung prüfen
 
 Prüfe alle Verbindungen nochmals:

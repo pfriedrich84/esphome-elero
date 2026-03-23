@@ -200,8 +200,9 @@ void EleroWebServer::handleRequest(AsyncWebServerRequest *request) {
   if (url == "/elero/api/packets/download" && method == HTTP_GET) { handle_packets_download(request); return; }
 
   // ── Frequency ──
-  if (url == "/elero/api/frequency"     && method == HTTP_GET)  { handle_get_frequency(request); return; }
-  if (url == "/elero/api/frequency/set" && method == HTTP_POST) { handle_set_frequency(request); return; }
+  if (url == "/elero/api/frequency"         && method == HTTP_GET)  { handle_get_frequency(request); return; }
+  if (url == "/elero/api/frequency/set"     && method == HTTP_POST) { handle_set_frequency(request); return; }
+  if (url == "/elero/api/frequency/set_mhz" && method == HTTP_POST) { handle_set_frequency_mhz(request); return; }
 
   // ── Logs ──
   if (url == "/elero/api/logs"                && method == HTTP_GET)  { handle_get_logs(request); return; }
@@ -212,6 +213,9 @@ void EleroWebServer::handleRequest(AsyncWebServerRequest *request) {
   // ── Web UI enable/disable (REST mirror of HA switch) ──
   if (url == "/elero/api/ui/status" && method == HTTP_GET)  { handle_webui_status(request); return; }
   if (url == "/elero/api/ui/enable" && method == HTTP_POST) { handle_webui_enable(request); return; }
+
+  // ── Diagnostics ──
+  if (url == "/elero/api/diagnostics/reset" && method == HTTP_POST) { handle_reset_diagnostics(request); return; }
 
   // ── Info ──
   if (url == "/elero/api/info" && method == HTTP_GET) { handle_get_info(request); return; }
@@ -370,12 +374,26 @@ void EleroWebServer::build_configured_json_(std::string &out) {
     if (!first) out += ",";
     first = false;
     std::string esc_name = json_escape(rb.name);
+
+    // Determine operation string from moving_direction
+    const char *operation = "idle";
+    if (rb.moving_direction > 0) operation = "opening";
+    else if (rb.moving_direction < 0) operation = "closing";
+
+    // Format position: null if unknown (-1.0), otherwise 0.00-1.00
+    char pos_str[16];
+    if (rb.position < 0.0f) {
+      snprintf(pos_str, sizeof(pos_str), "null");
+    } else {
+      snprintf(pos_str, sizeof(pos_str), "%.2f", rb.position);
+    }
+
     char buf[512];
     snprintf(buf, sizeof(buf),
       "{\"blind_address\":\"0x%06x\","
       "\"name\":\"%s\","
-      "\"position\":null,"
-      "\"operation\":\"idle\","
+      "\"position\":%s,"
+      "\"operation\":\"%s\","
       "\"last_state\":\"%s\","
       "\"last_seen_ms\":%lu,"
       "\"rssi\":%.1f,"
@@ -389,6 +407,8 @@ void EleroWebServer::build_configured_json_(std::string &out) {
       "\"adopted\":true}",
       rb.blind_address,
       esc_name.c_str(),
+      pos_str,
+      operation,
       elero_state_to_string(rb.last_state),
       (unsigned long)rb.last_seen_ms,
       rb.last_rssi,
@@ -570,13 +590,16 @@ void EleroWebServer::handle_cover_command(AsyncWebServerRequest *request, uint32
     this->add_cors_headers(response);
     request->send(response);
   } else {
-    this->send_json_error(request, 404, "Cover not found");
+    this->send_json_error(request, 404, "Device not found");
   }
 }
 
 // ─── Cover settings ───────────────────────────────────────────────────────────
 
 void EleroWebServer::handle_cover_settings(AsyncWebServerRequest *request, uint32_t addr) {
+  static const uint32_t MAX_DURATION_MS = 300000;  // 5 minutes max for open/close
+  static const uint32_t MIN_POLL_INTERVAL_MS = 1000;  // 1 second minimum poll interval
+
   auto parse_u32 = [](AsyncWebServerRequest *req, const char *name, uint32_t &out) -> bool {
     if (!req->hasParam(name)) return false;
     auto param = req->getParam(name);
@@ -598,6 +621,27 @@ void EleroWebServer::handle_cover_settings(AsyncWebServerRequest *request, uint3
     parse_u32(request, "open_duration", open_dur);
     parse_u32(request, "close_duration", close_dur);
     parse_u32(request, "poll_interval", poll_intvl);
+
+    // Validate duration values
+    if (open_dur > MAX_DURATION_MS) {
+      this->send_json_error(request, 400, "open_duration exceeds maximum (300000 ms)");
+      return;
+    }
+    if (close_dur > MAX_DURATION_MS) {
+      this->send_json_error(request, 400, "close_duration exceeds maximum (300000 ms)");
+      return;
+    }
+    // Both-or-neither: if one duration is set, the other must be too
+    if ((open_dur > 0) != (close_dur > 0)) {
+      this->send_json_error(request, 400, "open_duration and close_duration must both be set or both be zero");
+      return;
+    }
+    // Validate poll interval: must be >= 1000ms or 0 (disabled)
+    if (poll_intvl != 0 && poll_intvl < MIN_POLL_INTERVAL_MS) {
+      this->send_json_error(request, 400, "poll_interval must be >= 1000 ms or 0 (disabled)");
+      return;
+    }
+
     it->second->apply_runtime_settings(open_dur, close_dur, poll_intvl);
     char buf[80];
     snprintf(buf, sizeof(buf), "{\"status\":\"ok\",\"address\":\"0x%06x\"}", addr);
@@ -612,6 +656,27 @@ void EleroWebServer::handle_cover_settings(AsyncWebServerRequest *request, uint3
   parse_u32(request, "open_duration", open_dur);
   parse_u32(request, "close_duration", close_dur);
   parse_u32(request, "poll_interval", poll_intvl);
+
+  // Validate duration values
+  if (open_dur > MAX_DURATION_MS) {
+    this->send_json_error(request, 400, "open_duration exceeds maximum (300000 ms)");
+    return;
+  }
+  if (close_dur > MAX_DURATION_MS) {
+    this->send_json_error(request, 400, "close_duration exceeds maximum (300000 ms)");
+    return;
+  }
+  // Both-or-neither: if one duration is set, the other must be too
+  if ((open_dur > 0) != (close_dur > 0)) {
+    this->send_json_error(request, 400, "open_duration and close_duration must both be set or both be zero");
+    return;
+  }
+  // Validate poll interval: must be >= 1000ms or 0 (disabled)
+  if (poll_intvl != 0 && poll_intvl < MIN_POLL_INTERVAL_MS) {
+    this->send_json_error(request, 400, "poll_interval must be >= 1000 ms or 0 (disabled)");
+    return;
+  }
+
   if (this->parent_->update_runtime_blind_settings(addr, open_dur, close_dur, poll_intvl)) {
     char buf[80];
     snprintf(buf, sizeof(buf), "{\"status\":\"ok\",\"address\":\"0x%06x\"}", addr);
@@ -619,7 +684,7 @@ void EleroWebServer::handle_cover_settings(AsyncWebServerRequest *request, uint3
     this->add_cors_headers(response);
     request->send(response);
   } else {
-    this->send_json_error(request, 404, "Cover not found");
+    this->send_json_error(request, 404, "Device not found");
   }
 }
 
@@ -673,7 +738,15 @@ void EleroWebServer::handle_get_runtime(AsyncWebServerRequest *request) {
     if (!first) json += ",";
     first = false;
     std::string esc_name = json_escape(rb.name);
-    char buf[384];
+    // Format position: null if unknown (-1.0), otherwise 0.00-1.00
+    char pos_str[16];
+    if (rb.position < 0.0f) {
+      snprintf(pos_str, sizeof(pos_str), "null");
+    } else {
+      snprintf(pos_str, sizeof(pos_str), "%.2f", rb.position);
+    }
+
+    char buf[448];
     snprintf(buf, sizeof(buf),
       "{\"blind_address\":\"0x%06x\","
       "\"name\":\"%s\","
@@ -683,6 +756,8 @@ void EleroWebServer::handle_get_runtime(AsyncWebServerRequest *request) {
       "\"last_state\":\"%s\","
       "\"last_seen_ms\":%lu,"
       "\"device_type\":\"%s\","
+      "\"position\":%s,"
+      "\"moving_direction\":%d,"
       "\"open_duration_ms\":%lu,"
       "\"close_duration_ms\":%lu,"
       "\"dim_duration_ms\":%lu,"
@@ -692,6 +767,8 @@ void EleroWebServer::handle_get_runtime(AsyncWebServerRequest *request) {
       elero_state_to_string(rb.last_state),
       (unsigned long)rb.last_seen_ms,
       rb.device_type == DeviceType::LIGHT ? "light" : "cover",
+      pos_str,
+      (int)rb.moving_direction,
       (unsigned long)rb.open_duration_ms,
       (unsigned long)rb.close_duration_ms,
       (unsigned long)rb.dim_duration_ms,
@@ -885,7 +962,9 @@ void EleroWebServer::build_packets_array_json_(std::string &out) {
 void EleroWebServer::handle_get_packets(AsyncWebServerRequest *request) {
   const auto &packets = this->parent_->get_raw_packets();
 
-  std::string json = "{\"dump_active\":";
+  std::string json;
+  json.reserve(4096);
+  json += "{\"dump_active\":";
   json += this->parent_->is_packet_dump_active() ? "true" : "false";
   json += ",\"count\":";
   char cnt_buf[12];
@@ -979,12 +1058,16 @@ void EleroWebServer::handle_packets_download(AsyncWebServerRequest *request) {
 // ─── Frequency ────────────────────────────────────────────────────────────────
 
 void EleroWebServer::handle_get_frequency(AsyncWebServerRequest *request) {
-  char buf[80];
+  float mhz = Elero::registers_to_mhz(this->parent_->get_freq2(),
+                                        this->parent_->get_freq1(),
+                                        this->parent_->get_freq0());
+  char buf[120];
   snprintf(buf, sizeof(buf),
-    "{\"freq2\":\"0x%02x\",\"freq1\":\"0x%02x\",\"freq0\":\"0x%02x\"}",
+    "{\"freq2\":\"0x%02x\",\"freq1\":\"0x%02x\",\"freq0\":\"0x%02x\",\"mhz\":%.2f}",
     this->parent_->get_freq2(),
     this->parent_->get_freq1(),
-    this->parent_->get_freq0());
+    this->parent_->get_freq0(),
+    mhz);
   AsyncWebServerResponse *response = request->beginResponse(200, "application/json", buf);
   this->add_cors_headers(response);
   request->send(response);
@@ -1013,11 +1096,51 @@ void EleroWebServer::handle_set_frequency(AsyncWebServerRequest *request) {
     this->send_json_error(request, 400, "Invalid frequency value (0x00-0xFF)");
     return;
   }
-  this->parent_->reinit_frequency(f2, f1, f0);
-  char buf[96];
+  if (!this->parent_->reinit_frequency(f2, f1, f0)) {
+    this->send_json_error(request, 409, "TX in progress — retry when idle");
+    return;
+  }
+  float mhz = Elero::registers_to_mhz(f2, f1, f0);
+  char buf[128];
   snprintf(buf, sizeof(buf),
-    "{\"status\":\"ok\",\"freq2\":\"0x%02x\",\"freq1\":\"0x%02x\",\"freq0\":\"0x%02x\"}",
-    f2, f1, f0);
+    "{\"status\":\"ok\",\"freq2\":\"0x%02x\",\"freq1\":\"0x%02x\",\"freq0\":\"0x%02x\",\"mhz\":%.2f}",
+    f2, f1, f0, mhz);
+  AsyncWebServerResponse *response = request->beginResponse(200, "application/json", buf);
+  this->add_cors_headers(response);
+  request->send(response);
+}
+
+void EleroWebServer::handle_set_frequency_mhz(AsyncWebServerRequest *request) {
+  if (!request->hasParam("mhz")) {
+    this->send_json_error(request, 400, "Missing mhz parameter");
+    return;
+  }
+  auto mhz_param = request->getParam("mhz");
+  if (mhz_param == nullptr) {
+    this->send_json_error(request, 400, "Missing mhz parameter");
+    return;
+  }
+  char *end;
+  float mhz = strtof(mhz_param->value().c_str(), &end);
+  if (end == mhz_param->value().c_str() || mhz < 300.0f || mhz > 928.0f) {
+    this->send_json_error(request, 400, "Invalid MHz value (300.0-928.0)");
+    return;
+  }
+  if (!this->parent_->reinit_frequency_mhz(mhz)) {
+    // reinit_frequency_mhz returns false for both TX-busy and setFrequency failure
+    this->send_json_error(request, 409, "Frequency change failed — TX may be in progress or value outside CC1101 supported bands");
+    return;
+  }
+  float actual_mhz = Elero::registers_to_mhz(this->parent_->get_freq2(),
+                                               this->parent_->get_freq1(),
+                                               this->parent_->get_freq0());
+  char buf[160];
+  snprintf(buf, sizeof(buf),
+    "{\"status\":\"ok\",\"mhz\":%.2f,\"freq2\":\"0x%02x\",\"freq1\":\"0x%02x\",\"freq0\":\"0x%02x\"}",
+    actual_mhz,
+    this->parent_->get_freq2(),
+    this->parent_->get_freq1(),
+    this->parent_->get_freq0());
   AsyncWebServerResponse *response = request->beginResponse(200, "application/json", buf);
   this->add_cors_headers(response);
   request->send(response);
@@ -1054,7 +1177,9 @@ void EleroWebServer::handle_get_logs(AsyncWebServerRequest *request) {
       since_ms = (uint32_t)strtoul(since_param->value().c_str(), nullptr, 10);
   }
 
-  std::string json = "{\"capture_active\":";
+  std::string json;
+  json.reserve(4096);
+  json += "{\"capture_active\":";
   json += this->parent_->is_log_capture_active() ? "true" : "false";
   json += ",\"entries\":[";
   this->build_log_entries_array_json_(json, since_ms);
@@ -1155,6 +1280,15 @@ void EleroWebServer::handle_get_status(AsyncWebServerRequest *request) {
   json += "{";
   this->build_configured_json_(json);  // always: "covers":[...],"lights":[...]
 
+  // Always include diagnostic counters for radio health monitoring
+  char diag_buf[128];
+  snprintf(diag_buf, sizeof(diag_buf),
+    ",\"diagnostics\":{\"rx_count\":%lu,\"tx_count\":%lu,\"watchdog_recovery_count\":%lu}",
+    (unsigned long)this->parent_->get_rx_count(),
+    (unsigned long)this->parent_->get_tx_count(),
+    (unsigned long)this->parent_->get_watchdog_recovery_count());
+  json += diag_buf;
+
   if (tab == "discovery") {
     json += ",\"scanning\":";
     json += this->parent_->is_scanning() ? "true" : "false";
@@ -1182,6 +1316,16 @@ void EleroWebServer::handle_get_status(AsyncWebServerRequest *request) {
 
   json += "}";
   auto *response = request->beginResponse(200, "application/json", json.c_str());
+  this->add_cors_headers(response);
+  request->send(response);
+}
+
+// ─── Diagnostics ──────────────────────────────────────────────────────────────
+
+void EleroWebServer::handle_reset_diagnostics(AsyncWebServerRequest *request) {
+  this->parent_->reset_diagnostic_counters();
+  AsyncWebServerResponse *response =
+      request->beginResponse(200, "application/json", "{\"status\":\"reset\"}");
   this->add_cors_headers(response);
   request->send(response);
 }
