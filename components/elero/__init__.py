@@ -109,14 +109,6 @@ async def to_code(config):
     # Add RadioLib as PlatformIO library dependency
     cg.add_library("jgromes/RadioLib", "7.1.2")
 
-    # Prevent RadioLib from auto-detecting Arduino and including <SPI.h>.
-    # We provide our own HAL (EspHomeRadioLibHal) that bridges to ESPHome's
-    # SPIDevice, so RadioLib's built-in Arduino SPI support is not needed.
-    # Without this flag, RadioLib defines RADIOLIB_BUILD_ARDUINO when it
-    # detects the ARDUINO macro, which causes compilation to fail on
-    # ESP-IDF framework builds where Arduino's SPI.h is not available.
-    cg.add_build_flag("-DRADIOLIB_CUSTOM_ARDUINO=1")
-
     # Reserve a log listener slot so add_log_listener() works at runtime.
     # Required for ESPHome 2026.1.0+ (StaticVector migration).
     try:
