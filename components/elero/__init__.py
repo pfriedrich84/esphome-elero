@@ -39,7 +39,7 @@ CONFIG_SCHEMA = (
             cv.Optional(CONF_FREQ0, default=0x7a): cv.hex_int_range(min=0x0, max=0xff),
             cv.Optional(CONF_FREQ1, default=0x71): cv.hex_int_range(min=0x0, max=0xff),
             cv.Optional(CONF_FREQ2, default=0x21): cv.hex_int_range(min=0x0, max=0xff),
-            cv.Optional(CONF_SEND_REPEATS, default=5): cv.int_range(min=1, max=20),
+            cv.Optional(CONF_SEND_REPEATS, default=1): cv.int_range(min=1, max=20),
             cv.Optional(CONF_SEND_DELAY, default="1ms"): cv.positive_time_period_milliseconds,
         }
     )

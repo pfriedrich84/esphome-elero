@@ -96,7 +96,7 @@ static const uint32_t ELERO_TIMEOUT_MOVEMENT = 120000; // poll for up to two min
 static const uint32_t ELERO_POST_MOVEMENT_POLL_DELAY = 5000; // poll 5s after open/close duration elapses
 
 static const uint8_t ELERO_SEND_RETRIES = 3;
-static const uint8_t ELERO_DEFAULT_SEND_REPEATS = 5;
+static const uint8_t ELERO_DEFAULT_SEND_REPEATS = 1;
 static const uint8_t ELERO_MAX_COMMAND_QUEUE = 10; // max commands per blind to prevent OOM
 
 // Auto-stop reliability: repeat stop commands, compensate for TX latency, verify motor stopped
