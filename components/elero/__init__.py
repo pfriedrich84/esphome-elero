@@ -106,8 +106,14 @@ async def to_code(config):
     cg.add(var.set_send_repeats(config[CONF_SEND_REPEATS]))
     cg.add(var.set_send_delay(config[CONF_SEND_DELAY].total_milliseconds))
 
-    # Add RadioLib as PlatformIO library dependency
+    # Add RadioLib as PlatformIO library dependency.
+    # RadioLib's Module.h includes <SPI.h> when RADIOLIB_BUILD_ARDUINO is defined
+    # (i.e., when the ARDUINO macro is >= 100). The Arduino SPI library is a
+    # built-in framework library, but ESPHome sets lib_ldf_mode=off which prevents
+    # PlatformIO from auto-discovering it. Adding "SPI" explicitly ensures the
+    # Arduino SPI include path is available when compiling RadioLib.
     cg.add_library("jgromes/RadioLib", "7.1.2")
+    cg.add_library("SPI", None)
 
     # Reserve a log listener slot so add_log_listener() works at runtime.
     # Required for ESPHome 2026.1.0+ (StaticVector migration).
