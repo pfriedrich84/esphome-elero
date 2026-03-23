@@ -336,12 +336,23 @@ void Elero::advance_tx() {
     case TxState::TRANSMITTING: {
       // TX completion: CC1101 auto-transitions to RX (MCSM1 TXOFF_MODE=0x3).
       // Detect by polling MARCSTATE — when it leaves TX the packet is sent.
+      // After STX strobe the CC1101 goes through calibration states before TX:
+      //   STARTCAL → BWBOOST → FS_LOCK → ENDCAL → FSTXON → TX
+      // We must wait through these intermediate states, not abort.
       uint8_t marc = this->read_status(CC1101_MARCSTATE) & 0x1F;
-      if (marc == CC1101_MARCSTATE_TX) {
-        // Still transmitting — check for timeout
+      bool tx_in_progress = (marc == CC1101_MARCSTATE_TX) ||
+                            (marc == CC1101_MARCSTATE_STARTCAL) ||
+                            (marc == CC1101_MARCSTATE_BWBOOST) ||
+                            (marc == CC1101_MARCSTATE_FS_LOCK) ||
+                            (marc == CC1101_MARCSTATE_IFADCON) ||
+                            (marc == CC1101_MARCSTATE_ENDCAL) ||
+                            (marc == CC1101_MARCSTATE_FSTXON) ||
+                            (marc == CC1101_MARCSTATE_RXTX_SWITCH);
+      if (tx_in_progress) {
+        // Still calibrating or transmitting — check for timeout
         if (elapsed > TX_STATE_TIMEOUT_MS) {
-          ESP_LOGW(TAG, "TX timeout in TRANSMITTING (%lums), aborting",
-                   (unsigned long) elapsed);
+          ESP_LOGW(TAG, "TX timeout in TRANSMITTING (marc=%s, %lums), aborting",
+                   marcstate_to_string(marc), (unsigned long) elapsed);
           this->tx_abort_();
         }
       } else if (marc == CC1101_MARCSTATE_TXFIFO_UFLOW) {
