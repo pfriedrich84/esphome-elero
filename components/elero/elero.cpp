@@ -647,6 +647,15 @@ void Elero::dump_config() {
 
 void Elero::setup() {
   ESP_LOGI(TAG, "Setting up Elero Component...");
+
+  // Allow the CC1101 to stabilize after power-on.  On boards like the LilyGo
+  // T-Embed CC1101 the radio sits behind a GPIO-controlled power rail that may
+  // have been enabled only moments before setup() runs (ESPHome on_boot delays
+  // are non-blocking coroutines).  The CC1101 datasheet requires a minimum of
+  // ~40 µs after power-on, but real-world modules with slow voltage regulators
+  // need significantly more.  150 ms covers typical RC rise-times.
+  delay(150);
+
   this->spi_setup();
 
   // Initialize RadioLib HAL adapter — bridge ESPHome SPI to RadioLib Module.
@@ -681,12 +690,33 @@ void Elero::setup() {
     delay(10);  // 10ms extra settling time
     this->reset();
     if (!this->init()) {
+      // SPI diagnostic dump — read chip ID registers and test multiple register
+      // writes to help the user identify wiring or pin assignment issues.
+      uint8_t partnum = this->read_status(CC1101_PARTNUM);  // Expected: 0x00 for CC1101
+      uint8_t version = this->read_status(CC1101_VERSION);  // Expected: 0x14 for CC1101
+      ESP_LOGE(TAG, "CC1101 SPI diagnostic: PARTNUM=0x%02x (expect 0x00), VERSION=0x%02x (expect 0x14)", partnum, version);
+
+      // Test raw SPI: write different values to a writable register and read back
+      const uint8_t test_vals[] = {0xAA, 0x55, 0x0F, 0x00};
+      for (uint8_t tv : test_vals) {
+        this->write_reg(CC1101_FSCTRL1, tv);
+        uint8_t rb = this->read_reg(CC1101_FSCTRL1);
+        ESP_LOGE(TAG, "  SPI write/read test: wrote 0x%02x, read 0x%02x %s", tv, rb, (tv == rb) ? "OK" : "MISMATCH");
+      }
+
       ESP_LOGE(TAG, "CC1101 SPI communication is broken — the radio is non-functional.");
-      ESP_LOGE(TAG, "Common cause: GPIO12 is an ESP32 strapping pin that controls flash voltage.");
-      ESP_LOGE(TAG, "  If GPIO12 is used as SPI MISO, the CC1101 can pull it HIGH at boot,");
-      ESP_LOGE(TAG, "  setting VDD_SDIO to 1.8V and breaking all SPI communication.");
-      ESP_LOGE(TAG, "  Solution: use non-strapping pins for SPI (e.g. CLK=18, MISO=19, MOSI=23).");
-      ESP_LOGE(TAG, "  ESP32 strapping pins to avoid: GPIO0, GPIO2, GPIO5, GPIO12, GPIO15.");
+      if (partnum == 0x00 && version == 0x14) {
+        ESP_LOGE(TAG, "  CC1101 chip IS detected but register writes fail.");
+        ESP_LOGE(TAG, "  This may indicate MOSI is not connected or the SPI bus has a conflict.");
+      } else if (partnum == 0x00 && version == 0x00) {
+        ESP_LOGE(TAG, "  SPI returns all zeros — MISO may be stuck LOW or CS not reaching the CC1101.");
+      } else if (partnum == 0xFF && version == 0xFF) {
+        ESP_LOGE(TAG, "  SPI returns all ones — MISO may be stuck HIGH or the CC1101 is not powered.");
+      } else {
+        ESP_LOGE(TAG, "  Unexpected chip ID — verify the radio module is a CC1101 on this SPI bus.");
+      }
+      ESP_LOGE(TAG, "  Configured SPI: CS=pin_cc1101_cs, GDO0=pin_cc1101_gdo0");
+      ESP_LOGE(TAG, "  Verify SPI wiring: CLK, MOSI, MISO, CS must match the board schematic.");
       this->spi_failed_ = true;
       this->mark_failed(LOG_STR("CC1101 SPI communication broken — check pin assignments"));
       return;
