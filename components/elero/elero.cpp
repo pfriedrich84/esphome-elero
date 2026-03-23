@@ -647,6 +647,15 @@ void Elero::dump_config() {
 
 void Elero::setup() {
   ESP_LOGI(TAG, "Setting up Elero Component...");
+
+  // Allow the CC1101 to stabilize after power-on.  On boards like the LilyGo
+  // T-Embed CC1101 the radio sits behind a GPIO-controlled power rail that may
+  // have been enabled only moments before setup() runs (ESPHome on_boot delays
+  // are non-blocking coroutines).  The CC1101 datasheet requires a minimum of
+  // ~40 µs after power-on, but real-world modules with slow voltage regulators
+  // need significantly more.  150 ms covers typical RC rise-times.
+  delay(150);
+
   this->spi_setup();
 
   // Initialize RadioLib HAL adapter — bridge ESPHome SPI to RadioLib Module.
