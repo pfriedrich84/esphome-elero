@@ -18,36 +18,31 @@ namespace esphome {
 namespace elero {
 
 #ifdef USE_LOGGER
-// Small adapter that implements the LogListener interface so the Elero hub
-// can forward ESPHome log messages into its ring buffer for the web UI.
-class EleroLogListener : public logger::LogListener {
- public:
-  explicit EleroLogListener(Elero *parent) : parent_(parent) {}
-  void on_log(uint8_t level, const char *tag, const char *message, size_t message_len) override {
-    // Map ESPHome levels (1-7) to the 5-level scheme used by the web UI:
-    //   ESPHome 1 ERROR         → 1 error
-    //   ESPHome 2 WARN          → 2 warn
-    //   ESPHome 3 INFO          → 3 info
-    //   ESPHome 4 CONFIG        → 3 info
-    //   ESPHome 5 DEBUG         → 4 debug
-    //   ESPHome 6/7 VERBOSE+    → 5 verbose
-    uint8_t mapped;
-    if (level <= 1)
-      mapped = 1;
-    else if (level == 2)
-      mapped = 2;
-    else if (level <= 4)
-      mapped = 3;
-    else if (level == 5)
-      mapped = 4;
-    else
-      mapped = 5;
-    this->parent_->append_log(mapped, tag, "%s", message);
-  }
-
- protected:
-  Elero *parent_;
-};
+// Static callback forwarding ESPHome log messages into the Elero ring buffer
+// for the web UI.  Uses the add_log_callback() API (ESPHome 2025.x+).
+static void elero_log_callback(void *instance, uint8_t level, const char *tag,
+                                const char *message, size_t message_len) {
+  auto *hub = static_cast<Elero *>(instance);
+  // Map ESPHome levels (1-7) to the 5-level scheme used by the web UI:
+  //   ESPHome 1 ERROR         → 1 error
+  //   ESPHome 2 WARN          → 2 warn
+  //   ESPHome 3 INFO          → 3 info
+  //   ESPHome 4 CONFIG        → 3 info
+  //   ESPHome 5 DEBUG         → 4 debug
+  //   ESPHome 6/7 VERBOSE+    → 5 verbose
+  uint8_t mapped;
+  if (level <= 1)
+    mapped = 1;
+  else if (level == 2)
+    mapped = 2;
+  else if (level <= 4)
+    mapped = 3;
+  else if (level == 5)
+    mapped = 4;
+  else
+    mapped = 5;
+  hub->append_log(mapped, tag, "%s", message);
+}
 #endif
 
 static const char *TAG = "elero";
@@ -216,7 +211,7 @@ Elero::~Elero() {
   delete this->radio_module_;
   this->radio_module_ = nullptr;
 #ifdef USE_LOGGER
-  delete static_cast<EleroLogListener *>(this->log_listener_);
+  // Callback-based log listener — no heap allocation to clean up.
   this->log_listener_ = nullptr;
 #endif
 }
@@ -703,9 +698,8 @@ void Elero::setup() {
   // Forward all ESP_LOG messages into the ring buffer so the web UI Log tab
   // can display them when capture is enabled.
   if (logger::global_logger != nullptr) {
-    auto *listener = new EleroLogListener(this);
-    this->log_listener_ = listener;
-    logger::global_logger->add_log_listener(listener);
+    logger::global_logger->add_log_callback(this, elero_log_callback);
+    this->log_listener_ = this;  // non-null sentinel so destructor knows it was registered
   }
 #endif
 }
