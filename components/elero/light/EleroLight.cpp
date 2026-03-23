@@ -175,8 +175,13 @@ void EleroLight::handle_commands(uint32_t now) {
 }
 
 void EleroLight::schedule_immediate_poll() {
+  uint32_t now = millis();
+  if ((now - this->last_immediate_poll_ms_) < ELERO_IMMEDIATE_POLL_MIN_INTERVAL_MS) {
+    return;  // rate-limited
+  }
   if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE) {
     this->commands_to_send_.push(this->command_check_);
+    this->last_immediate_poll_ms_ = now;
   }
 }
 

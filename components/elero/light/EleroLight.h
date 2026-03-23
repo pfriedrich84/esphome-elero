@@ -118,6 +118,7 @@ class EleroLight : public light::LightOutput, public Component, public EleroLigh
 
   // Prevents feedback loop: set_rx_state() → call.perform() → write_state() → send command
   bool ignore_write_state_{false};
+  uint32_t last_immediate_poll_ms_{0};  // rate-limit schedule_immediate_poll()
   bool queue_full_published_{false};    // true when "queue_full" has been published to text sensor
 
   // Configurable command bytes
