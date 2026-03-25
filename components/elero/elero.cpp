@@ -46,6 +46,7 @@ static void elero_log_callback(void *instance, uint8_t level, const char *tag,
 #endif
 
 static const char *TAG = "elero";
+static const uint8_t  SPI_SETTLE_US = 5;  // inter-transaction settling (CC1101 needs ~1-2µs)
 static const uint8_t flash_table_encode[] = {0x08, 0x02, 0x0d, 0x01, 0x0f, 0x0e, 0x07, 0x05, 0x09, 0x0c, 0x00, 0x0a, 0x03, 0x04, 0x0b, 0x06};
 static const uint8_t flash_table_decode[] = {0x0a, 0x03, 0x01, 0x0c, 0x0d, 0x07, 0x0f, 0x06, 0x00, 0x08, 0x0b, 0x0e, 0x09, 0x02, 0x05, 0x04};
 
@@ -330,7 +331,6 @@ void Elero::process_rx() {
 // ---------------------------------------------------------------------------
 // advance_tx — non-blocking TX state machine (one step per call)
 // ---------------------------------------------------------------------------
-static const uint8_t  SPI_SETTLE_US = 5;             // inter-transaction settling (CC1101 needs ~1-2µs)
 static const uint32_t TX_STATE_TIMEOUT_MS = 50;      // per-state watchdog
 static const uint32_t TX_COOLDOWN_MS = 3;             // settle time after TX before next TX (PLL lock ~75µs)
 static const uint32_t RADIO_WATCHDOG_MS = 5000;       // radio health check interval
@@ -779,10 +779,10 @@ void Elero::setup() {
   }
 #endif
 
-  // Run loop() on every scheduler pass instead of the default ~16ms interval.
+  // Request the main loop to skip its ~16ms sleep so loop() runs every pass.
   // The radio ISR sets rx_ready_ and the TX state machine needs sub-ms response
   // times — the default 16ms cadence adds unnecessary latency to every RX/TX cycle.
-  this->set_loop_interval(0);
+  this->high_freq_.start();
 }
 
 float Elero::registers_to_mhz(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
