@@ -37,9 +37,10 @@ static std::string json_escape(const std::string &s) {
 
 void EleroWebServer::add_cors_headers(AsyncWebServerResponse *response) {
   response->addHeader("Connection", "close");
-  response->addHeader("Access-Control-Allow-Origin", "*");
-  response->addHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
-  response->addHeader("Access-Control-Allow-Headers", "Content-Type");
+  // Restrict CORS: only same-origin requests are allowed by default.
+  // Browsers will block cross-origin requests without an Allow-Origin header,
+  // preventing CSRF attacks from malicious websites.
+  // Local access (typing the IP directly) is unaffected since it is same-origin.
 }
 
 void EleroWebServer::send_json_error(AsyncWebServerRequest *request, int code, const char *message) {
@@ -52,9 +53,10 @@ void EleroWebServer::send_json_error(AsyncWebServerRequest *request, int code, c
 }
 
 void EleroWebServer::handle_options(AsyncWebServerRequest *request) {
+  // Respond to CORS preflight without granting cross-origin access.
+  // Same-origin requests from the built-in web UI do not trigger preflights.
   AsyncWebServerResponse *response = request->beginResponse(204, "text/plain", "");
   this->add_cors_headers(response);
-  response->addHeader("Access-Control-Max-Age", "86400");
   request->send(response);
 }
 
@@ -84,6 +86,17 @@ bool EleroWebServer::parse_addr_url(const std::string &url, const char *prefix,
   if (v > 0xFFFFFF) return false;  // Elero addresses are 3 bytes max
   addr_out = (uint32_t)v;
   return true;
+}
+
+// ─── Authentication ──────────────────────────────────────────────────────────
+
+bool EleroWebServer::check_auth_(AsyncWebServerRequest *request) {
+  if (this->auth_username_.empty() || this->auth_password_.empty())
+    return false;  // No auth configured — allow all requests
+  if (request->authenticate(this->auth_username_.c_str(), this->auth_password_.c_str()))
+    return false;  // Authenticated successfully
+  request->requestAuthentication();
+  return true;  // Not authenticated — 401 sent, caller should return
 }
 
 // ─── Setup / config ───────────────────────────────────────────────────────────
@@ -117,13 +130,15 @@ void EleroWebServer::dump_config() {
   ESP_LOGCONFIG(TAG, "Elero Web Server:");
   ESP_LOGCONFIG(TAG, "  URL: /elero");
   ESP_LOGCONFIG(TAG, "  API: /elero/api/*");
-  ESP_LOGCONFIG(TAG, "  Enabled: %s", this->enabled_ ? "yes" : "no");
+  ESP_LOGCONFIG(TAG, "  Enabled: %s", this->enabled_.load(std::memory_order_acquire) ? "yes" : "no");
+  ESP_LOGCONFIG(TAG, "  Authentication: %s",
+                (!this->auth_username_.empty() && !this->auth_password_.empty()) ? "yes" : "no");
 }
 
 // ─── Routing ──────────────────────────────────────────────────────────────────
 
 bool EleroWebServer::canHandle(AsyncWebServerRequest *request) const {
-  if (!this->enabled_) return false;
+  if (!this->enabled_.load(std::memory_order_acquire)) return false;
   const std::string &url = request->url();
   return url == "/" || (url.size() >= 6 && url.compare(0, 6, "/elero") == 0);
 }
@@ -133,6 +148,9 @@ void EleroWebServer::handleRequest(AsyncWebServerRequest *request) {
   const auto method = request->method();
 
   if (method == HTTP_OPTIONS) { handle_options(request); return; }
+
+  // ── Authentication check (all non-OPTIONS requests) ──
+  if (this->check_auth_(request)) return;
 
   // ── Redirect root to /elero ──
   if (url == "/" && method == HTTP_GET) { request->redirect("/elero"); return; }
@@ -607,7 +625,9 @@ void EleroWebServer::handle_cover_settings(AsyncWebServerRequest *request, uint3
     char *end;
     unsigned long v = strtoul(param->value().c_str(), &end, 10);
     if (end == param->value().c_str()) return false;
-    out = (uint32_t)v;
+    // Guard against silent truncation on platforms where unsigned long > 32 bits
+    if (v > 0xFFFFFFFFUL) return false;
+    out = static_cast<uint32_t>(v);
     return true;
   };
 
@@ -1217,7 +1237,8 @@ void EleroWebServer::handle_log_capture_stop(AsyncWebServerRequest *request) {
 
 void EleroWebServer::handle_webui_status(AsyncWebServerRequest *request) {
   char buf[32];
-  snprintf(buf, sizeof(buf), "{\"enabled\":%s}", this->enabled_ ? "true" : "false");
+  snprintf(buf, sizeof(buf), "{\"enabled\":%s}",
+           this->enabled_.load(std::memory_order_acquire) ? "true" : "false");
   AsyncWebServerResponse *response = request->beginResponse(200, "application/json", buf);
   this->add_cors_headers(response);
   request->send(response);
@@ -1232,9 +1253,10 @@ void EleroWebServer::handle_webui_enable(AsyncWebServerRequest *request) {
       en = (val != "false" && val != "0");
     }
   }
-  this->enabled_ = en;
+  this->enabled_.store(en, std::memory_order_release);
   char buf[32];
-  snprintf(buf, sizeof(buf), "{\"enabled\":%s}", this->enabled_ ? "true" : "false");
+  snprintf(buf, sizeof(buf), "{\"enabled\":%s}",
+           this->enabled_.load(std::memory_order_acquire) ? "true" : "false");
   AsyncWebServerResponse *response = request->beginResponse(200, "application/json", buf);
   this->add_cors_headers(response);
   request->send(response);
