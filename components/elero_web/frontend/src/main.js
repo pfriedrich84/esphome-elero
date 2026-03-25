@@ -440,9 +440,9 @@ document.addEventListener('alpine:init', () => {
       const safe = msg.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
       return safe.replace(/0x[0-9a-fA-F]{6}/g, m => {
         const name = addrMap[m.toLowerCase()] || addrMap[m]
-        return name
-          ? `${m}<span class="blind-ref">(${name})</span>`
-          : m
+        if (!name) return m
+        const escName = name.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')
+        return `${m}<span class="blind-ref">(${escName})</span>`
       })
     },
 

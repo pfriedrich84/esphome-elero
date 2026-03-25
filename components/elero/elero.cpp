@@ -206,6 +206,11 @@ void dispatch_commands(Elero *parent, std::queue<uint8_t> &queue,
 }
 
 Elero::~Elero() {
+  // Detach the GDO0 interrupt BEFORE freeing radio objects to prevent
+  // the ISR from dereferencing a dangling pointer (use-after-free).
+  if (this->gdo0_pin_ != nullptr) {
+    this->gdo0_pin_->detach_interrupt();
+  }
   delete this->radio_;
   this->radio_ = nullptr;
   delete this->radio_module_;

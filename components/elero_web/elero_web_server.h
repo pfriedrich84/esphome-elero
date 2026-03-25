@@ -3,6 +3,7 @@
 #include "esphome/core/component.h"
 #include "esphome/components/web_server_base/web_server_base.h"
 #include "../elero/elero.h"
+#include <atomic>
 
 namespace esphome {
 namespace elero {
@@ -16,9 +17,13 @@ class EleroWebServer : public Component, public AsyncWebHandler {
   void set_elero_parent(Elero *parent) { this->parent_ = parent; }
   void set_web_server(web_server_base::WebServerBase *base) { this->base_ = base; }
 
+  // Optional HTTP Basic Auth — when both are non-empty, all endpoints require authentication.
+  void set_auth_username(const std::string &username) { this->auth_username_ = username; }
+  void set_auth_password(const std::string &password) { this->auth_password_ = password; }
+
   // Enable / disable the web UI (used by the HA switch)
-  void set_enabled(bool en) { this->enabled_ = en; }
-  bool is_enabled() const { return this->enabled_; }
+  void set_enabled(bool en) { this->enabled_.store(en, std::memory_order_release); }
+  bool is_enabled() const { return this->enabled_.load(std::memory_order_acquire); }
 
   bool canHandle(AsyncWebServerRequest *request) const override;
   void handleRequest(AsyncWebServerRequest *request) override;
@@ -81,9 +86,15 @@ class EleroWebServer : public Component, public AsyncWebHandler {
   void send_json_error(AsyncWebServerRequest *request, int code, const char *message);
   void handle_options(AsyncWebServerRequest *request);
 
+  /// Returns true if authentication is required and the request is NOT authenticated.
+  /// Sends a 401 response if so. Callers should return immediately when this returns true.
+  bool check_auth_(AsyncWebServerRequest *request);
+
   Elero *parent_{nullptr};
   web_server_base::WebServerBase *base_{nullptr};
-  bool enabled_{true};
+  std::atomic<bool> enabled_{true};
+  std::string auth_username_;
+  std::string auth_password_;
 };
 
 }  // namespace elero
