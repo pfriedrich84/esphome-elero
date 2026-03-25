@@ -13,6 +13,7 @@
 #include <cstdarg>
 #include <atomic>
 #include <mutex>
+#include <unordered_map>
 
 // All encryption/decryption structures copied from https://github.com/QuadCorei8085/elero_protocol/ (MIT)
 // All remote handling based on code from https://github.com/stanleypa/eleropy (GPLv3)
@@ -34,20 +35,9 @@ enum class TxState : uint8_t {
 /// Minimum interval between schedule_immediate_poll() calls per blind (ms).
 static const uint32_t ELERO_IMMEDIATE_POLL_MIN_INTERVAL_MS = 2000;
 
-/// Deduplication: ring buffer size for recently-seen (src, cnt) pairs.
-/// Sized to hold enough entries to prevent replay attacks across multiple blinds.
-static const uint8_t ELERO_DEDUP_BUFFER_SIZE = 64;
-
 /// Deduplication: time window in ms within which (src, cnt) duplicates are suppressed.
 /// 10 seconds prevents casual replay attacks while allowing legitimate retransmissions.
 static const uint32_t ELERO_DEDUP_WINDOW_MS = 10000;
-
-/// Entry in the packet deduplication ring buffer.
-struct RecentPacket {
-  uint32_t src{0};
-  uint8_t cnt{0};
-  uint32_t timestamp_ms{0};
-};
 
 }  // namespace elero
 
@@ -111,7 +101,7 @@ static const uint8_t ELERO_MAX_DISCOVERED = 20; // max discovered blinds to trac
 static const uint8_t ELERO_MAX_RAW_PACKETS = 50; // max raw packets in dump ring buffer
 
 // Diagnostics thresholds
-static const uint8_t  ELERO_MAX_RX_PER_LOOP = 4;           // max packets drained per process_rx() call
+static const uint8_t  ELERO_MAX_RX_PER_LOOP = 8;           // max packets drained per process_rx() call
 static const uint32_t ELERO_POLL_STAGGER_MS = 5000;         // stagger offset between cover poll timers
 
 // RF protocol encoding/encryption constants (Elero protocol)
@@ -505,14 +495,15 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   std::map<uint32_t, RuntimeBlind> runtime_blinds_;
   std::set<uint32_t> own_remote_addresses_;  // remote addrs we TX as — echoes are filtered
 
-  // Packet deduplication: suppress relay-hop and replay duplicates of the same (src, cnt)
-  RecentPacket recent_packets_[ELERO_DEDUP_BUFFER_SIZE]{};
-  uint8_t recent_packet_idx_{0};
+  // Packet deduplication: O(1) hash lookup keyed by (src << 8 | cnt) → timestamp
+  std::unordered_map<uint64_t, uint32_t> dedup_map_;
+  uint32_t last_dedup_prune_ms_{0};
 
   /// Per-source monotonic counter tracking: reject packets with counter values
   /// older than the last seen counter for each source address.
   std::map<uint32_t, uint8_t> last_seen_counter_;
   bool is_duplicate_packet_(uint32_t src, uint8_t cnt);
+  void prune_dedup_map_();
 
   // Diagnostic counters
   uint32_t rx_count_{0};

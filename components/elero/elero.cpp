@@ -107,7 +107,7 @@ void EspHomeRadioLibHal::spiTransfer(uint8_t *out, size_t len, uint8_t *in) {
 void EspHomeRadioLibHal::spiEndTransaction() {
   if (this->spi_parent_ != nullptr) {
     static_cast<Elero *>(this->spi_parent_)->disable();
-    delay_microseconds_safe(15);  // Match main's inter-transaction settling time for CC1101
+    delay_microseconds_safe(SPI_SETTLE_US);  // Match main's inter-transaction settling time for CC1101
   }
 }
 void EspHomeRadioLibHal::spiEnd() {
@@ -246,6 +246,8 @@ void Elero::loop() {
     this->poll_runtime_blinds_();
     // 4. Periodic radio health check — detect stuck CC1101 states.
     this->check_radio_state_();
+    // 4b. Prune expired dedup entries (same cadence as watchdog).
+    this->prune_dedup_map_();
   }
 
   // 5. Recompute dead-reckoning positions for runtime-adopted blinds.
@@ -328,9 +330,10 @@ void Elero::process_rx() {
 // ---------------------------------------------------------------------------
 // advance_tx — non-blocking TX state machine (one step per call)
 // ---------------------------------------------------------------------------
-static const uint32_t TX_STATE_TIMEOUT_MS = 50;   // per-state watchdog
-static const uint32_t TX_COOLDOWN_MS = 10;         // settle time after TX before next TX
-static const uint32_t RADIO_WATCHDOG_MS = 5000;    // radio health check interval
+static const uint8_t  SPI_SETTLE_US = 5;             // inter-transaction settling (CC1101 needs ~1-2µs)
+static const uint32_t TX_STATE_TIMEOUT_MS = 50;      // per-state watchdog
+static const uint32_t TX_COOLDOWN_MS = 3;             // settle time after TX before next TX (PLL lock ~75µs)
+static const uint32_t RADIO_WATCHDOG_MS = 5000;       // radio health check interval
 
 void Elero::advance_tx() {
   uint32_t now = millis();
@@ -426,19 +429,26 @@ void Elero::tx_abort_() {
 // ---------------------------------------------------------------------------
 bool Elero::is_duplicate_packet_(uint32_t src, uint8_t cnt) {
   uint32_t now = millis();
-  for (uint8_t i = 0; i < ELERO_DEDUP_BUFFER_SIZE; i++) {
-    if (recent_packets_[i].src == src &&
-        recent_packets_[i].cnt == cnt &&
-        (now - recent_packets_[i].timestamp_ms) < ELERO_DEDUP_WINDOW_MS) {
-      return true;  // already seen
-    }
+  uint64_t key = (static_cast<uint64_t>(src) << 8) | cnt;
+  auto it = this->dedup_map_.find(key);
+  if (it != this->dedup_map_.end() && (now - it->second) < ELERO_DEDUP_WINDOW_MS) {
+    return true;  // already seen within window
   }
-  // Not seen — record it
-  recent_packets_[recent_packet_idx_].src = src;
-  recent_packets_[recent_packet_idx_].cnt = cnt;
-  recent_packets_[recent_packet_idx_].timestamp_ms = now;
-  recent_packet_idx_ = (recent_packet_idx_ + 1) % ELERO_DEDUP_BUFFER_SIZE;
+  this->dedup_map_[key] = now;
   return false;
+}
+
+void Elero::prune_dedup_map_() {
+  uint32_t now = millis();
+  if (now - this->last_dedup_prune_ms_ < RADIO_WATCHDOG_MS)
+    return;
+  this->last_dedup_prune_ms_ = now;
+  for (auto it = this->dedup_map_.begin(); it != this->dedup_map_.end();) {
+    if ((now - it->second) >= ELERO_DEDUP_WINDOW_MS)
+      it = this->dedup_map_.erase(it);
+    else
+      ++it;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -768,6 +778,11 @@ void Elero::setup() {
     this->log_listener_ = this;  // non-null sentinel so destructor knows it was registered
   }
 #endif
+
+  // Run loop() on every scheduler pass instead of the default ~16ms interval.
+  // The radio ISR sets rx_ready_ and the TX state machine needs sub-ms response
+  // times — the default 16ms cadence adds unnecessary latency to every RX/TX cycle.
+  this->set_loop_interval(0);
 }
 
 float Elero::registers_to_mhz(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
@@ -954,7 +969,7 @@ void Elero::write_reg(uint8_t addr, uint8_t data) {
   this->write_byte(addr);
   this->write_byte(data);
   this->disable();
-  delay_microseconds_safe(15);
+  delay_microseconds_safe(SPI_SETTLE_US);
 }
 
 void Elero::write_burst(uint8_t addr, uint8_t *data, uint8_t len) {
@@ -963,7 +978,7 @@ void Elero::write_burst(uint8_t addr, uint8_t *data, uint8_t len) {
   for (uint8_t i = 0; i < len; i++)
     this->write_byte(data[i]);
   this->disable();
-  delay_microseconds_safe(15);
+  delay_microseconds_safe(SPI_SETTLE_US);
 }
 
 void Elero::write_cmd(uint8_t cmd) {
@@ -972,7 +987,7 @@ void Elero::write_cmd(uint8_t cmd) {
   this->enable();
   this->transfer_byte(cmd);
   this->disable();
-  delay_microseconds_safe(15);
+  delay_microseconds_safe(SPI_SETTLE_US);
 }
 
 bool Elero::wait_rx() {
@@ -998,7 +1013,7 @@ uint8_t Elero::read_reg(uint8_t addr) {
   this->write_byte(addr | CC1101_READ_SINGLE);
   data = this->read_byte();
   this->disable();
-  delay_microseconds_safe(15);
+  delay_microseconds_safe(SPI_SETTLE_US);
   return data;
 }
 
@@ -1010,7 +1025,7 @@ uint8_t Elero::read_status(uint8_t addr) {
   this->transfer_byte(addr | CC1101_READ_BURST);
   uint8_t data = this->transfer_byte(0x00);
   this->disable();
-  delay_microseconds_safe(15);
+  delay_microseconds_safe(SPI_SETTLE_US);
   return data;
 }
 
@@ -1022,7 +1037,7 @@ void Elero::read_buf(uint8_t addr, uint8_t *buf, uint8_t len) {
   for (uint8_t i = 0; i < len; i++)
     buf[i] = this->transfer_byte(0x00);
   this->disable();
-  delay_microseconds_safe(15);
+  delay_microseconds_safe(SPI_SETTLE_US);
 }
 
 uint8_t Elero::count_bits(uint8_t byte)
@@ -1625,13 +1640,18 @@ bool Elero::send_command(t_elero_command *cmd) {
 
   // Flush both FIFOs (valid in IDLE state per CC1101 spec): TX for a clean
   // slate, RX to discard any partial packet data from the reception that
-  // SIDLE interrupted.
-  this->write_cmd(CC1101_SFTX);
-  this->write_cmd(CC1101_SFRX);
+  // SIDLE interrupted.  Batched: two strobes with a single trailing delay.
+  this->enable();
+  this->transfer_byte(CC1101_SFTX);
+  this->disable();
+  this->enable();
+  this->transfer_byte(CC1101_SFRX);
+  this->disable();
+  delay_microseconds_safe(SPI_SETTLE_US);
   this->rx_ready_.store(false, std::memory_order_release);
 
   // Load TX FIFO and start transmission
-  delay_microseconds_safe(100);
+  delay_microseconds_safe(20);  // FIFO clear settles in <1 SPI clock; 20µs is ample margin
   this->write_burst(CC1101_TXFIFO, this->msg_tx_, this->msg_tx_[0] + 1);
   this->write_cmd(CC1101_STX);
 
