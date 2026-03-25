@@ -1,6 +1,7 @@
 #pragma once
 
 #include "esphome/core/component.h"
+#include "esphome/core/helpers.h"
 #include "esphome/core/preferences.h"
 #include "esphome/components/spi/spi.h"
 #include "cc1101.h"
@@ -509,6 +510,9 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   uint32_t rx_count_{0};
   uint32_t tx_count_{0};
   uint32_t watchdog_recovery_count_{0};
+
+  // Request the main loop to skip its ~16ms sleep so loop() runs every pass.
+  HighFrequencyLoopRequester high_freq_;
 
   // SPI health tracking: detect persistent SPI failures (e.g. strapping pin issues)
   bool spi_failed_{false};            // set when SPI is permanently broken
