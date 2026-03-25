@@ -35,10 +35,12 @@ enum class TxState : uint8_t {
 static const uint32_t ELERO_IMMEDIATE_POLL_MIN_INTERVAL_MS = 2000;
 
 /// Deduplication: ring buffer size for recently-seen (src, cnt) pairs.
-static const uint8_t ELERO_DEDUP_BUFFER_SIZE = 16;
+/// Sized to hold enough entries to prevent replay attacks across multiple blinds.
+static const uint8_t ELERO_DEDUP_BUFFER_SIZE = 64;
 
 /// Deduplication: time window in ms within which (src, cnt) duplicates are suppressed.
-static const uint32_t ELERO_DEDUP_WINDOW_MS = 2000;
+/// 10 seconds prevents casual replay attacks while allowing legitimate retransmissions.
+static const uint32_t ELERO_DEDUP_WINDOW_MS = 10000;
 
 /// Entry in the packet deduplication ring buffer.
 struct RecentPacket {
@@ -503,9 +505,13 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   std::map<uint32_t, RuntimeBlind> runtime_blinds_;
   std::set<uint32_t> own_remote_addresses_;  // remote addrs we TX as — echoes are filtered
 
-  // Packet deduplication: suppress relay-hop duplicates of the same (src, cnt)
+  // Packet deduplication: suppress relay-hop and replay duplicates of the same (src, cnt)
   RecentPacket recent_packets_[ELERO_DEDUP_BUFFER_SIZE]{};
   uint8_t recent_packet_idx_{0};
+
+  /// Per-source monotonic counter tracking: reject packets with counter values
+  /// older than the last seen counter for each source address.
+  std::map<uint32_t, uint8_t> last_seen_counter_;
   bool is_duplicate_packet_(uint32_t src, uint8_t cnt);
 
   // Diagnostic counters

@@ -2,7 +2,7 @@ import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import web_server_base
 from esphome.components.web_server_base import CONF_WEB_SERVER_BASE_ID
-from esphome.const import CONF_ID
+from esphome.const import CONF_ID, CONF_USERNAME, CONF_PASSWORD
 from esphome.components.elero import elero_ns, elero, CONF_ELERO_ID
 
 DEPENDENCIES = ["elero"]
@@ -20,6 +20,8 @@ CONFIG_SCHEMA = (
             cv.GenerateID(CONF_WEB_SERVER_BASE_ID): cv.use_id(
                 web_server_base.WebServerBase
             ),
+            cv.Optional(CONF_USERNAME): cv.string_strict,
+            cv.Optional(CONF_PASSWORD): cv.string_strict,
         }
     )
     .extend(cv.COMPONENT_SCHEMA)
@@ -35,3 +37,8 @@ async def to_code(config):
 
     web_server_base_var = await cg.get_variable(config[CONF_WEB_SERVER_BASE_ID])
     cg.add(var.set_web_server(web_server_base_var))
+
+    if CONF_USERNAME in config:
+        cg.add(var.set_auth_username(config[CONF_USERNAME]))
+    if CONF_PASSWORD in config:
+        cg.add(var.set_auth_password(config[CONF_PASSWORD]))
