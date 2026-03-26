@@ -694,6 +694,35 @@ There are no automated tests in this repository. Validation is done manually on 
 
 ---
 
+## ESP32 System Monitoring Sensors
+
+The `compile_test.yaml` includes system monitoring sensors for Home Assistant to track dual-core health:
+
+### RAM
+- **Free Heap** / **Largest Free Block** — via `debug` platform (bytes, 10s)
+- **Free RAM (KB)** — `ESP.getFreeHeap()` template sensor (10s)
+- **Min Free RAM (KB)** — `ESP.getMinFreeHeap()` — tracks memory leaks over time (30s)
+
+### Flash Storage
+- **Flash Used (KB)** — `ESP.getSketchSize()` (5min)
+- **Flash Free (KB)** — `ESP.getFreeSketchSpace()` — available for OTA (5min)
+
+### Core Utilization
+- **Core 0 Usage (%)** — FreeRTOS idle task runtime stats (radio core, 10s)
+- **Core 1 Usage (%)** — FreeRTOS idle task runtime stats (app core, 10s)
+- **Loop Time** — `debug` platform, main loop iteration time (10s)
+
+### Radio Task Health
+- **Radio Task Stack Free** — `uxTaskGetStackHighWaterMark("elero_radio")` in bytes (30s)
+
+### General
+- **WiFi Signal** (dBm, 30s), **Uptime** (seconds, 60s), **ESP32 Temperature** (30s)
+- **Device Info**, **Reset Reason** (text sensors, at boot)
+
+**Important**: The `Core 0/1 Usage (%)` sensors require `CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS` which is available on the ESP-IDF framework. On Arduino framework these sensors return `NAN` (show as "Unknown" in HA). To enable them, switch to `framework: type: esp-idf` in your YAML config.
+
+---
+
 ## Common Pitfalls
 
 - **Wrong frequency**: Most European Elero motors use 868.35 MHz (`freq0=0x7a`). Some use 868.95 MHz (`freq0=0xc0`). If discovery finds nothing, try the alternate frequency. Use the `/elero/api/frequency/set` endpoint to test at runtime.
