@@ -423,6 +423,11 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
 
 #ifdef USE_SENSOR
   void register_rssi_sensor(uint32_t address, sensor::Sensor *sensor);
+  // Hub-level diagnostic sensors
+  void set_frequency_sensor(sensor::Sensor *sensor) { frequency_sensor_ = sensor; }
+  void set_rx_count_sensor(sensor::Sensor *sensor) { rx_count_sensor_ = sensor; }
+  void set_tx_count_sensor(sensor::Sensor *sensor) { tx_count_sensor_ = sensor; }
+  void set_watchdog_recovery_sensor(sensor::Sensor *sensor) { watchdog_recovery_sensor_ = sensor; }
 #endif
 #ifdef USE_TEXT_SENSOR
   void register_text_sensor(uint32_t address, text_sensor::TextSensor *sensor);
@@ -603,6 +608,12 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   std::map<uint32_t, EleroLightBase*> address_to_light_mapping_;
 #ifdef USE_SENSOR
   std::map<uint32_t, sensor::Sensor*> address_to_rssi_sensor_;
+  // Hub-level diagnostic sensors (nullptr if not configured)
+  sensor::Sensor *frequency_sensor_{nullptr};
+  sensor::Sensor *rx_count_sensor_{nullptr};
+  sensor::Sensor *tx_count_sensor_{nullptr};
+  sensor::Sensor *watchdog_recovery_sensor_{nullptr};
+  uint32_t last_hub_sensor_update_ms_{0};
 #endif
 #ifdef USE_TEXT_SENSOR
   std::map<uint32_t, text_sensor::TextSensor*> address_to_text_sensor_;

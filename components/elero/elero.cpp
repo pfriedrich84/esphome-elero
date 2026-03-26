@@ -295,6 +295,25 @@ void Elero::loop() {
 
   // 3. Recompute dead-reckoning positions for runtime-adopted blinds.
   this->recompute_runtime_positions_();
+
+  // 4. Publish hub-level diagnostic sensors periodically (every 30 s).
+#ifdef USE_SENSOR
+  {
+    uint32_t now = millis();
+    if (now - this->last_hub_sensor_update_ms_ >= 30000) {
+      this->last_hub_sensor_update_ms_ = now;
+      if (this->frequency_sensor_ != nullptr)
+        this->frequency_sensor_->publish_state(
+            registers_to_mhz(this->freq2_, this->freq1_, this->freq0_));
+      if (this->rx_count_sensor_ != nullptr)
+        this->rx_count_sensor_->publish_state((float) this->get_rx_count());
+      if (this->tx_count_sensor_ != nullptr)
+        this->tx_count_sensor_->publish_state((float) this->get_tx_count());
+      if (this->watchdog_recovery_sensor_ != nullptr)
+        this->watchdog_recovery_sensor_->publish_state((float) this->get_watchdog_recovery_count());
+    }
+  }
+#endif
 }
 
 // ---------------------------------------------------------------------------
@@ -951,6 +970,20 @@ void Elero::setup() {
   // With dual-core, this speeds up RX queue draining on Core 1 and improves
   // position tracking responsiveness for auto-stop.
   this->high_freq_.start();
+
+  // Publish initial values for hub-level diagnostic sensors.
+#ifdef USE_SENSOR
+  if (this->frequency_sensor_ != nullptr)
+    this->frequency_sensor_->publish_state(
+        registers_to_mhz(this->freq2_, this->freq1_, this->freq0_));
+  if (this->rx_count_sensor_ != nullptr)
+    this->rx_count_sensor_->publish_state(0.0f);
+  if (this->tx_count_sensor_ != nullptr)
+    this->tx_count_sensor_->publish_state(0.0f);
+  if (this->watchdog_recovery_sensor_ != nullptr)
+    this->watchdog_recovery_sensor_->publish_state(0.0f);
+  this->last_hub_sensor_update_ms_ = millis();
+#endif
 }
 
 float Elero::registers_to_mhz(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
