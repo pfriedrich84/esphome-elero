@@ -1,0 +1,77 @@
+esphome:
+  name: compile-test
+
+esp32:
+  board: esp32dev
+  variant: esp32
+  framework:
+    type: arduino
+
+external_components:
+  - source:
+      type: local
+      path: components
+
+spi:
+  clk_pin: GPIO18
+  mosi_pin: GPIO23
+  miso_pin: GPIO19
+
+elero:
+  cs_pin: GPIO5
+  gdo0_pin: GPIO26
+  freq0: 0xc0
+  freq1: 0x71
+  freq2: 0x21
+
+cover:
+  - platform: elero
+    blind_address: 0xa831e5
+    channel: 4
+    remote_address: 0xf0d008
+    name: Schlafzimmer
+    open_duration: 25s
+    close_duration: 22s
+    poll_interval: 5min
+
+light:
+  - platform: elero
+    blind_address: 0xc41a2b
+    channel: 6
+    remote_address: 0xf0d008
+    name: "Wohnzimmerlicht"
+
+sensor:
+  - platform: elero
+    blind_address: 0xc41a2b
+    name: "Licht RSSI"
+
+text_sensor:
+  - platform: elero
+    blind_address: 0xc41a2b
+    name: "Licht Status"
+
+button:
+  - platform: elero
+    name: "Elero Start Scan"
+    scan_start: true
+  - platform: elero
+    name: "Elero Stop Scan"
+    scan_start: false
+
+web_server_base:
+
+elero_web:
+  id: elero_web_ui
+
+switch:
+  - platform: elero_web
+    name: "Elero Web UI"
+    id: elero_web_switch
+    restore_mode: RESTORE_DEFAULT_ON
+
+logger:
+
+wifi:
+  ssid: "test"
+  password: "test1234"
