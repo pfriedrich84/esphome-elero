@@ -259,15 +259,15 @@ Key constants (defined in `elero.h` unless noted):
 | `ELERO_TIMEOUT_MOVEMENT` | 120 000 ms | Give up movement tracking after 2 min |
 | `ELERO_POST_MOVEMENT_POLL_DELAY` | 5 000 ms | Poll delay after open/close duration elapses |
 | `ELERO_SEND_RETRIES` | 3 | Command retry count |
-| `ELERO_DEFAULT_SEND_REPEATS` | 5 | Default RF packet repetitions per command (configurable 1–20) |
+| `ELERO_DEFAULT_SEND_REPEATS` | 3 | Default RF packet repetitions per command (configurable 1–20) |
 | `ELERO_DEFAULT_SEND_DELAY` | 1 ms | Default delay between repeated packets (configurable) |
 | `ELERO_MAX_COMMAND_QUEUE` | 10 | Max queued commands per blind (prevents OOM) |
 | `ELERO_MAX_DISCOVERED` | 20 | Max blinds tracked in scan mode |
 | `ELERO_MAX_RAW_PACKETS` | 50 | Max raw packets in dump ring buffer |
-| `ELERO_MAX_RX_PER_LOOP` | 4 | Max packets drained per `process_rx()` call |
+| `ELERO_MAX_RX_PER_LOOP` | 8 | Max packets drained per `dispatch_rx_result_()` cycle |
 | `ELERO_POLL_STAGGER_MS` | 5 000 ms | Stagger offset between cover poll timers |
 | `ELERO_STOP_REPEAT_COUNT` | 2 | Stop commands queued on auto-stop (x2 RF packets each) |
-| `ELERO_TX_LATENCY_COMPENSATION_MS` | 150 ms | Position check lead time for TX pipeline delay |
+| `ELERO_TX_LATENCY_COMPENSATION_MS` | 300 ms | Position check lead time (accounts for multi-cover queue contention) |
 | `ELERO_STOP_VERIFY_DELAY_MS` | 500 ms | Delay before polling to verify motor stopped |
 | `ELERO_STOP_VERIFY_MAX_RETRIES` | 3 | Max stop-verify cycles before giving up |
 | `ELERO_MSG_LENGTH` | 0x1d (29) | Fixed message length for TX |

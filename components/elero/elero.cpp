@@ -174,7 +174,16 @@ void dispatch_commands(Elero *parent, std::queue<uint8_t> &queue,
   if (parent->is_failed()) return;
   if (!parent->is_tx_idle()) return;
 
-  if ((now - last_command) > parent->get_send_delay()) {
+  // Exponential backoff on retries: normal delay is send_delay (1ms),
+  // but after failures we wait 10/20/40ms to break the thundering herd
+  // when multiple covers retry simultaneously.
+  uint32_t delay = parent->get_send_delay();
+  if (send_retries > 0) {
+    uint8_t shift = (send_retries > 3) ? 3 : send_retries;
+    delay += (10u << shift);  // +20ms, +40ms, +80ms
+  }
+
+  if ((now - last_command) > delay) {
     if (!queue.empty()) {
       cmd.payload[4] = queue.front();
       if (parent->send_command(&cmd)) {
@@ -193,15 +202,14 @@ void dispatch_commands(Elero *parent, std::queue<uint8_t> &queue,
         last_command = now;
       } else {
         send_retries++;
-        ESP_LOGD(tag, "Retry #%d for 0x%06x", send_retries, blind_addr);
+        ESP_LOGD(tag, "Retry #%d for 0x%06x (backoff %lums)",
+                 send_retries, blind_addr, (unsigned long)delay);
         if (send_retries > ELERO_SEND_RETRIES) {
           ESP_LOGE(tag, "Hit maximum retries for 0x%06x, giving up.", blind_addr);
           send_retries = 0;
           queue.pop();
         }
-        // Exponential backoff jitter: 10ms, 20ms, 40ms per retry to break
-        // thundering herd when multiple covers retry simultaneously.
-        last_command = now + (10u << (send_retries > 3 ? 3 : send_retries));
+        last_command = now;
       }
     }
   }
