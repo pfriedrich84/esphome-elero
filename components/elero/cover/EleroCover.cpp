@@ -90,7 +90,10 @@ void EleroCover::loop() {
                ELERO_STOP_VERIFY_MAX_RETRIES, this->command_.blind_addr);
       this->stop_verify_at_ = 0;
       this->stop_trigger_ms_ = 0;
-      this->parent_->set_stop_urgent(false);
+      if (this->stop_urgent_active_) {
+        this->parent_->decrement_stop_urgent();
+        this->stop_urgent_active_ = false;
+      }
 #ifdef USE_TEXT_SENSOR
       this->parent_->publish_text_sensor_state(this->command_.blind_addr, "stop_failed");
 #endif
@@ -111,14 +114,13 @@ void EleroCover::loop() {
       this->stop_trigger_position_ = this->position;
       this->stop_trigger_ms_ = now;
       // Signal other covers to defer their non-stop commands
-      this->parent_->set_stop_urgent(true);
+      this->parent_->increment_stop_urgent();
+      this->stop_urgent_active_ = true;
       // Clear queue so stop goes out immediately (mirrors manual stop behavior)
       while (!this->commands_to_send_.empty())
         this->commands_to_send_.pop();
-      // Send stop via priority queue for immediate processing.
-      // Reduced from 2 to 1 stop command — verification loop re-sends if needed.
-      this->command_.payload[4] = this->command_stop_;
-      this->parent_->send_command_priority(&this->command_);
+      // Send stop via priority queue with retry for immediate processing.
+      this->send_stop_priority_();
       this->increase_counter();
       this->current_operation = COVER_OPERATION_IDLE;
       this->target_position_ = COVER_OPEN;
@@ -283,8 +285,7 @@ void EleroCover::set_rx_state(uint8_t state) {
                this->command_.blind_addr, this->stop_verify_retries_);
       while (!this->commands_to_send_.empty())
         this->commands_to_send_.pop();
-      this->command_.payload[4] = this->command_stop_;
-      this->parent_->send_command_priority(&this->command_);
+      this->send_stop_priority_();
       this->increase_counter();
       this->stop_verify_at_ = millis() + ELERO_STOP_VERIFY_DELAY_MS;
       op = COVER_OPERATION_IDLE;  // keep our side idle while retrying
@@ -304,8 +305,11 @@ void EleroCover::set_rx_state(uint8_t state) {
                  this->command_.blind_addr, this->stop_trigger_position_, pos, actual_delay);
       }
       this->stop_trigger_ms_ = 0;
-      // Clear stop_urgent so other covers can resume normal dispatch
-      this->parent_->set_stop_urgent(false);
+      // Decrement stop_urgent so other covers can resume once all stops confirmed
+      if (this->stop_urgent_active_) {
+        this->parent_->decrement_stop_urgent();
+        this->stop_urgent_active_ = false;
+      }
       this->stop_verify_retries_ = ELERO_STOP_VERIFY_MAX_RETRIES;
       this->stop_verify_at_ = 0;
     }
@@ -378,7 +382,10 @@ void EleroCover::start_movement(CoverOperation dir) {
   this->stop_verify_at_ = 0;
   this->stop_verify_retries_ = ELERO_STOP_VERIFY_MAX_RETRIES;
   this->stop_trigger_ms_ = 0;
-  this->parent_->set_stop_urgent(false);
+  if (this->stop_urgent_active_) {
+    this->parent_->decrement_stop_urgent();
+    this->stop_urgent_active_ = false;
+  }
 
   // When reversing direction while moving, clear the queue so the old
   // direction command isn't sent before the new one.  Without this, a
@@ -435,11 +442,11 @@ void EleroCover::start_movement(CoverOperation dir) {
       while (!this->commands_to_send_.empty())
         this->commands_to_send_.pop();
       // Send stop via priority queue for immediate processing
-      this->parent_->set_stop_urgent(true);
+      this->parent_->increment_stop_urgent();
+      this->stop_urgent_active_ = true;
       this->stop_trigger_position_ = this->position;
       this->stop_trigger_ms_ = millis();
-      this->command_.payload[4] = this->command_stop_;
-      this->parent_->send_command_priority(&this->command_);
+      this->send_stop_priority_();
       this->increase_counter();
       // Schedule verification to confirm motor actually stopped
       this->stop_verify_at_ = millis() + ELERO_STOP_VERIFY_DELAY_MS;
@@ -515,6 +522,25 @@ void EleroCover::recompute_position() {
   this->position = clamp(this->position, 0.0f, 1.0f);
 
   this->last_recompute_time_ = now;
+}
+
+bool EleroCover::send_stop_priority_() {
+  this->command_.payload[4] = this->command_stop_;
+  for (int attempt = 0; attempt < 3; attempt++) {
+    if (this->parent_->send_command_priority(&this->command_)) {
+      return true;
+    }
+    ESP_LOGW(TAG, "Priority queue full for blind 0x%06x, retry %d/3",
+             this->command_.blind_addr, attempt + 1);
+    vTaskDelay(pdMS_TO_TICKS(5));
+  }
+  ESP_LOGE(TAG, "CRITICAL: Stop command DROPPED for blind 0x%06x after 3 priority queue retries",
+           this->command_.blind_addr);
+  this->parent_->increment_tx_drop_count();
+#ifdef USE_TEXT_SENSOR
+  this->parent_->publish_text_sensor_state(this->command_.blind_addr, "stop_dropped");
+#endif
+  return false;
 }
 
 } // namespace elero

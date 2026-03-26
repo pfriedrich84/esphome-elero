@@ -96,6 +96,9 @@ class EleroCover : public cover::Cover, public Component, public EleroBlindBase 
 
  protected:
   void control(const cover::CoverCall &call) override;
+  /// Send stop via priority queue with retry (max 3 attempts, 5ms apart).
+  /// Returns true if enqueued, false if all retries failed (increments tx_drop_count_).
+  bool send_stop_priority_();
 
   t_elero_command command_ = {
     .counter = 1,
@@ -131,6 +134,7 @@ class EleroCover : public cover::Cover, public Component, public EleroBlindBase 
   bool queue_full_published_{false};    // true when "queue_full" has been published to text sensor
   float    stop_trigger_position_{0};   // position when auto-stop was triggered (for correction)
   uint32_t stop_trigger_ms_{0};         // millis() when auto-stop was triggered
+  bool     stop_urgent_active_{false};  // true if this cover has incremented stop_urgent_count_
 };
 
 } // namespace elero
