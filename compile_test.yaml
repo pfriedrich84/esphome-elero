@@ -18,6 +18,7 @@ spi:
   miso_pin: GPIO19
 
 elero:
+  id: elero_hub
   cs_pin: GPIO5
   gdo0_pin: GPIO26
   freq0: 0xc0
@@ -126,6 +127,27 @@ sensor:
     accuracy_decimals: 0
     update_interval: 30s
     icon: "mdi:stack-overflow"
+
+  # CC1101 current frequency in MHz (reflects runtime changes via web API)
+  - platform: template
+    name: "Current Frequency"
+    lambda: |-
+      auto *hub = id(elero_hub);
+      return esphome::elero::Elero::registers_to_mhz(
+        hub->get_freq2(), hub->get_freq1(), hub->get_freq0());
+    unit_of_measurement: "MHz"
+    accuracy_decimals: 2
+    update_interval: 60s
+    icon: "mdi:sine-wave"
+
+  # Radio watchdog recovery count (non-zero = CC1101 had problems)
+  - platform: template
+    name: "Watchdog Recovery Count"
+    lambda: |-
+      return (float)id(elero_hub)->get_watchdog_recovery_count();
+    accuracy_decimals: 0
+    update_interval: 30s
+    icon: "mdi:alert-circle-outline"
 
   # Core 0 idle percentage (radio task core)
   # Uses ESP-IDF runtime stats — requires CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS
