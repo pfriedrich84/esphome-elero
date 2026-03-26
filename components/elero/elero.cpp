@@ -223,7 +223,7 @@ Elero::~Elero() {
 
 void Elero::loop() {
   // Skip all processing if SPI is permanently broken (e.g. strapping pin issue).
-  if (this->spi_failed_)
+  if (this->spi_failed_.load(std::memory_order_acquire))
     return;
 
   // 1. ALWAYS process pending RX packets first (highest priority).
@@ -309,7 +309,7 @@ void Elero::process_rx() {
 
     // Capture to ring buffer if dump mode is active
     this->packet_dump_pending_update_ = false;
-    if (this->packet_dump_mode_) {
+    if (this->packet_dump_mode_.load(std::memory_order_acquire)) {
       this->capture_raw_packet_(fifo_count);
       this->packet_dump_pending_update_ = true;
     }
@@ -336,7 +336,7 @@ void Elero::advance_tx() {
   uint32_t now = millis();
   uint32_t elapsed = now - this->tx_state_entered_ms_;
 
-  switch (this->tx_state_) {
+  switch (this->tx_state_.load(std::memory_order_acquire)) {
 
     case TxState::TRANSMITTING: {
       // TX completion: CC1101 auto-transitions to RX (MCSM1 TXOFF_MODE=0x3).
@@ -368,7 +368,7 @@ void Elero::advance_tx() {
         // MARCSTATE left TX — verify FIFO drained (packet actually sent)
         uint8_t bytes = this->read_status(CC1101_TXBYTES) & 0x7F;
         if (bytes == 0) {
-          this->tx_count_++;
+          this->tx_count_.fetch_add(1, std::memory_order_relaxed);
           ESP_LOGV(TAG, "TX complete (marc=%s, %lums)",
                    marcstate_to_string(marc), (unsigned long) elapsed);
           this->tx_state_.store(TxState::COOLDOWN, std::memory_order_release);
@@ -468,7 +468,7 @@ void Elero::check_radio_state_() {
   // RXFIFO_OVERFLOW — flush and restart RX (escalate to full reinit if repeated)
   if (marc == CC1101_MARCSTATE_RXFIFO_OFLOW) {
     ESP_LOGW(TAG, "Radio watchdog: RX FIFO overflow, flushing");
-    this->watchdog_recovery_count_++;
+    this->watchdog_recovery_count_.fetch_add(1, std::memory_order_relaxed);
     this->flush_rx();
     // Verify recovery worked
     uint8_t marc_after = this->read_status(CC1101_MARCSTATE) & 0x1F;
@@ -485,7 +485,7 @@ void Elero::check_radio_state_() {
   // IDLE — radio stopped listening, restart RX
   if (marc == CC1101_MARCSTATE_IDLE) {
     ESP_LOGW(TAG, "Radio watchdog: stuck in IDLE, restarting RX");
-    this->watchdog_recovery_count_++;
+    this->watchdog_recovery_count_.fetch_add(1, std::memory_order_relaxed);
     this->consecutive_watchdog_failures_ = 0;  // IDLE is a valid CC1101 state, not SPI failure
     this->write_cmd(CC1101_SRX);
     return;
@@ -496,7 +496,7 @@ void Elero::check_radio_state_() {
   // MARCSTATE reads 0x1f = SPI returning 0xFF).  A hardware reset via
   // SRES followed by full register configuration is needed.
   ESP_LOGW(TAG, "Radio watchdog: unexpected state 0x%02x, full reinit", marc);
-  this->watchdog_recovery_count_++;
+  this->watchdog_recovery_count_.fetch_add(1, std::memory_order_relaxed);
   this->consecutive_watchdog_failures_++;
 
   // If the watchdog has failed 2+ times in a row without recovery, SPI is
@@ -507,7 +507,7 @@ void Elero::check_radio_state_() {
              this->consecutive_watchdog_failures_);
     ESP_LOGE(TAG, "  If GPIO12 is used for SPI MISO, it may be pulling VDD_SDIO to 1.8V at boot.");
     ESP_LOGE(TAG, "  Use non-strapping pins for SPI (e.g. CLK=18, MISO=19, MOSI=23).");
-    this->spi_failed_ = true;
+    this->spi_failed_.store(true, std::memory_order_release);
     this->mark_failed(LOG_STR("SPI permanently broken — check pin assignments"));
     return;
   }
@@ -523,6 +523,7 @@ void Elero::check_radio_state_() {
 // drain_runtime_queues — send one pending command from runtime-adopted blinds
 // ---------------------------------------------------------------------------
 void Elero::drain_runtime_queues() {
+  std::lock_guard<std::mutex> lock(state_mutex_);
   for (auto &entry : this->runtime_blinds_) {
     auto &rb = entry.second;
     if (!rb.command_queue.empty()) {
@@ -558,6 +559,7 @@ void Elero::drain_runtime_queues() {
 // poll_runtime_blinds_ — enqueue periodic status checks for runtime blinds
 // ---------------------------------------------------------------------------
 void Elero::poll_runtime_blinds_() {
+  std::lock_guard<std::mutex> lock(state_mutex_);
   uint32_t now = millis();
   for (auto &entry : this->runtime_blinds_) {
     auto &rb = entry.second;
@@ -621,6 +623,7 @@ void Elero::update_runtime_blind_direction_(RuntimeBlind &rb, uint8_t state) {
 // runtime blinds (called from loop())
 // ---------------------------------------------------------------------------
 void Elero::recompute_runtime_positions_() {
+  std::lock_guard<std::mutex> lock(state_mutex_);
   uint32_t now = millis();
   for (auto &entry : this->runtime_blinds_) {
     auto &rb = entry.second;
@@ -674,7 +677,7 @@ void Elero::dump_config() {
   ESP_LOGCONFIG(TAG, "  freq2: 0x%02x, freq1: 0x%02x, freq0: 0x%02x", this->freq2_, this->freq1_, this->freq0_);
   ESP_LOGCONFIG(TAG, "  Send repeats: %d, send delay: %d ms", this->send_repeats_, this->send_delay_);
   ESP_LOGCONFIG(TAG, "  RadioLib: begin() + standby() + setFrequency(); direct SPI for register access");
-  if (this->spi_failed_) {
+  if (this->spi_failed_.load(std::memory_order_acquire)) {
     ESP_LOGCONFIG(TAG, "  SPI Status: FAILED — CC1101 communication broken");
     ESP_LOGCONFIG(TAG, "  Check SPI pin assignments — avoid ESP32 strapping pins (GPIO0/2/5/12/15)");
   }
@@ -753,7 +756,7 @@ void Elero::setup() {
       }
       ESP_LOGE(TAG, "  Configured SPI: CS=pin_cc1101_cs, GDO0=pin_cc1101_gdo0");
       ESP_LOGE(TAG, "  Verify SPI wiring: CLK, MOSI, MISO, CS must match the board schematic.");
-      this->spi_failed_ = true;
+      this->spi_failed_.store(true, std::memory_order_release);
       this->mark_failed(LOG_STR("CC1101 SPI communication broken — check pin assignments"));
       return;
     }
@@ -1277,7 +1280,7 @@ void Elero::interpret_msg() {
     this->mark_last_raw_packet_(true, nullptr);
     this->packet_dump_pending_update_ = false;
   }
-  this->rx_count_++;
+  this->rx_count_.fetch_add(1, std::memory_order_relaxed);
   ESP_LOGD(TAG, "rcv'd from 0x%06x: state=0x%02x rssi=%.1f", src, payload[6], rssi);
   ESP_LOGV(TAG, "rcv'd: len=%02d, cnt=%02d, typ=0x%02x, typ2=0x%02x, hop=0x%02x, syst=0x%02x, chl=%02d, src=0x%06x, bwd=0x%06x, fwd=0x%06x, #dst=%02d, dst=0x%06x, rssi=%2.1f, lqi=%2d, crc=%2d, payload=[0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x]", length, cnt, typ, typ2, hop, syst, chl, src, bwd, fwd, num_dests, dst, rssi, lqi, crc, payload1, payload2, payload[0], payload[1], payload[2], payload[3], payload[4], payload[5], payload[6], payload[7]);
 
@@ -1292,7 +1295,7 @@ void Elero::interpret_msg() {
 #endif
 
   // Track in discovery mode
-  if (this->scan_mode_) {
+  if (this->scan_mode_.load(std::memory_order_acquire)) {
     if ((typ == 0xca) || (typ == 0xc9)) {
       // Status response FROM the blind: src = blind addr, fwd = remote addr.
       // The params here (pck_inf, hop, channel, payload) belong to the blind's
@@ -1352,12 +1355,15 @@ void Elero::interpret_msg() {
     }
 
     // Update runtime adopted blinds
-    auto it = this->runtime_blinds_.find(src);
-    if (it != this->runtime_blinds_.end()) {
-      it->second.last_seen_ms = millis();
-      it->second.last_rssi = rssi;
-      it->second.last_state = payload[6];
-      this->update_runtime_blind_direction_(it->second, payload[6]);
+    {
+      std::lock_guard<std::mutex> lock(state_mutex_);
+      auto it = this->runtime_blinds_.find(src);
+      if (it != this->runtime_blinds_.end()) {
+        it->second.last_seen_ms = millis();
+        it->second.last_rssi = rssi;
+        it->second.last_state = payload[6];
+        this->update_runtime_blind_direction_(it->second, payload[6]);
+      }
     }
   } else {
     // Non-status packets: still update RSSI/last_seen for any known blind
@@ -1369,10 +1375,13 @@ void Elero::interpret_msg() {
     if(light_search != this->address_to_light_mapping_.end()) {
       light_search->second->notify_rx_meta(millis(), rssi);
     }
-    auto rb_it = this->runtime_blinds_.find(src);
-    if (rb_it != this->runtime_blinds_.end()) {
-      rb_it->second.last_seen_ms = millis();
-      rb_it->second.last_rssi = rssi;
+    {
+      std::lock_guard<std::mutex> lock(state_mutex_);
+      auto rb_it = this->runtime_blinds_.find(src);
+      if (rb_it != this->runtime_blinds_.end()) {
+        rb_it->second.last_seen_ms = millis();
+        rb_it->second.last_rssi = rssi;
+      }
     }
 
     // Remote command packets (0x6a/0x69): src = remote addr, dst = blind addr(s).
@@ -1449,16 +1458,17 @@ void Elero::publish_text_sensor_state(uint32_t address, const std::string &state
 #endif
 
 void Elero::start_packet_dump() {
-  packet_dump_mode_ = true;
+  packet_dump_mode_.store(true, std::memory_order_release);
   ESP_LOGI(TAG, "Packet dump mode started");
 }
 
 void Elero::stop_packet_dump() {
-  packet_dump_mode_ = false;
+  packet_dump_mode_.store(false, std::memory_order_release);
   ESP_LOGI(TAG, "Packet dump mode stopped");
 }
 
 void Elero::clear_raw_packets() {
+  std::lock_guard<std::mutex> lock(packet_dump_mutex_);
   raw_packets_.clear();
   raw_packet_write_idx_ = 0;
 }
@@ -1472,6 +1482,7 @@ void Elero::capture_raw_packet_(uint8_t fifo_len) {
   pkt.valid = false;
   pkt.reject_reason[0] = '\0';
 
+  std::lock_guard<std::mutex> lock(packet_dump_mutex_);
   if (raw_packets_.size() < ELERO_MAX_RAW_PACKETS) {
     raw_packets_.push_back(pkt);
     raw_packet_write_idx_ = (uint16_t)(raw_packets_.size() - 1);
@@ -1482,6 +1493,7 @@ void Elero::capture_raw_packet_(uint8_t fifo_len) {
 }
 
 void Elero::mark_last_raw_packet_(bool valid, const char *reason) {
+  std::lock_guard<std::mutex> lock(packet_dump_mutex_);
   if (raw_packets_.empty()) return;
   auto &pkt = raw_packets_[raw_packet_write_idx_];
   pkt.valid = valid;
@@ -1495,6 +1507,7 @@ void Elero::track_discovered_blind(uint32_t src, uint32_t remote, uint8_t channe
                                     uint8_t pck_inf0, uint8_t pck_inf1, uint8_t hop,
                                     uint8_t payload_1, uint8_t payload_2,
                                     float rssi, uint8_t state, bool from_command) {
+  std::lock_guard<std::mutex> lock(state_mutex_);
   // Check if already tracked
   for (auto &blind : this->discovered_blinds_) {
     if (blind.blind_address == src) {
@@ -1546,7 +1559,7 @@ void Elero::track_discovered_blind(uint32_t src, uint32_t remote, uint8_t channe
 
 bool Elero::send_command(t_elero_command *cmd) {
   // Reject if SPI is permanently broken or TX is already in progress.
-  if (this->spi_failed_)
+  if (this->spi_failed_.load(std::memory_order_acquire))
     return false;
   if (this->tx_state_.load(std::memory_order_acquire) != TxState::IDLE)
     return false;
@@ -1601,12 +1614,12 @@ bool Elero::send_command(t_elero_command *cmd) {
     this->send_cmd_reinit_failures_++;
     if (this->send_cmd_reinit_failures_ >= 3) {
       // SPI is permanently broken — stop retrying to avoid log spam.
-      if (!this->spi_failed_) {
+      if (!this->spi_failed_.load(std::memory_order_acquire)) {
         ESP_LOGE(TAG, "send_command: %d consecutive reinit failures — SPI appears permanently broken.",
                  this->send_cmd_reinit_failures_);
         ESP_LOGE(TAG, "  If GPIO12 is used for SPI MISO, it may be pulling VDD_SDIO to 1.8V at boot.");
         ESP_LOGE(TAG, "  Use non-strapping pins for SPI (e.g. CLK=18, MISO=19, MOSI=23).");
-        this->spi_failed_ = true;
+        this->spi_failed_.store(true, std::memory_order_release);
         this->mark_failed(LOG_STR("SPI permanently broken — check pin assignments"));
       }
       return false;
@@ -1640,6 +1653,114 @@ bool Elero::send_command(t_elero_command *cmd) {
   return true;
 }
 
+// ---------------------------------------------------------------------------
+// dispatch_rx_result_ — route a decoded RX result to entities, sensors,
+// discovery, and runtime blinds.  Runs on Core 1 (main loop).
+// Prepared for dual-core: in the future, interpret_msg() will populate an
+// RxResult on Core 0 and push it to the RX queue; this method will drain
+// the queue on Core 1.  For now it is unused (interpret_msg() dispatches
+// directly), but included to verify the struct and logic compile cleanly.
+// ---------------------------------------------------------------------------
+void Elero::dispatch_rx_result_(const RxResult &rx) {
+  // 1. RSSI sensor update
+#ifdef USE_SENSOR
+  {
+    auto rssi_it = this->address_to_rssi_sensor_.find(rx.blind_address);
+    if (rssi_it != this->address_to_rssi_sensor_.end()) {
+      rssi_it->second->publish_state(rx.rssi);
+    }
+  }
+#endif
+
+  // 2. Discovery tracking (scan mode)
+  if (rx.scan_hit) {
+    this->track_discovered_blind(rx.blind_address, rx.remote_address, rx.channel,
+                                  rx.pck_inf[0], rx.pck_inf[1], rx.hop,
+                                  rx.payload_1, rx.payload_2,
+                                  rx.rssi, rx.state, rx.params_from_command);
+    // For command packets, also track each destination
+    if (rx.is_command) {
+      for (uint8_t i = 0; i < rx.num_dests; i++) {
+        this->track_discovered_blind(rx.dest_addrs[i], rx.blind_address, rx.channel,
+                                      rx.pck_inf[0], rx.pck_inf[1], rx.hop,
+                                      rx.payload_1, rx.payload_2,
+                                      rx.rssi, 0, true);
+      }
+    }
+  }
+
+  // 3. Status packets (0xca/0xc9): dispatch state to entities
+  if (rx.is_status) {
+    if (this->is_duplicate_packet_(rx.blind_address, rx.cnt))
+      return;
+
+#ifdef USE_TEXT_SENSOR
+    {
+      auto text_it = this->address_to_text_sensor_.find(rx.blind_address);
+      if (text_it != this->address_to_text_sensor_.end()) {
+        text_it->second->publish_state(elero_state_to_string(rx.state));
+      }
+    }
+#endif
+
+    auto search = this->address_to_cover_mapping_.find(rx.blind_address);
+    if (search != this->address_to_cover_mapping_.end()) {
+      search->second->notify_rx_meta(rx.timestamp_ms, rx.rssi);
+      search->second->set_rx_state(rx.state);
+    }
+
+    auto light_search = this->address_to_light_mapping_.find(rx.blind_address);
+    if (light_search != this->address_to_light_mapping_.end()) {
+      light_search->second->notify_rx_meta(rx.timestamp_ms, rx.rssi);
+      light_search->second->set_rx_state(rx.state);
+    }
+
+    // Update runtime adopted blinds
+    {
+      std::lock_guard<std::mutex> lock(state_mutex_);
+      auto it = this->runtime_blinds_.find(rx.blind_address);
+      if (it != this->runtime_blinds_.end()) {
+        it->second.last_seen_ms = rx.timestamp_ms;
+        it->second.last_rssi = rx.rssi;
+        it->second.last_state = rx.state;
+        this->update_runtime_blind_direction_(it->second, rx.state);
+      }
+    }
+  } else {
+    // Non-status packets: still update RSSI/last_seen for known blinds
+    auto search = this->address_to_cover_mapping_.find(rx.blind_address);
+    if (search != this->address_to_cover_mapping_.end()) {
+      search->second->notify_rx_meta(rx.timestamp_ms, rx.rssi);
+    }
+    auto light_search = this->address_to_light_mapping_.find(rx.blind_address);
+    if (light_search != this->address_to_light_mapping_.end()) {
+      light_search->second->notify_rx_meta(rx.timestamp_ms, rx.rssi);
+    }
+    {
+      std::lock_guard<std::mutex> lock(state_mutex_);
+      auto rb_it = this->runtime_blinds_.find(rx.blind_address);
+      if (rb_it != this->runtime_blinds_.end()) {
+        rb_it->second.last_seen_ms = rx.timestamp_ms;
+        rb_it->second.last_rssi = rx.rssi;
+      }
+    }
+
+    // Remote command packets: trigger immediate polls
+    if (rx.is_command && !rx.is_own_echo) {
+      for (uint8_t i = 0; i < rx.num_dests; i++) {
+        auto c_it = this->address_to_cover_mapping_.find(rx.dest_addrs[i]);
+        if (c_it != this->address_to_cover_mapping_.end()) {
+          c_it->second->schedule_immediate_poll();
+        }
+        auto l_it = this->address_to_light_mapping_.find(rx.dest_addrs[i]);
+        if (l_it != this->address_to_light_mapping_.end()) {
+          l_it->second->schedule_immediate_poll();
+        }
+      }
+    }
+  }
+}
+
 // ─── Runtime blind adoption ───────────────────────────────────────────────
 
 bool Elero::adopt_blind(const DiscoveredBlind &discovered, const std::string &name,
@@ -1648,7 +1769,8 @@ bool Elero::adopt_blind(const DiscoveredBlind &discovered, const std::string &na
     return false;
   if (this->is_light_configured(discovered.blind_address))
     return false;
-  if (this->is_blind_adopted(discovered.blind_address))
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  if (this->runtime_blinds_.find(discovered.blind_address) != this->runtime_blinds_.end())
     return false;
   RuntimeBlind rb{};
   rb.blind_address = discovered.blind_address;
@@ -1673,6 +1795,7 @@ bool Elero::adopt_blind(const DiscoveredBlind &discovered, const std::string &na
 }
 
 bool Elero::remove_runtime_blind(uint32_t addr) {
+  std::lock_guard<std::mutex> lock(state_mutex_);
   auto it = this->runtime_blinds_.find(addr);
   if (it != this->runtime_blinds_.end()) {
     ESP_LOGI(TAG, "Removed runtime blind 0x%06x", addr);
@@ -1683,6 +1806,7 @@ bool Elero::remove_runtime_blind(uint32_t addr) {
 }
 
 bool Elero::send_runtime_command(uint32_t addr, uint8_t cmd_byte) {
+  std::lock_guard<std::mutex> lock(state_mutex_);
   auto it = this->runtime_blinds_.find(addr);
   if (it != this->runtime_blinds_.end()) {
     if (it->second.command_queue.size() < ELERO_MAX_COMMAND_QUEUE) {
@@ -1696,6 +1820,7 @@ bool Elero::send_runtime_command(uint32_t addr, uint8_t cmd_byte) {
 
 bool Elero::update_runtime_blind_settings(uint32_t addr, uint32_t open_dur_ms,
                                           uint32_t close_dur_ms, uint32_t poll_intvl_ms) {
+  std::lock_guard<std::mutex> lock(state_mutex_);
   auto it = this->runtime_blinds_.find(addr);
   if (it != this->runtime_blinds_.end()) {
     it->second.open_duration_ms = open_dur_ms;
@@ -1707,6 +1832,7 @@ bool Elero::update_runtime_blind_settings(uint32_t addr, uint32_t open_dur_ms,
 }
 
 bool Elero::is_blind_adopted(uint32_t addr) const {
+  std::lock_guard<std::mutex> lock(state_mutex_);
   return this->runtime_blinds_.find(addr) != this->runtime_blinds_.end();
 }
 

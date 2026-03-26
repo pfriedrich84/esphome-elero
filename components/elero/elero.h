@@ -13,6 +13,10 @@
 #include <cstdarg>
 #include <atomic>
 #include <mutex>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <freertos/queue.h>
+#include <freertos/semphr.h>
 
 // All encryption/decryption structures copied from https://github.com/QuadCorei8085/elero_protocol/ (MIT)
 // All remote handling based on code from https://github.com/stanleypa/eleropy (GPLv3)
@@ -191,6 +195,64 @@ struct RuntimeBlind {
   int8_t moving_direction{0};           // -1 = closing, 0 = stopped, +1 = opening
 };
 
+// ---------------------------------------------------------------------------
+// Multi-core support: queue message types for Core 0 ↔ Core 1 communication
+// ---------------------------------------------------------------------------
+
+/// Result of a decoded RX packet, sent from radio task (Core 0) → main loop (Core 1).
+struct RxResult {
+  uint32_t blind_address;         // src address (3 bytes)
+  uint32_t remote_address;        // fwd/bwd address
+  uint8_t  channel;
+  uint8_t  pck_inf[2];            // typ, typ2
+  uint8_t  hop;
+  uint8_t  state;                 // ELERO_STATE_* (payload[6] after decode)
+  float    rssi;
+  uint32_t timestamp_ms;
+  uint8_t  payload[10];           // full decoded payload
+  uint8_t  cnt;                   // message counter (for dedup)
+  bool     is_status;             // true = 0xca/0xc9 status packet
+  bool     is_command;            // true = 0x6a/0x69 command packet
+  // Discovery data (populated in scan mode)
+  bool     scan_hit;
+  uint8_t  payload_1;
+  uint8_t  payload_2;
+  bool     params_from_command;
+  // For command packets: destination addresses
+  uint8_t  num_dests;
+  uint32_t dest_addrs[10];        // up to 10 destination addresses
+  bool     is_own_echo;           // true if src matches our own remote address
+};
+
+/// TX command request, sent from main loop (Core 1) → radio task (Core 0).
+struct TxRequest {
+  t_elero_command cmd;
+};
+
+/// Control message types for the radio task.
+enum class RadioControlType : uint8_t {
+  TX_COMMAND,       // Normal TX command
+  START_SCAN,       // Enter scan mode on radio core
+  STOP_SCAN,        // Exit scan mode on radio core
+  REINIT_FREQ,      // Change CC1101 frequency registers
+  START_DUMP,       // Start packet dump capture
+  STOP_DUMP,        // Stop packet dump capture
+  SHUTDOWN,         // Graceful task shutdown
+};
+
+/// Message sent to the radio task via the TX queue.
+struct RadioMessage {
+  RadioControlType type{RadioControlType::TX_COMMAND};
+  union {
+    TxRequest tx;
+    struct { uint8_t freq2; uint8_t freq1; uint8_t freq0; } freq;
+  };
+  SemaphoreHandle_t completion_sem{nullptr};  // optional: signaled when done
+  bool *result_ptr{nullptr};                   // optional: success/failure output
+
+  RadioMessage() : type(RadioControlType::TX_COMMAND), tx{} {}
+};
+
 const char *elero_state_to_string(uint8_t state);
 
 class Elero;  // forward declaration for dispatch_commands
@@ -352,20 +414,30 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
 #endif
 
   // Discovery / scan mode
-  void start_scan() { scan_mode_ = true; }
-  void stop_scan() { scan_mode_ = false; }
-  bool is_scanning() const { return scan_mode_; }
-  const std::vector<DiscoveredBlind> &get_discovered_blinds() const { return discovered_blinds_; }
-  size_t get_discovered_count() const { return discovered_blinds_.size(); }
-  void clear_discovered() { discovered_blinds_.clear(); }
+  void start_scan() { scan_mode_.store(true, std::memory_order_release); }
+  void stop_scan() { scan_mode_.store(false, std::memory_order_release); }
+  bool is_scanning() const { return scan_mode_.load(std::memory_order_acquire); }
+  /// Return a snapshot copy of discovered blinds (thread-safe for web handlers).
+  std::vector<DiscoveredBlind> get_discovered_blinds() const {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    return discovered_blinds_;
+  }
+  size_t get_discovered_count() const {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    return discovered_blinds_.size();
+  }
+  void clear_discovered() {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    discovered_blinds_.clear();
+  }
 
-  // Cover access for web server
+  // Cover access for web server (read-only after setup, no mutex needed)
   bool is_cover_configured(uint32_t address) const {
     return address_to_cover_mapping_.find(address) != address_to_cover_mapping_.end();
   }
   const std::map<uint32_t, EleroBlindBase *> &get_configured_covers() const { return address_to_cover_mapping_; }
 
-  // Light access for web server
+  // Light access for web server (read-only after setup, no mutex needed)
   bool is_light_configured(uint32_t address) const {
     return address_to_light_mapping_.find(address) != address_to_light_mapping_.end();
   }
@@ -374,8 +446,12 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   // Packet dump mode: capture every received FIFO read into a ring buffer
   void start_packet_dump();
   void stop_packet_dump();
-  bool is_packet_dump_active() const { return packet_dump_mode_; }
-  const std::vector<RawPacket> &get_raw_packets() const { return raw_packets_; }
+  bool is_packet_dump_active() const { return packet_dump_mode_.load(std::memory_order_acquire); }
+  /// Return a snapshot copy of raw packets (thread-safe for web handlers).
+  std::vector<RawPacket> get_raw_packets() const {
+    std::lock_guard<std::mutex> lock(packet_dump_mutex_);
+    return raw_packets_;
+  }
   void clear_raw_packets();
 
   // Runtime adopted blinds (controllable from web UI without reflashing)
@@ -385,7 +461,11 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   bool send_runtime_command(uint32_t addr, uint8_t cmd_byte);
   bool update_runtime_blind_settings(uint32_t addr, uint32_t open_dur_ms,
                                      uint32_t close_dur_ms, uint32_t poll_intvl_ms);
-  const std::map<uint32_t, RuntimeBlind> &get_runtime_blinds() const { return runtime_blinds_; }
+  /// Return a snapshot copy of runtime blinds (thread-safe for web handlers).
+  std::map<uint32_t, RuntimeBlind> get_runtime_blinds() const {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    return runtime_blinds_;
+  }
   bool is_blind_adopted(uint32_t addr) const;
 
   // Log buffer
@@ -412,11 +492,15 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void set_log_capture(bool en) { log_capture_ = en; }
   bool is_log_capture_active() const { return log_capture_; }
 
-  // Diagnostic counters for radio health monitoring
-  uint32_t get_rx_count() const { return rx_count_; }
-  uint32_t get_tx_count() const { return tx_count_; }
-  uint32_t get_watchdog_recovery_count() const { return watchdog_recovery_count_; }
-  void reset_diagnostic_counters() { rx_count_ = 0; tx_count_ = 0; watchdog_recovery_count_ = 0; }
+  // Diagnostic counters for radio health monitoring (atomic for cross-core safety)
+  uint32_t get_rx_count() const { return rx_count_.load(std::memory_order_acquire); }
+  uint32_t get_tx_count() const { return tx_count_.load(std::memory_order_acquire); }
+  uint32_t get_watchdog_recovery_count() const { return watchdog_recovery_count_.load(std::memory_order_acquire); }
+  void reset_diagnostic_counters() {
+    rx_count_.store(0, std::memory_order_release);
+    tx_count_.store(0, std::memory_order_release);
+    watchdog_recovery_count_.store(0, std::memory_order_release);
+  }
 
   void set_gdo0_pin(InternalGPIOPin *pin) { gdo0_pin_ = pin; }
   void set_freq0(uint8_t freq) { freq0_ = freq; }
@@ -437,6 +521,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   // Non-blocking TX state machine
   void process_rx();
   void advance_tx();
+  void dispatch_rx_result_(const RxResult &rx);
   void drain_runtime_queues();
   void poll_runtime_blinds_();
   void recompute_runtime_positions_();
@@ -496,13 +581,13 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
 #ifdef USE_TEXT_SENSOR
   std::map<uint32_t, text_sensor::TextSensor*> address_to_text_sensor_;
 #endif
-  std::vector<DiscoveredBlind> discovered_blinds_;
-  bool scan_mode_{false};
-  bool packet_dump_mode_{false};
+  std::vector<DiscoveredBlind> discovered_blinds_;  // protected by state_mutex_
+  std::atomic<bool> scan_mode_{false};
+  std::atomic<bool> packet_dump_mode_{false};
   bool packet_dump_pending_update_{false};
-  std::vector<RawPacket> raw_packets_;
+  std::vector<RawPacket> raw_packets_;              // protected by packet_dump_mutex_
   uint16_t raw_packet_write_idx_{0};
-  std::map<uint32_t, RuntimeBlind> runtime_blinds_;
+  std::map<uint32_t, RuntimeBlind> runtime_blinds_; // protected by state_mutex_
   std::set<uint32_t> own_remote_addresses_;  // remote addrs we TX as — echoes are filtered
 
   // Packet deduplication: suppress relay-hop and replay duplicates of the same (src, cnt)
@@ -514,13 +599,13 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   std::map<uint32_t, uint8_t> last_seen_counter_;
   bool is_duplicate_packet_(uint32_t src, uint8_t cnt);
 
-  // Diagnostic counters
-  uint32_t rx_count_{0};
-  uint32_t tx_count_{0};
-  uint32_t watchdog_recovery_count_{0};
+  // Diagnostic counters (atomic for cross-core and web handler safety)
+  std::atomic<uint32_t> rx_count_{0};
+  std::atomic<uint32_t> tx_count_{0};
+  std::atomic<uint32_t> watchdog_recovery_count_{0};
 
   // SPI health tracking: detect persistent SPI failures (e.g. strapping pin issues)
-  bool spi_failed_{false};            // set when SPI is permanently broken
+  std::atomic<bool> spi_failed_{false};  // set when SPI is permanently broken
   uint8_t consecutive_watchdog_failures_{0};  // consecutive check_radio_state_ failures
   uint8_t send_cmd_reinit_failures_{0};  // consecutive send_command() reinit failures
 
@@ -540,6 +625,14 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
 #ifdef USE_LOGGER
   void *log_listener_{nullptr};
 #endif
+
+  // Multi-core synchronization primitives
+  mutable std::mutex state_mutex_;         // protects runtime_blinds_ and discovered_blinds_
+  mutable std::mutex packet_dump_mutex_;   // protects raw_packets_
+
+  // Radio task lifecycle flags (for future dual-core split)
+  std::atomic<bool> task_shutdown_{false};       // Core 1 sets to signal radio task to exit
+  std::atomic<bool> radio_fatal_error_{false};   // Core 0 sets when SPI permanently fails
 };
 
 }  // namespace elero

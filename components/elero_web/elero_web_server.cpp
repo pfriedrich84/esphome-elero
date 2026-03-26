@@ -277,7 +277,7 @@ void EleroWebServer::handle_scan_stop(AsyncWebServerRequest *request) {
 // ─── Discovered blinds ────────────────────────────────────────────────────────
 
 void EleroWebServer::build_discovered_array_json_(std::string &out) {
-  const auto &blinds = this->parent_->get_discovered_blinds();
+  const auto blinds = this->parent_->get_discovered_blinds();
   bool first = true;
   for (const auto &blind : blinds) {
     if (!first) out += ",";
@@ -727,7 +727,7 @@ void EleroWebServer::handle_adopt_discovered(AsyncWebServerRequest *request, uin
     }
   }
 
-  const auto &blinds = this->parent_->get_discovered_blinds();
+  const auto blinds = this->parent_->get_discovered_blinds();
   for (const auto &blind : blinds) {
     if (blind.blind_address == addr) {
       if (!this->parent_->adopt_blind(blind, name, dtype)) {
@@ -826,7 +826,7 @@ void EleroWebServer::handle_runtime_remove(AsyncWebServerRequest *request, uint3
 // ─── YAML export ──────────────────────────────────────────────────────────────
 
 void EleroWebServer::handle_get_yaml(AsyncWebServerRequest *request) {
-  const auto &blinds = this->parent_->get_discovered_blinds();
+  const auto blinds = this->parent_->get_discovered_blinds();
   if (blinds.empty()) {
     AsyncWebServerResponse *response = request->beginResponse(
         200, "text/plain; charset=utf-8",
@@ -951,7 +951,7 @@ void EleroWebServer::handle_packet_dump_stop(AsyncWebServerRequest *request) {
 }
 
 void EleroWebServer::build_packets_array_json_(std::string &out) {
-  const auto &packets = this->parent_->get_raw_packets();
+  const auto packets = this->parent_->get_raw_packets();
   bool first = true;
   for (const auto &pkt : packets) {
     if (!first) out += ",";
@@ -980,7 +980,7 @@ void EleroWebServer::build_packets_array_json_(std::string &out) {
 }
 
 void EleroWebServer::handle_get_packets(AsyncWebServerRequest *request) {
-  const auto &packets = this->parent_->get_raw_packets();
+  const auto packets = this->parent_->get_raw_packets();
 
   std::string json;
   json.reserve(4096);
@@ -1010,7 +1010,7 @@ void EleroWebServer::handle_clear_packets(AsyncWebServerRequest *request) {
 // ─── Packet dump download ─────────────────────────────────────────────────────
 
 void EleroWebServer::handle_packets_download(AsyncWebServerRequest *request) {
-  const auto &packets = this->parent_->get_raw_packets();
+  const auto packets = this->parent_->get_raw_packets();
 
   std::string json;
   json.reserve(256 + packets.size() * 320);
