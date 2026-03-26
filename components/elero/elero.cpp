@@ -216,6 +216,7 @@ void dispatch_commands(Elero *parent, std::queue<uint8_t> &queue,
                  send_retries, blind_addr, (unsigned long)delay);
         if (send_retries > ELERO_SEND_RETRIES) {
           ESP_LOGE(tag, "Hit maximum retries for 0x%06x, giving up.", blind_addr);
+          parent->increment_tx_drop_count();
           send_retries = 0;
           queue.pop();
         }
@@ -917,8 +918,8 @@ void Elero::setup() {
 #endif
 
   // Create FreeRTOS queues for dual-core communication
-  this->tx_queue_ = xQueueCreate(16, sizeof(RadioMessage));
-  this->tx_priority_queue_ = xQueueCreate(4, sizeof(RadioMessage));  // small priority queue for stop commands
+  this->tx_queue_ = xQueueCreate(ELERO_TX_QUEUE_DEPTH, sizeof(RadioMessage));
+  this->tx_priority_queue_ = xQueueCreate(ELERO_TX_PRIORITY_QUEUE_DEPTH, sizeof(RadioMessage));
   this->rx_queue_ = xQueueCreate(32, sizeof(RxResult));  // 32 deep for 5+ simultaneous blind responses
   if (!this->tx_queue_ || !this->tx_priority_queue_ || !this->rx_queue_) {
     ESP_LOGE(TAG, "Failed to create FreeRTOS queues for radio task");
@@ -1662,6 +1663,7 @@ bool Elero::send_command(t_elero_command *cmd) {
     return true;
   }
   ESP_LOGW(TAG, "TX queue full, command to 0x%06x dropped", cmd->blind_addr);
+  this->tx_drop_count_.fetch_add(1, std::memory_order_relaxed);
   return false;
 }
 
@@ -1682,6 +1684,7 @@ bool Elero::send_command_priority(t_elero_command *cmd) {
     return true;
   }
   ESP_LOGW(TAG, "Priority TX queue full, command to 0x%06x dropped", cmd->blind_addr);
+  this->tx_drop_count_.fetch_add(1, std::memory_order_relaxed);
   return false;
 }
 

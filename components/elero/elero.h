@@ -102,6 +102,9 @@ static const uint32_t ELERO_TX_LATENCY_COMPENSATION_MS = 300;   // position chec
 static const uint32_t ELERO_STOP_VERIFY_DELAY_MS = 500;         // delay before polling to verify motor stopped
 static const uint8_t  ELERO_STOP_VERIFY_MAX_RETRIES = 3;        // max stop-verify cycles before giving up
 
+static const uint8_t ELERO_TX_QUEUE_DEPTH = 16;          // normal TX queue depth
+static const uint8_t ELERO_TX_PRIORITY_QUEUE_DEPTH = 8;  // priority TX queue depth (stop commands)
+
 static const uint8_t ELERO_MAX_DISCOVERED = 20; // max discovered blinds to track
 static const uint8_t ELERO_MAX_RAW_PACKETS = 50; // max raw packets in dump ring buffer
 
@@ -496,10 +499,13 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   uint32_t get_rx_count() const { return rx_count_.load(std::memory_order_acquire); }
   uint32_t get_tx_count() const { return tx_count_.load(std::memory_order_acquire); }
   uint32_t get_watchdog_recovery_count() const { return watchdog_recovery_count_.load(std::memory_order_acquire); }
+  uint32_t get_tx_drop_count() const { return tx_drop_count_.load(std::memory_order_acquire); }
+  void increment_tx_drop_count() { tx_drop_count_.fetch_add(1, std::memory_order_relaxed); }
   void reset_diagnostic_counters() {
     rx_count_.store(0, std::memory_order_release);
     tx_count_.store(0, std::memory_order_release);
     watchdog_recovery_count_.store(0, std::memory_order_release);
+    tx_drop_count_.store(0, std::memory_order_release);
   }
 
   void set_gdo0_pin(InternalGPIOPin *pin) { gdo0_pin_ = pin; }
@@ -609,6 +615,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   std::atomic<uint32_t> rx_count_{0};
   std::atomic<uint32_t> tx_count_{0};
   std::atomic<uint32_t> watchdog_recovery_count_{0};
+  std::atomic<uint32_t> tx_drop_count_{0};
 
   // Request the main loop to skip its ~16ms sleep so loop() runs every pass.
   HighFrequencyLoopRequester high_freq_;

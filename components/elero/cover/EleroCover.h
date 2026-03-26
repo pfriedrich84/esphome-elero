@@ -96,6 +96,9 @@ class EleroCover : public cover::Cover, public Component, public EleroBlindBase 
 
  protected:
   void control(const cover::CoverCall &call) override;
+  /// Send stop via priority queue with retry (max 3 attempts, 5ms apart).
+  /// Returns true if enqueued, false if all retries failed (increments tx_drop_count_).
+  bool send_stop_priority_();
 
   t_elero_command command_ = {
     .counter = 1,
