@@ -173,7 +173,6 @@ void dispatch_commands(Elero *parent, std::queue<uint8_t> &queue,
                        void (*increase_counter_fn)(void *ctx), void *ctx) {
   // Skip immediately if hub SPI is permanently broken — no point retrying.
   if (parent->is_failed()) return;
-  if (!parent->is_tx_idle()) return;
 
   // When stop_urgent is active, defer non-stop commands from other covers
   // so the stopping cover's packets transmit without queue contention.
@@ -1650,8 +1649,6 @@ void Elero::track_discovered_blind(uint32_t src, uint32_t remote, uint8_t channe
 // ---------------------------------------------------------------------------
 bool Elero::send_command(t_elero_command *cmd) {
   if (this->spi_failed_.load(std::memory_order_acquire))
-    return false;
-  if (this->tx_state_.load(std::memory_order_acquire) != TxState::IDLE)
     return false;
   if (!this->tx_queue_)
     return false;
