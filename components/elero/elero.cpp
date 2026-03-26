@@ -192,7 +192,9 @@ void dispatch_commands(Elero *parent, std::queue<uint8_t> &queue,
     delay += (10u << shift);  // +20ms, +40ms, +80ms
   }
 
-  if ((now - last_command) > delay) {
+  // Stop commands bypass backoff entirely — they are time-critical
+  bool is_stop = (!queue.empty() && queue.front() == ELERO_COMMAND_COVER_STOP);
+  if (is_stop || (now - last_command) > delay) {
     if (!queue.empty()) {
       cmd.payload[4] = queue.front();
       if (parent->send_command(&cmd)) {
