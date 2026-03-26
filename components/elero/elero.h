@@ -43,8 +43,8 @@ static const uint32_t ELERO_IMMEDIATE_POLL_MIN_INTERVAL_MS = 2000;
 static const uint8_t ELERO_DEDUP_BUFFER_SIZE = 64;
 
 /// Deduplication: time window in ms within which (src, cnt) duplicates are suppressed.
-/// 10 seconds prevents casual replay attacks while allowing legitimate retransmissions.
-static const uint32_t ELERO_DEDUP_WINDOW_MS = 10000;
+/// 5 seconds balances duplicate suppression vs. allowing legitimate re-sent status updates.
+static const uint32_t ELERO_DEDUP_WINDOW_MS = 5000;
 
 /// Entry in the packet deduplication ring buffer.
 struct RecentPacket {
@@ -102,12 +102,12 @@ static const uint32_t ELERO_TIMEOUT_MOVEMENT = 120000; // poll for up to two min
 static const uint32_t ELERO_POST_MOVEMENT_POLL_DELAY = 5000; // poll 5s after open/close duration elapses
 
 static const uint8_t ELERO_SEND_RETRIES = 3;
-static const uint8_t ELERO_DEFAULT_SEND_REPEATS = 1;
+static const uint8_t ELERO_DEFAULT_SEND_REPEATS = 3;  // RF packet repetitions per command (was 1, increased for reliability)
 static const uint8_t ELERO_MAX_COMMAND_QUEUE = 10; // max commands per blind to prevent OOM
 
 // Auto-stop reliability: repeat stop commands, compensate for TX latency, verify motor stopped
 static const uint8_t  ELERO_STOP_REPEAT_COUNT = 2;              // stop commands queued on auto-stop (x2 RF packets each)
-static const uint32_t ELERO_TX_LATENCY_COMPENSATION_MS = 150;   // position check lead time for TX pipeline delay
+static const uint32_t ELERO_TX_LATENCY_COMPENSATION_MS = 300;   // position check lead time (accounts for multi-cover queue contention)
 static const uint32_t ELERO_STOP_VERIFY_DELAY_MS = 500;         // delay before polling to verify motor stopped
 static const uint8_t  ELERO_STOP_VERIFY_MAX_RETRIES = 3;        // max stop-verify cycles before giving up
 
@@ -115,7 +115,7 @@ static const uint8_t ELERO_MAX_DISCOVERED = 20; // max discovered blinds to trac
 static const uint8_t ELERO_MAX_RAW_PACKETS = 50; // max raw packets in dump ring buffer
 
 // Diagnostics thresholds
-static const uint8_t  ELERO_MAX_RX_PER_LOOP = 4;           // max packets drained per process_rx() call
+static const uint8_t  ELERO_MAX_RX_PER_LOOP = 8;           // max packets drained per dispatch cycle (was 4, increased for multi-cover)
 static const uint32_t ELERO_POLL_STAGGER_MS = 5000;         // stagger offset between cover poll timers
 
 // RF protocol encoding/encryption constants (Elero protocol)

@@ -51,8 +51,11 @@ void EleroCover::loop() {
   uint32_t intvl = this->poll_intvl_;
   uint32_t now = millis();
   if(this->current_operation != COVER_OPERATION_IDLE) {
-    if((now - this->movement_start_) < ELERO_TIMEOUT_MOVEMENT)  // Poll frequently while moving (up to 2 min timeout)
-      intvl = ELERO_POLL_INTERVAL_MOVING;
+    if((now - this->movement_start_) < ELERO_TIMEOUT_MOVEMENT) {
+      // Poll frequently while moving, but stagger per cover to avoid
+      // all covers polling the RF channel simultaneously.
+      intvl = ELERO_POLL_INTERVAL_MOVING + (this->poll_offset_ % ELERO_POLL_INTERVAL_MOVING);
+    }
   }
 
   if ((now - this->last_poll_) > intvl) {

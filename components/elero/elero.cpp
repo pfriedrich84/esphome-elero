@@ -192,14 +192,16 @@ void dispatch_commands(Elero *parent, std::queue<uint8_t> &queue,
         }
         last_command = now;
       } else {
-        ESP_LOGD(tag, "Retry #%d for 0x%06x", send_retries, blind_addr);
         send_retries++;
+        ESP_LOGD(tag, "Retry #%d for 0x%06x", send_retries, blind_addr);
         if (send_retries > ELERO_SEND_RETRIES) {
           ESP_LOGE(tag, "Hit maximum retries for 0x%06x, giving up.", blind_addr);
           send_retries = 0;
           queue.pop();
         }
-        last_command = now;
+        // Exponential backoff jitter: 10ms, 20ms, 40ms per retry to break
+        // thundering herd when multiple covers retry simultaneously.
+        last_command = now + (10u << (send_retries > 3 ? 3 : send_retries));
       }
     }
   }
@@ -874,7 +876,7 @@ void Elero::setup() {
 
   // Create FreeRTOS queues for dual-core communication
   this->tx_queue_ = xQueueCreate(16, sizeof(RadioMessage));
-  this->rx_queue_ = xQueueCreate(16, sizeof(RxResult));
+  this->rx_queue_ = xQueueCreate(32, sizeof(RxResult));  // 32 deep for 5+ simultaneous blind responses
   if (!this->tx_queue_ || !this->rx_queue_) {
     ESP_LOGE(TAG, "Failed to create FreeRTOS queues for radio task");
     this->mark_failed(LOG_STR("Failed to allocate radio task queues"));
