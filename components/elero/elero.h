@@ -403,8 +403,23 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
     return tx_queue_ ? uxQueueMessagesWaiting(tx_queue_) : 0;
   }
   /// Signal that a stop command is urgent — other covers should defer non-stop TX.
-  void set_stop_urgent(bool urgent) { stop_urgent_.store(urgent, std::memory_order_release); }
-  bool is_stop_urgent() const { return stop_urgent_.load(std::memory_order_acquire); }
+  /// Uses a counter so multiple covers can auto-stop simultaneously without
+  /// the first verify-success clearing protection for the second cover.
+  void set_stop_urgent(bool urgent) {
+    // Legacy API — prefer increment/decrement for new code
+    if (urgent)
+      stop_urgent_count_.fetch_add(1, std::memory_order_acq_rel);
+    else {
+      uint8_t prev = stop_urgent_count_.load(std::memory_order_acquire);
+      if (prev > 0) stop_urgent_count_.fetch_sub(1, std::memory_order_acq_rel);
+    }
+  }
+  void increment_stop_urgent() { stop_urgent_count_.fetch_add(1, std::memory_order_acq_rel); }
+  void decrement_stop_urgent() {
+    uint8_t prev = stop_urgent_count_.load(std::memory_order_acquire);
+    if (prev > 0) stop_urgent_count_.fetch_sub(1, std::memory_order_acq_rel);
+  }
+  bool is_stop_urgent() const { return stop_urgent_count_.load(std::memory_order_acquire) > 0; }
 
 #ifdef USE_SENSOR
   void register_rssi_sensor(uint32_t address, sensor::Sensor *sensor);
@@ -651,7 +666,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   QueueHandle_t tx_queue_{nullptr};           // Core 1 → Core 0: RadioMessage (TX commands, control)
   QueueHandle_t tx_priority_queue_{nullptr};  // Core 1 → Core 0: high-priority TX (stop commands)
   QueueHandle_t rx_queue_{nullptr};           // Core 0 → Core 1: RxResult (decoded packets)
-  std::atomic<bool> stop_urgent_{false};      // true when a cover is sending urgent stop commands
+  std::atomic<uint8_t> stop_urgent_count_{0};  // >0 when cover(s) are sending urgent stop commands
   std::atomic<bool> task_shutdown_{false};       // Core 1 sets to signal radio task to exit
   std::atomic<bool> radio_fatal_error_{false};   // Core 0 sets when SPI permanently fails
 };
