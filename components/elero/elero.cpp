@@ -206,8 +206,25 @@ void dispatch_commands(Elero *parent, std::queue<uint8_t> &queue,
 }
 
 Elero::~Elero() {
-  // Detach the GDO0 interrupt BEFORE freeing radio objects to prevent
-  // the ISR from dereferencing a dangling pointer (use-after-free).
+  // 1. Signal radio task to stop and wait for it to exit
+  if (this->radio_task_handle_ != nullptr) {
+    this->task_shutdown_.store(true, std::memory_order_release);
+    // Send SHUTDOWN message to unblock task if waiting on queue
+    RadioMessage shutdown_msg{};
+    shutdown_msg.type = RadioControlType::SHUTDOWN;
+    if (this->tx_queue_) {
+      xQueueSend(this->tx_queue_, &shutdown_msg, pdMS_TO_TICKS(100));
+    }
+    // Wait for task to exit (up to 1s)
+    for (int i = 0; i < 100 && this->radio_task_handle_ != nullptr; i++) {
+      delay(10);
+    }
+    if (this->radio_task_handle_ != nullptr) {
+      vTaskDelete(this->radio_task_handle_);  // force-kill as last resort
+      this->radio_task_handle_ = nullptr;
+    }
+  }
+  // 2. Now safe to detach interrupt and delete RadioLib
   if (this->gdo0_pin_ != nullptr) {
     this->gdo0_pin_->detach_interrupt();
   }
@@ -215,6 +232,9 @@ Elero::~Elero() {
   this->radio_ = nullptr;
   delete this->radio_module_;
   this->radio_module_ = nullptr;
+  // 3. Clean up FreeRTOS resources
+  if (this->tx_queue_) { vQueueDelete(this->tx_queue_); this->tx_queue_ = nullptr; }
+  if (this->rx_queue_) { vQueueDelete(this->rx_queue_); this->rx_queue_ = nullptr; }
 #ifdef USE_LOGGER
   // Callback-based log listener — no heap allocation to clean up.
   this->log_listener_ = nullptr;
@@ -222,33 +242,35 @@ Elero::~Elero() {
 }
 
 void Elero::loop() {
+  // Check if the radio task detected a fatal SPI error
+  if (this->radio_fatal_error_.load(std::memory_order_acquire)) {
+    if (!this->is_failed()) {
+      this->mark_failed(LOG_STR("Radio task: SPI permanently broken — check pin assignments"));
+    }
+    return;
+  }
   // Skip all processing if SPI is permanently broken (e.g. strapping pin issue).
   if (this->spi_failed_.load(std::memory_order_acquire))
     return;
 
-  // 1. ALWAYS process pending RX packets first (highest priority).
-  //    Only safe when not mid-TX — process_rx() ignores stale rx_ready_
-  //    flags by only running when TX is idle or in cooldown.
-  TxState cur_tx = this->tx_state_.load(std::memory_order_acquire);
-  if (cur_tx == TxState::IDLE || cur_tx == TxState::COOLDOWN) {
-    this->process_rx();
+  // 1. Drain RX results from radio task (Core 0 → Core 1 via queue).
+  if (this->rx_queue_) {
+    RxResult rx;
+    uint8_t rx_drain_count = 0;
+    while (rx_drain_count < ELERO_MAX_RX_PER_LOOP &&
+           xQueueReceive(this->rx_queue_, &rx, 0) == pdTRUE) {
+      this->dispatch_rx_result_(rx);
+      rx_drain_count++;
+    }
   }
 
-  // 2. Advance the non-blocking TX state machine (one step per loop).
-  if (cur_tx != TxState::IDLE) {
-    this->advance_tx();
-  }
-
-  // 3. Drain runtime blind command queues (only when TX is idle).
-  if (this->tx_state_.load(std::memory_order_acquire) == TxState::IDLE) {
+  // 2. Drain runtime blind command queues (enqueues to TX queue).
+  if (this->is_tx_idle()) {
     this->drain_runtime_queues();
-    // 3b. Enqueue periodic status polls for runtime blinds.
     this->poll_runtime_blinds_();
-    // 4. Periodic radio health check — detect stuck CC1101 states.
-    this->check_radio_state_();
   }
 
-  // 5. Recompute dead-reckoning positions for runtime-adopted blinds.
+  // 3. Recompute dead-reckoning positions for runtime-adopted blinds.
   this->recompute_runtime_positions_();
 }
 
@@ -508,7 +530,7 @@ void Elero::check_radio_state_() {
     ESP_LOGE(TAG, "  If GPIO12 is used for SPI MISO, it may be pulling VDD_SDIO to 1.8V at boot.");
     ESP_LOGE(TAG, "  Use non-strapping pins for SPI (e.g. CLK=18, MISO=19, MOSI=23).");
     this->spi_failed_.store(true, std::memory_order_release);
-    this->mark_failed(LOG_STR("SPI permanently broken — check pin assignments"));
+    this->radio_fatal_error_.store(true, std::memory_order_release);
     return;
   }
 
@@ -671,6 +693,84 @@ void IRAM_ATTR Elero::interrupt(Elero *arg) {
   arg->rx_ready_.store(true, std::memory_order_release);
 }
 
+// ---------------------------------------------------------------------------
+// Radio task — runs on Core 0, owns ALL SPI access after setup()
+// ---------------------------------------------------------------------------
+void Elero::radio_task_func_(void *param) {
+  auto *hub = static_cast<Elero *>(param);
+  ESP_LOGI(TAG, "Radio task started on Core %d", xPortGetCoreID());
+  while (!hub->task_shutdown_.load(std::memory_order_acquire)) {
+    hub->radio_task_loop_();
+    vTaskDelay(1);  // yield to WiFi/system tasks (~1ms)
+  }
+  ESP_LOGI(TAG, "Radio task shutting down");
+  hub->radio_task_handle_ = nullptr;  // signal destructor we're done
+  vTaskDelete(nullptr);  // delete self
+}
+
+void Elero::radio_task_loop_() {
+  // 1. Process TX commands from Core 1
+  RadioMessage msg{};
+  if (this->tx_queue_ && xQueueReceive(this->tx_queue_, &msg, 0) == pdTRUE) {
+    switch (msg.type) {
+      case RadioControlType::TX_COMMAND:
+        this->send_command_internal_(&msg.tx.cmd);
+        break;
+      case RadioControlType::REINIT_FREQ: {
+        bool ok = false;
+        if (this->is_tx_idle()) {
+          this->rx_ready_.store(false, std::memory_order_release);
+          this->tx_state_.store(TxState::IDLE, std::memory_order_release);
+          this->freq2_ = msg.freq.freq2;
+          this->freq1_ = msg.freq.freq1;
+          this->freq0_ = msg.freq.freq0;
+          this->reset();
+          this->init();
+          float mhz = registers_to_mhz(msg.freq.freq2, msg.freq.freq1, msg.freq.freq0);
+          ESP_LOGI(TAG, "CC1101 re-initialised: %.2f MHz (0x%02x 0x%02x 0x%02x)",
+                   mhz, msg.freq.freq2, msg.freq.freq1, msg.freq.freq0);
+          ok = true;
+        }
+        if (msg.result_ptr) *msg.result_ptr = ok;
+        if (msg.completion_sem) xSemaphoreGive(msg.completion_sem);
+        break;
+      }
+      case RadioControlType::START_SCAN:
+        this->scan_mode_.store(true, std::memory_order_release);
+        break;
+      case RadioControlType::STOP_SCAN:
+        this->scan_mode_.store(false, std::memory_order_release);
+        break;
+      case RadioControlType::START_DUMP:
+        this->packet_dump_mode_.store(true, std::memory_order_release);
+        ESP_LOGI(TAG, "Packet dump mode started");
+        break;
+      case RadioControlType::STOP_DUMP:
+        this->packet_dump_mode_.store(false, std::memory_order_release);
+        ESP_LOGI(TAG, "Packet dump mode stopped");
+        break;
+      case RadioControlType::SHUTDOWN:
+        return;  // will be caught by shutdown check in radio_task_func_
+    }
+  }
+
+  // 2. Process RX if ISR flag set and TX idle/cooldown
+  TxState cur_tx = this->tx_state_.load(std::memory_order_acquire);
+  if (cur_tx == TxState::IDLE || cur_tx == TxState::COOLDOWN) {
+    this->process_rx();
+  }
+
+  // 3. Advance TX state machine
+  if (cur_tx != TxState::IDLE) {
+    this->advance_tx();
+  }
+
+  // 4. Periodic radio health check (only when TX idle)
+  if (this->tx_state_.load(std::memory_order_acquire) == TxState::IDLE) {
+    this->check_radio_state_();
+  }
+}
+
 void Elero::dump_config() {
   ESP_LOGCONFIG(TAG, "Elero CC1101:");
   LOG_PIN("  GDO0 Pin: ", this->gdo0_pin_);
@@ -771,6 +871,34 @@ void Elero::setup() {
     this->log_listener_ = this;  // non-null sentinel so destructor knows it was registered
   }
 #endif
+
+  // Create FreeRTOS queues for dual-core communication
+  this->tx_queue_ = xQueueCreate(16, sizeof(RadioMessage));
+  this->rx_queue_ = xQueueCreate(16, sizeof(RxResult));
+  if (!this->tx_queue_ || !this->rx_queue_) {
+    ESP_LOGE(TAG, "Failed to create FreeRTOS queues for radio task");
+    this->mark_failed(LOG_STR("Failed to allocate radio task queues"));
+    return;
+  }
+
+  // Spawn radio task on Core 0 — ALL SPI access moves to this task.
+  // Priority 19: below WiFi (23) to prevent WiFi starvation, above most
+  // ESP-IDF system tasks.
+  BaseType_t rc_task = xTaskCreatePinnedToCore(
+    Elero::radio_task_func_,     // function
+    "elero_radio",               // name (max 16 chars)
+    8192,                        // stack size (bytes)
+    this,                        // parameter
+    19,                          // priority
+    &this->radio_task_handle_,   // handle
+    0                            // Core 0
+  );
+  if (rc_task != pdPASS) {
+    ESP_LOGE(TAG, "Failed to create radio task on Core 0");
+    this->mark_failed(LOG_STR("Failed to create radio task"));
+    return;
+  }
+  ESP_LOGI(TAG, "Radio task spawned on Core 0 (priority 19, stack 8192)");
 }
 
 float Elero::registers_to_mhz(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
@@ -780,51 +908,36 @@ float Elero::registers_to_mhz(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
 }
 
 bool Elero::reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
-  if (!this->is_tx_idle()) {
-    ESP_LOGW(TAG, "Cannot reinit frequency while TX is in progress");
+  if (!this->tx_queue_) return false;
+  // Send frequency change request to radio task with synchronous response
+  SemaphoreHandle_t sem = xSemaphoreCreateBinary();
+  if (!sem) return false;
+  bool result = false;
+  RadioMessage msg{};
+  msg.type = RadioControlType::REINIT_FREQ;
+  msg.freq.freq2 = freq2;
+  msg.freq.freq1 = freq1;
+  msg.freq.freq0 = freq0;
+  msg.completion_sem = sem;
+  msg.result_ptr = &result;
+  if (xQueueSend(this->tx_queue_, &msg, pdMS_TO_TICKS(100)) != pdTRUE) {
+    vSemaphoreDelete(sem);
     return false;
   }
-  this->rx_ready_.store(false, std::memory_order_release);
-  this->tx_state_.store(TxState::IDLE, std::memory_order_release);
-  this->freq2_ = freq2;
-  this->freq1_ = freq1;
-  this->freq0_ = freq0;
-  this->reset();
-  this->init();
-  float mhz = registers_to_mhz(freq2, freq1, freq0);
-  ESP_LOGI(TAG, "CC1101 re-initialised: %.2f MHz (0x%02x 0x%02x 0x%02x)", mhz, freq2, freq1, freq0);
-  return true;
+  // Wait up to 5 seconds for radio task to process
+  xSemaphoreTake(sem, pdMS_TO_TICKS(5000));
+  vSemaphoreDelete(sem);
+  return result;
 }
 
 bool Elero::reinit_frequency_mhz(float mhz) {
-  if (!this->is_tx_idle()) {
-    ESP_LOGW(TAG, "Cannot reinit frequency while TX is in progress");
-    return false;
-  }
-  this->rx_ready_.store(false, std::memory_order_release);
-  this->tx_state_.store(TxState::IDLE, std::memory_order_release);
-
-  // Use RadioLib's setFrequency() to set the CC1101 frequency directly in MHz.
-  int16_t rc = this->radio_->setFrequency(mhz);
-  if (rc != RADIOLIB_ERR_NONE) {
-    ESP_LOGE(TAG, "setFrequency(%.2f MHz) failed: %d", mhz, rc);
-    return false;
-  }
-
-  // Read back the register values so our cached freq bytes stay in sync.
-  this->freq2_ = this->read_reg(CC1101_FREQ2);
-  this->freq1_ = this->read_reg(CC1101_FREQ1);
-  this->freq0_ = this->read_reg(CC1101_FREQ0);
-
-  // Full reinit to restore all custom register settings (setFrequency may
-  // alter modem config).
-  this->reset();
-  this->init();
-
-  float actual_mhz = registers_to_mhz(this->freq2_, this->freq1_, this->freq0_);
-  ESP_LOGI(TAG, "CC1101 re-initialised via setFrequency: %.2f MHz (0x%02x 0x%02x 0x%02x)",
-           actual_mhz, this->freq2_, this->freq1_, this->freq0_);
-  return true;
+  // Convert MHz to CC1101 FREQ register values:
+  // FREQ = mhz * 65536 / 26.0
+  uint32_t freq_word = static_cast<uint32_t>(mhz * 65536.0f / 26.0f + 0.5f);
+  uint8_t f2 = (freq_word >> 16) & 0xFF;
+  uint8_t f1 = (freq_word >> 8) & 0xFF;
+  uint8_t f0 = freq_word & 0xFF;
+  return this->reinit_frequency(f2, f1, f0);
 }
 
 void Elero::flush_and_rx() {
@@ -1284,135 +1397,59 @@ void Elero::interpret_msg() {
   ESP_LOGD(TAG, "rcv'd from 0x%06x: state=0x%02x rssi=%.1f", src, payload[6], rssi);
   ESP_LOGV(TAG, "rcv'd: len=%02d, cnt=%02d, typ=0x%02x, typ2=0x%02x, hop=0x%02x, syst=0x%02x, chl=%02d, src=0x%06x, bwd=0x%06x, fwd=0x%06x, #dst=%02d, dst=0x%06x, rssi=%2.1f, lqi=%2d, crc=%2d, payload=[0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x]", length, cnt, typ, typ2, hop, syst, chl, src, bwd, fwd, num_dests, dst, rssi, lqi, crc, payload1, payload2, payload[0], payload[1], payload[2], payload[3], payload[4], payload[5], payload[6], payload[7]);
 
-  // Update RSSI sensor for any message from a known blind
-#ifdef USE_SENSOR
-  {
-    auto rssi_it = this->address_to_rssi_sensor_.find(src);
-    if (rssi_it != this->address_to_rssi_sensor_.end()) {
-      rssi_it->second->publish_state(rssi);
-    }
-  }
-#endif
+  // Build RxResult and push to queue for Core 1 dispatch.
+  // Deduplication of status packets stays here (Core 0) to avoid queue spam.
+  bool is_status = (typ == 0xca) || (typ == 0xc9);
+  bool is_command = (typ == 0x6a) || (typ == 0x69);
 
-  // Track in discovery mode
-  if (this->scan_mode_.load(std::memory_order_acquire)) {
-    if ((typ == 0xca) || (typ == 0xc9)) {
-      // Status response FROM the blind: src = blind addr, fwd = remote addr.
-      // The params here (pck_inf, hop, channel, payload) belong to the blind's
-      // response packet format — not to the command format we need to send.
-      // Store them as a fallback (params_from_command=false); they will be
-      // upgraded automatically once we see a matching 6a/69 command packet.
-      this->track_discovered_blind(src, fwd, chl, typ, typ2, hop,
-                                   payload1, payload2, rssi, payload[6], false);
-    } else if ((typ == 0x6a) || (typ == 0x69)) {
-      // Command FROM remote TO blind(s): src = remote addr.
-      // The channel, pck_inf, hop and payload bytes here are exactly what must
-      // be replicated when we send commands — iterate every destination and
-      // register it as a discovered blind with the correct command params.
-      for (uint8_t i = 0; i < num_dests; i++) {
-        uint32_t dest_addr;
-        if (typ > 0x60) {  // 3-byte addressing
-          dest_addr = ((uint32_t)this->msg_rx_[17 + i * 3] << 16) |
-                      ((uint32_t)this->msg_rx_[18 + i * 3] << 8) |
-                      this->msg_rx_[19 + i * 3];
-        } else {            // 1-byte addressing
-          dest_addr = this->msg_rx_[17 + i];
-        }
-        this->track_discovered_blind(dest_addr, src, chl, typ, typ2, hop,
-                                     payload1, payload2, rssi, 0, true);
-      }
-    }
+  if (is_status && this->is_duplicate_packet_(src, cnt)) {
+    ESP_LOGV(TAG, "Duplicate status from 0x%06x cnt=%d (relay hop), skipping", src, cnt);
+    return;
   }
 
-  if((typ == 0xca) || (typ == 0xc9)) { // Status message from a blind
-    // Deduplicate relay-hop copies: same (src, cnt) within a time window
-    if (this->is_duplicate_packet_(src, cnt)) {
-      ESP_LOGV(TAG, "Duplicate status from 0x%06x cnt=%d (relay hop), skipping", src, cnt);
-      return;
-    }
-    // Update text sensor
-#ifdef USE_TEXT_SENSOR
-    {
-      auto text_it = this->address_to_text_sensor_.find(src);
-      if (text_it != this->address_to_text_sensor_.end()) {
-        text_it->second->publish_state(elero_state_to_string(payload[6]));
+  RxResult rx{};
+  rx.blind_address = src;
+  rx.remote_address = is_status ? fwd : src;  // status: fwd=remote; command: src=remote
+  rx.channel = chl;
+  rx.pck_inf[0] = typ;
+  rx.pck_inf[1] = typ2;
+  rx.hop = hop;
+  rx.state = payload[6];
+  rx.rssi = rssi;
+  rx.timestamp_ms = millis();
+  memcpy(rx.payload, payload, 10);
+  rx.cnt = cnt;
+  rx.is_status = is_status;
+  rx.is_command = is_command;
+  rx.payload_1 = payload1;
+  rx.payload_2 = payload2;
+
+  // Populate discovery data
+  rx.scan_hit = this->scan_mode_.load(std::memory_order_acquire) && (is_status || is_command);
+  rx.params_from_command = is_command;
+
+  // For command packets, extract destination addresses
+  rx.num_dests = 0;
+  rx.is_own_echo = false;
+  if (is_command) {
+    rx.is_own_echo = (this->own_remote_addresses_.count(src) > 0);
+    uint8_t safe_num = (num_dests > 10) ? 10 : num_dests;
+    rx.num_dests = safe_num;
+    for (uint8_t i = 0; i < safe_num; i++) {
+      if (typ > 0x60) {  // 3-byte addressing
+        rx.dest_addrs[i] = ((uint32_t)this->msg_rx_[17 + i * 3] << 16) |
+                            ((uint32_t)this->msg_rx_[18 + i * 3] << 8) |
+                            this->msg_rx_[19 + i * 3];
+      } else {            // 1-byte addressing
+        rx.dest_addrs[i] = this->msg_rx_[17 + i];
       }
     }
-#endif
+  }
 
-    // Check if we know the blind (configured ESPHome cover)
-    auto search = this->address_to_cover_mapping_.find(src);
-    if(search != this->address_to_cover_mapping_.end()) {
-      search->second->notify_rx_meta(millis(), rssi);
-      search->second->set_rx_state(payload[6]);
-    }
-
-    // Check if we know the address as a configured ESPHome light
-    auto light_search = this->address_to_light_mapping_.find(src);
-    if(light_search != this->address_to_light_mapping_.end()) {
-      light_search->second->notify_rx_meta(millis(), rssi);
-      light_search->second->set_rx_state(payload[6]);
-    }
-
-    // Update runtime adopted blinds
-    {
-      std::lock_guard<std::mutex> lock(state_mutex_);
-      auto it = this->runtime_blinds_.find(src);
-      if (it != this->runtime_blinds_.end()) {
-        it->second.last_seen_ms = millis();
-        it->second.last_rssi = rssi;
-        it->second.last_state = payload[6];
-        this->update_runtime_blind_direction_(it->second, payload[6]);
-      }
-    }
-  } else {
-    // Non-status packets: still update RSSI/last_seen for any known blind
-    auto search = this->address_to_cover_mapping_.find(src);
-    if(search != this->address_to_cover_mapping_.end()) {
-      search->second->notify_rx_meta(millis(), rssi);
-    }
-    auto light_search = this->address_to_light_mapping_.find(src);
-    if(light_search != this->address_to_light_mapping_.end()) {
-      light_search->second->notify_rx_meta(millis(), rssi);
-    }
-    {
-      std::lock_guard<std::mutex> lock(state_mutex_);
-      auto rb_it = this->runtime_blinds_.find(src);
-      if (rb_it != this->runtime_blinds_.end()) {
-        rb_it->second.last_seen_ms = millis();
-        rb_it->second.last_rssi = rssi;
-      }
-    }
-
-    // Remote command packets (0x6a/0x69): src = remote addr, dst = blind addr(s).
-    // Trigger an immediate status poll on each configured blind/light that is
-    // targeted, so HA state updates within ~50 ms instead of waiting for the
-    // normal poll interval.
-    // Skip if src matches one of our own remote addresses — that means this is
-    // a relayed echo of a command we sent, not a third-party remote.
-    if ((typ == 0x6a) || (typ == 0x69)) {
-      if (this->own_remote_addresses_.count(src) > 0) {
-        ESP_LOGD(TAG, "Ignoring echo of own command from 0x%06x", src);
-      } else {
-        for (uint8_t i = 0; i < num_dests; i++) {
-          uint32_t dest_addr;
-          if (typ > 0x60) {  // 3-byte addressing
-            dest_addr = ((uint32_t)this->msg_rx_[17 + i * 3] << 16) |
-                        ((uint32_t)this->msg_rx_[18 + i * 3] << 8) |
-                        this->msg_rx_[19 + i * 3];
-          } else {            // 1-byte addressing
-            dest_addr = this->msg_rx_[17 + i];
-          }
-          auto c_it = this->address_to_cover_mapping_.find(dest_addr);
-          if (c_it != this->address_to_cover_mapping_.end()) {
-            c_it->second->schedule_immediate_poll();
-          }
-          auto l_it = this->address_to_light_mapping_.find(dest_addr);
-          if (l_it != this->address_to_light_mapping_.end()) {
-            l_it->second->schedule_immediate_poll();
-          }
-        }
-      }
+  // Push to RX queue — drop if full (stale data is acceptable)
+  if (this->rx_queue_) {
+    if (xQueueSend(this->rx_queue_, &rx, 0) != pdTRUE) {
+      ESP_LOGW(TAG, "RX queue full, dropping packet from 0x%06x", src);
     }
   }
 }
@@ -1557,7 +1594,31 @@ void Elero::track_discovered_blind(uint32_t src, uint32_t remote, uint8_t channe
   }
 }
 
+// ---------------------------------------------------------------------------
+// send_command — public API (Core 1): enqueue a TX command to the radio task
+// ---------------------------------------------------------------------------
 bool Elero::send_command(t_elero_command *cmd) {
+  if (this->spi_failed_.load(std::memory_order_acquire))
+    return false;
+  if (this->tx_state_.load(std::memory_order_acquire) != TxState::IDLE)
+    return false;
+  if (!this->tx_queue_)
+    return false;
+
+  RadioMessage msg{};
+  msg.type = RadioControlType::TX_COMMAND;
+  msg.tx.cmd = *cmd;
+  if (xQueueSend(this->tx_queue_, &msg, pdMS_TO_TICKS(10)) == pdTRUE) {
+    return true;
+  }
+  ESP_LOGW(TAG, "TX queue full, command to 0x%06x dropped", cmd->blind_addr);
+  return false;
+}
+
+// ---------------------------------------------------------------------------
+// send_command_internal_ — Core 0 only: execute TX via SPI
+// ---------------------------------------------------------------------------
+bool Elero::send_command_internal_(t_elero_command *cmd) {
   // Reject if SPI is permanently broken or TX is already in progress.
   if (this->spi_failed_.load(std::memory_order_acquire))
     return false;
@@ -1620,7 +1681,7 @@ bool Elero::send_command(t_elero_command *cmd) {
         ESP_LOGE(TAG, "  If GPIO12 is used for SPI MISO, it may be pulling VDD_SDIO to 1.8V at boot.");
         ESP_LOGE(TAG, "  Use non-strapping pins for SPI (e.g. CLK=18, MISO=19, MOSI=23).");
         this->spi_failed_.store(true, std::memory_order_release);
-        this->mark_failed(LOG_STR("SPI permanently broken — check pin assignments"));
+        this->radio_fatal_error_.store(true, std::memory_order_release);
       }
       return false;
     }

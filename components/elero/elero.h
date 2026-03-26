@@ -518,10 +518,15 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   uint8_t get_freq2() const { return freq2_; }
 
  private:
-  // Non-blocking TX state machine
+  // Radio task (Core 0) — owns ALL SPI access after setup()
+  static void radio_task_func_(void *param);
+  void radio_task_loop_();
+  bool send_command_internal_(t_elero_command *cmd);  // actual SPI TX, Core 0 only
+
+  // Non-blocking TX state machine (runs on Core 0 radio task)
   void process_rx();
   void advance_tx();
-  void dispatch_rx_result_(const RxResult &rx);
+  void dispatch_rx_result_(const RxResult &rx);  // runs on Core 1 main loop
   void drain_runtime_queues();
   void poll_runtime_blinds_();
   void recompute_runtime_positions_();
@@ -630,7 +635,10 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   mutable std::mutex state_mutex_;         // protects runtime_blinds_ and discovered_blinds_
   mutable std::mutex packet_dump_mutex_;   // protects raw_packets_
 
-  // Radio task lifecycle flags (for future dual-core split)
+  // Radio task (Core 0) — handles ALL SPI communication after setup()
+  TaskHandle_t radio_task_handle_{nullptr};
+  QueueHandle_t tx_queue_{nullptr};   // Core 1 → Core 0: RadioMessage (TX commands, control)
+  QueueHandle_t rx_queue_{nullptr};   // Core 0 → Core 1: RxResult (decoded packets)
   std::atomic<bool> task_shutdown_{false};       // Core 1 sets to signal radio task to exit
   std::atomic<bool> radio_fatal_error_{false};   // Core 0 sets when SPI permanently fails
 };
