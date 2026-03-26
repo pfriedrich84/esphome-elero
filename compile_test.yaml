@@ -46,10 +46,153 @@ sensor:
     blind_address: 0xc41a2b
     name: "Licht RSSI"
 
+  # ── ESP32 System Monitoring Sensors ──────────────────────────────
+  # Free heap RAM (bytes) — the debug component publishes this automatically
+  - platform: debug
+    free:
+      name: "Free Heap"
+    block:
+      name: "Largest Free Block"
+    loop_time:
+      name: "Loop Time"
+
+  # WiFi signal strength
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    update_interval: 30s
+
+  # Device uptime in seconds
+  - platform: uptime
+    name: "Uptime"
+    update_interval: 60s
+
+  # ESP32 internal temperature (available on most ESP32 variants)
+  - platform: internal_temperature
+    name: "ESP32 Temperature"
+    update_interval: 30s
+
+  # ── Custom FreeRTOS / ESP32 System Sensors via Lambda ────────────
+  # These use ESP-IDF / FreeRTOS APIs available on both Arduino and IDF frameworks
+
+  # Free heap RAM in KB (more readable than bytes)
+  - platform: template
+    name: "Free RAM (KB)"
+    lambda: |-
+      return (float)ESP.getFreeHeap() / 1024.0f;
+    unit_of_measurement: "KB"
+    accuracy_decimals: 1
+    update_interval: 10s
+    icon: "mdi:memory"
+
+  # Minimum free heap ever seen (detects memory leaks over time)
+  - platform: template
+    name: "Min Free RAM (KB)"
+    lambda: |-
+      return (float)ESP.getMinFreeHeap() / 1024.0f;
+    unit_of_measurement: "KB"
+    accuracy_decimals: 1
+    update_interval: 30s
+    icon: "mdi:memory"
+
+  # Flash: sketch size vs free space
+  - platform: template
+    name: "Flash Used (KB)"
+    lambda: |-
+      return (float)ESP.getSketchSize() / 1024.0f;
+    unit_of_measurement: "KB"
+    accuracy_decimals: 0
+    update_interval: 300s
+    icon: "mdi:harddisk"
+
+  - platform: template
+    name: "Flash Free (KB)"
+    lambda: |-
+      return (float)ESP.getFreeSketchSpace() / 1024.0f;
+    unit_of_measurement: "KB"
+    accuracy_decimals: 0
+    update_interval: 300s
+    icon: "mdi:harddisk"
+
+  # Radio task stack high water mark (bytes remaining — lower = closer to overflow)
+  - platform: template
+    name: "Radio Task Stack Free"
+    lambda: |-
+      TaskHandle_t radio = xTaskGetHandle("elero_radio");
+      if (radio != NULL) {
+        return (float)uxTaskGetStackHighWaterMark(radio) * 4;  // words → bytes
+      }
+      return NAN;
+    unit_of_measurement: "bytes"
+    accuracy_decimals: 0
+    update_interval: 30s
+    icon: "mdi:stack-overflow"
+
+  # Core 0 idle percentage (radio task core)
+  # Uses ESP-IDF runtime stats — requires CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS
+  # Falls back to NAN if not available
+  - platform: template
+    name: "Core 0 Usage (%)"
+    lambda: |-
+      static uint32_t last_idle_0 = 0;
+      static uint32_t last_total = 0;
+      uint32_t total = millis();
+      TaskHandle_t idle0 = xTaskGetIdleTaskHandleForCPU(0);
+      if (idle0 == NULL) return NAN;
+      // Use ulTaskGetRunTimeCounter if available (ESP-IDF 5.x+)
+      #if defined(CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS) && CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS
+      uint32_t idle_ticks = ulTaskGetRunTimeCounter(idle0);
+      uint32_t delta_idle = idle_ticks - last_idle_0;
+      uint32_t delta_total = (total - last_total) * 1000;  // ms → µs (runtime stats in µs)
+      last_idle_0 = idle_ticks;
+      last_total = total;
+      if (delta_total == 0) return NAN;
+      float idle_pct = 100.0f * (float)delta_idle / (float)delta_total;
+      return 100.0f - idle_pct;  // usage = 100% - idle%
+      #else
+      return NAN;  // Runtime stats not enabled
+      #endif
+    unit_of_measurement: "%"
+    accuracy_decimals: 1
+    update_interval: 10s
+    icon: "mdi:chip"
+
+  # Core 1 idle percentage (ESPHome app core)
+  - platform: template
+    name: "Core 1 Usage (%)"
+    lambda: |-
+      static uint32_t last_idle_1 = 0;
+      static uint32_t last_total = 0;
+      uint32_t total = millis();
+      TaskHandle_t idle1 = xTaskGetIdleTaskHandleForCPU(1);
+      if (idle1 == NULL) return NAN;
+      #if defined(CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS) && CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS
+      uint32_t idle_ticks = ulTaskGetRunTimeCounter(idle1);
+      uint32_t delta_idle = idle_ticks - last_idle_1;
+      uint32_t delta_total = (total - last_total) * 1000;
+      last_idle_1 = idle_ticks;
+      last_total = total;
+      if (delta_total == 0) return NAN;
+      float idle_pct = 100.0f * (float)delta_idle / (float)delta_total;
+      return 100.0f - idle_pct;
+      #else
+      return NAN;
+      #endif
+    unit_of_measurement: "%"
+    accuracy_decimals: 1
+    update_interval: 10s
+    icon: "mdi:chip"
+
 text_sensor:
   - platform: elero
     blind_address: 0xc41a2b
     name: "Licht Status"
+
+  # Debug text sensors — ESPHome version, reset reason, etc.
+  - platform: debug
+    device:
+      name: "Device Info"
+    reset_reason:
+      name: "Reset Reason"
 
 button:
   - platform: elero
@@ -71,6 +214,10 @@ switch:
     restore_mode: RESTORE_DEFAULT_ON
 
 logger:
+
+# Required for debug platform sensors (free heap, loop time, device info)
+debug:
+  update_interval: 10s
 
 wifi:
   ssid: "test"
