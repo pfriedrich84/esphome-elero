@@ -52,17 +52,17 @@ esphome-elero/
 └── components/
     ├── elero/                         # Main hub component
     │   ├── __init__.py                # ESPHome component schema & code-gen (hub)
-    │   ├── elero.h                    # C++ hub class header (~516 lines)
-    │   ├── elero.cpp                  # C++ RF protocol implementation (~1662 lines)
+    │   ├── elero.h                    # C++ hub class header (~686 lines)
+    │   ├── elero.cpp                  # C++ RF protocol implementation (~2032 lines)
     │   ├── cc1101.h                   # CC1101 register map & command strobes
     │   ├── cover/                     # Cover (blind) platform
     │   │   ├── __init__.py            # Cover schema, auto-sensors, validation
-    │   │   ├── EleroCover.h           # Cover class header (~135 lines)
-    │   │   └── EleroCover.cpp         # Cover logic, position tracking (~472 lines)
+    │   │   ├── EleroCover.h           # Cover class header (~142 lines)
+    │   │   └── EleroCover.cpp         # Cover logic, position tracking (~547 lines)
     │   ├── light/                     # Light (dimmer) platform
     │   │   ├── __init__.py            # Light schema, auto-sensors, validation
-    │   │   ├── EleroLight.h           # Light class header (~133 lines)
-    │   │   └── EleroLight.cpp         # Light logic, brightness tracking (~259 lines)
+    │   │   ├── EleroLight.h           # Light class header (~134 lines)
+    │   │   └── EleroLight.cpp         # Light logic, brightness tracking (~269 lines)
     │   ├── button/                    # Scan button platform
     │   │   ├── __init__.py            # Button schema (scan + light command)
     │   │   ├── elero_button.h         # Button class header
@@ -74,7 +74,7 @@ esphome-elero/
     └── elero_web/                     # Optional web UI component
         ├── __init__.py                # Web server schema & code-gen
         ├── elero_web_server.h         # Web server class header
-        ├── elero_web_server.cpp       # REST API + CORS (~1334 lines)
+        ├── elero_web_server.cpp       # REST API + CORS (~1356 lines)
         ├── elero_web_ui.h             # AUTO-GENERATED: embedded HTML/JS/CSS
         ├── switch/                    # Web UI enable/disable switch sub-platform
         │   ├── __init__.py            # Switch schema (depends on elero_web)
@@ -160,9 +160,10 @@ Core 1: ESPHome Main Loop (Elero::loop())
 
 **ALL SPI access is exclusively on Core 0** after `setup()` completes. No SPI mutex is needed because only one core touches the SPI bus.
 
-Communication between cores uses two 16-deep FreeRTOS queues:
-- `tx_queue_` (Core 1 → Core 0): `RadioMessage` structs (TX commands + control)
-- `rx_queue_` (Core 0 → Core 1): `RxResult` structs (decoded RX packets)
+Communication between cores uses three FreeRTOS queues:
+- `tx_queue_` (Core 1 → Core 0): 16-deep `RadioMessage` queue (normal TX commands + control)
+- `tx_priority_queue_` (Core 1 → Core 0): 8-deep `RadioMessage` queue (time-critical stop commands, drained first)
+- `rx_queue_` (Core 0 → Core 1): 16-deep `RxResult` queue (decoded RX packets)
 
 ### Non-blocking TX state machine
 
@@ -172,7 +173,7 @@ The radio uses a simplified 3-state non-blocking TX state machine on Core 0:
 IDLE → TRANSMITTING → COOLDOWN → IDLE
 ```
 
-RadioLib's `standby()` handles the IDLE transition synchronously in `send_command_internal_()`. See `TxState` enum in `elero.h`. The hub checks `is_tx_idle()` (atomic read) before accepting new commands on Core 1.
+RadioLib's `standby()` handles the IDLE transition synchronously in `send_command_internal_()`. See `TxState` enum in `elero.h`. Commands are buffered in FreeRTOS queues (normal + priority) and consumed by Core 0, so Core 1 callers no longer need to check `is_tx_idle()` before enqueuing.
 
 TX initiation in `send_command_internal_()` (Core 0):
 1. `radio_->standby()` — blocks until CC1101 is in IDLE (~1 ms)
@@ -203,8 +204,8 @@ The CC1101 can enter unrecoverable states (RXFIFO_OVERFLOW, stuck IDLE) during T
 2. When the CC1101 signals a received packet (GDO0 interrupt), the ISR sets `rx_ready_`.
 3. The radio task (Core 0) calls `process_rx()` when TX is idle — reads FIFO, decodes, decrypts, builds an `RxResult`, and pushes it to `rx_queue_`.
 4. `Elero::loop()` (Core 1) drains `rx_queue_` via `dispatch_rx_result_()` — routes decoded packets to covers/lights/sensors/discovery/runtime blinds.
-5. `EleroCover::loop()` / `EleroLight::loop()` (Core 1) handle polling timers and drain command queues by calling `parent_->send_command()`, which enqueues a `RadioMessage` to `tx_queue_`.
-6. The radio task (Core 0) dequeues `RadioMessage` from `tx_queue_` and executes `send_command_internal_()` — the actual SPI TX.
+5. `EleroCover::loop()` / `EleroLight::loop()` (Core 1) handle polling timers and drain command queues by calling `parent_->send_command()` (normal) or `parent_->send_command_priority()` (stop commands), which enqueues a `RadioMessage` to `tx_queue_` or `tx_priority_queue_`.
+6. The radio task (Core 0) drains `tx_priority_queue_` first, then `tx_queue_`, and executes `send_command_internal_()` — the actual SPI TX.
 7. The radio task advances the TX state machine and runs `check_radio_state_()` for periodic health monitoring.
 
 ---
@@ -219,8 +220,11 @@ The CC1101 can enter unrecoverable states (RXFIFO_OVERFLOW, stuck IDLE) during T
 Critical public API:
 - `register_cover(EleroBlindBase*)` — called by each `EleroCover` at setup
 - `register_light(EleroLightBase*)` — called by each `EleroLight` at setup
-- `send_command(t_elero_command*)` — encodes, encrypts, and transmits a command (returns false if TX busy)
+- `send_command(t_elero_command*)` — encodes, encrypts, and transmits a command via normal TX queue
+- `send_command_priority(t_elero_command*)` — priority TX queue for time-critical commands (e.g. stop), bypasses the normal queue
 - `is_tx_idle()` — check if TX state machine is ready for a new command
+- `get_tx_queue_depth()` — current normal TX queue depth (for dynamic latency compensation)
+- `increment_stop_urgent()` / `decrement_stop_urgent()` / `is_stop_urgent()` — atomic counter for multi-cover auto-stop coordination; other covers defer non-stop TX while urgent
 - `start_scan()` / `stop_scan()` / `is_scanning()` — toggle RF discovery mode
 - `register_rssi_sensor(uint32_t addr, sensor::Sensor*)` — link RSSI sensor to a blind address
 - `register_text_sensor(uint32_t addr, text_sensor::TextSensor*)` — link text sensor to a blind address
@@ -242,12 +246,16 @@ Radio health:
 - FIFO flush in `send_command()` via `standby()` + SFTX/SFRX — prevents stale data from corrupting post-TX RX
 - Post-TX FIFO health check in `COOLDOWN→IDLE` transition — detects overflow/pending data missed during TX
 
+Hub-level diagnostic sensors (auto-generated when `auto_sensors: true`, default):
+- `set_frequency_sensor()` / `set_rx_count_sensor()` / `set_tx_count_sensor()` / `set_watchdog_recovery_sensor()` — register hub-level diagnostic sensors (Frequency MHz, RX Count, TX Count, Watchdog Recovery Count)
+
 Diagnostics:
 - `start_packet_dump()` / `stop_packet_dump()` / `get_raw_packets()` — RF packet capture (ring buffer, max 50)
 - `append_log()` / `get_log_entries_copy()` / `set_log_capture()` — persistent log buffer (max 200 entries, mutex-protected)
 - `reinit_frequency(freq2, freq1, freq0)` — change CC1101 frequency at runtime
-- `get_rx_count()` / `get_tx_count()` / `get_watchdog_recovery_count()` — diagnostic counters for radio activity
-- `reset_diagnostic_counters()` — reset all diagnostic counters to zero
+- `get_rx_count()` / `get_tx_count()` / `get_watchdog_recovery_count()` / `get_tx_drop_count()` — diagnostic counters for radio activity
+- `increment_tx_drop_count()` — track dropped TX commands
+- `reset_diagnostic_counters()` — reset all diagnostic counters to zero (including tx_drop_count)
 
 Key constants (defined in `elero.h` unless noted):
 
@@ -259,13 +267,17 @@ Key constants (defined in `elero.h` unless noted):
 | `ELERO_TIMEOUT_MOVEMENT` | 120 000 ms | Give up movement tracking after 2 min |
 | `ELERO_POST_MOVEMENT_POLL_DELAY` | 5 000 ms | Poll delay after open/close duration elapses |
 | `ELERO_SEND_RETRIES` | 3 | Command retry count |
-| `ELERO_DEFAULT_SEND_REPEATS` | 3 | Default RF packet repetitions per command (configurable 1–20) |
+| `ELERO_DEFAULT_SEND_REPEATS` | 3 | C++ default RF packet repetitions (YAML schema default is 1; configurable 1–20) |
 | `ELERO_DEFAULT_SEND_DELAY` | 1 ms | Default delay between repeated packets (configurable) |
 | `ELERO_MAX_COMMAND_QUEUE` | 10 | Max queued commands per blind (prevents OOM) |
+| `ELERO_TX_QUEUE_DEPTH` | 16 | Normal TX FreeRTOS queue depth |
+| `ELERO_TX_PRIORITY_QUEUE_DEPTH` | 8 | Priority TX queue depth (stop commands) |
 | `ELERO_MAX_DISCOVERED` | 20 | Max blinds tracked in scan mode |
 | `ELERO_MAX_RAW_PACKETS` | 50 | Max raw packets in dump ring buffer |
 | `ELERO_MAX_RX_PER_LOOP` | 8 | Max packets drained per `dispatch_rx_result_()` cycle |
 | `ELERO_POLL_STAGGER_MS` | 5 000 ms | Stagger offset between cover poll timers |
+| `ELERO_IMMEDIATE_POLL_MIN_INTERVAL_MS` | 2 000 ms | Minimum interval between `schedule_immediate_poll()` calls per blind |
+| `ELERO_DEDUP_WINDOW_MS` | 5 000 ms | Packet deduplication time window (src, cnt pairs) |
 | `ELERO_STOP_REPEAT_COUNT` | 2 | Stop commands queued on auto-stop (x2 RF packets each) |
 | `ELERO_TX_LATENCY_COMPENSATION_MS` | 300 ms | Position check lead time (accounts for multi-cover queue contention) |
 | `ELERO_STOP_VERIFY_DELAY_MS` | 500 ms | Delay before polling to verify motor stopped |
@@ -294,7 +306,8 @@ Thread-safety:
 - `packet_dump_mutex_` (`std::mutex`) protects `raw_packets_` (radio task vs web handler access)
 - `log_mutex_` (`std::mutex`) protects all log buffer access (`append_log`, `get_log_entries_copy`, `clear_log_entries`)
 - `scan_mode_`, `packet_dump_mode_`, `spi_failed_` are `std::atomic<bool>`
-- `rx_count_`, `tx_count_`, `watchdog_recovery_count_` are `std::atomic<uint32_t>`
+- `rx_count_`, `tx_count_`, `watchdog_recovery_count_`, `tx_drop_count_` are `std::atomic<uint32_t>`
+- `stop_urgent_count_` is `std::atomic<uint8_t>` (multi-cover auto-stop coordination)
 - `task_shutdown_`, `radio_fatal_error_` are `std::atomic<bool>` for radio task lifecycle
 - All `std::atomic` operations use explicit `std::memory_order_acquire`/`release` for correct multi-core ESP32 synchronization
 - `get_runtime_blinds()`, `get_discovered_blinds()`, `get_raw_packets()` return copies (not const refs) for thread safety
@@ -346,6 +359,7 @@ Key behaviors:
 - Hosts the web UI at `http://<device-ip>/elero` (redirects `/` → `/elero`)
 - Exposes REST API for RF scanning, blind/light discovery, control, runtime adoption, and diagnostics
 - All endpoints support CORS via `add_cors_headers()`
+- Optional HTTP Basic Auth (`username`/`password` in YAML) — when both are set, all endpoints require authentication (401 if missing/incorrect)
 - `EleroWebSwitch` allows runtime enable/disable of all `/elero` endpoints (returns 503 when disabled)
 - URL parsing helper: `parse_addr_url()` extracts hex address from URLs like `/elero/api/covers/0xABCDEF/command` and `/elero/api/lights/0xABCDEF/command`
 - JSON fragment builders (`build_configured_json_()`, `build_discovered_array_json_()`, etc.) are reused by individual handlers and the combined status endpoint
@@ -353,7 +367,7 @@ Key behaviors:
 
 ### REST API Endpoints
 
-All endpoints are served at `http://<device-ip>/elero` and support CORS. A 503 response is returned if the optional `elero_web` switch is disabled. All POST endpoints also respond to OPTIONS for CORS preflight.
+All endpoints are served at `http://<device-ip>/elero`. CORS is restricted to same-origin (no `Access-Control-Allow-Origin` header is set) to prevent CSRF attacks; local browser access via IP is unaffected. A 503 response is returned if the optional `elero_web` switch is disabled. All POST/DELETE endpoints also respond to OPTIONS for preflight.
 
 **Core endpoints:**
 
@@ -384,7 +398,7 @@ All endpoints are served at `http://<device-ip>/elero` and support CORS. A 503 r
 |---|---|---|
 | `/elero/api/discovered/0xADDRESS/adopt` | POST | Adopt a discovered blind into runtime blinds |
 | `/elero/api/runtime/0xADDRESS/command` | POST | Send command to runtime-adopted blind |
-| `/elero/api/runtime/0xADDRESS/remove` | POST | Remove a runtime-adopted blind |
+| `/elero/api/runtime/0xADDRESS` | DELETE | Remove a runtime-adopted blind |
 | `/elero/api/runtime/0xADDRESS/settings` | POST | Update runtime blind settings |
 
 **Diagnostics:**
@@ -417,6 +431,7 @@ All endpoints are served at `http://<device-ip>/elero` and support CORS. A 503 r
 | Code | Meaning |
 |---|---|
 | 200 | Success |
+| 401 | Unauthorized (HTTP Basic Auth required but not provided/incorrect) |
 | 409 | Conflict (e.g., trying to start scan when one is already running) |
 | 503 | Service Unavailable (returned when web UI is disabled via switch) |
 
@@ -471,7 +486,7 @@ cg.add(var.set_elero_parent(parent))
 
 | Component | `DEPENDENCIES` | `AUTO_LOAD` |
 |---|---|---|
-| `elero` (hub) | `["spi"]` | — |
+| `elero` (hub) | `["spi"]` | `["sensor"]` |
 | `elero` cover | `["elero"]` | `["sensor", "text_sensor"]` |
 | `elero` light | `["elero"]` | `["sensor", "text_sensor"]` |
 | `elero` button | `["elero"]` | — |
@@ -500,9 +515,18 @@ elero:
   freq0: 0x7a            # CC1101 FREQ0 register (optional, default 868.35 MHz)
   freq1: 0x71            # CC1101 FREQ1 register
   freq2: 0x21            # CC1101 FREQ2 register
-  send_repeats: 5        # RF packet repetitions per command (1–20, default 5)
+  send_repeats: 1        # RF packet repetitions per command (1–20, default 1)
   send_delay: 1ms        # Delay between repeated packets (default 1ms)
+  auto_sensors: true     # Auto-generate hub diagnostic sensors (default true)
 ```
+
+When `auto_sensors: true` (default), the hub auto-generates four diagnostic sensors:
+- **Elero Frequency** (MHz) — current CC1101 frequency
+- **Elero RX Count** — total received packets (total_increasing)
+- **Elero TX Count** — total transmitted packets (total_increasing)
+- **Elero Watchdog Recovery Count** — radio watchdog recovery events (total_increasing)
+
+These can be overridden individually via `frequency_sensor`, `rx_count_sensor`, `tx_count_sensor`, `watchdog_recovery_sensor` sub-configs, or disabled entirely with `auto_sensors: false`.
 
 Default frequency registers (`freq2=0x21, freq1=0x71, freq0=0x7a`) correspond to **868.35 MHz**. Use `freq0=0xc0` for 868.95 MHz variants.
 
@@ -592,7 +616,11 @@ web_server_base:
 
 elero_web:
   id: elero_web_ui   # Optional ID
+  username: admin     # Optional: HTTP Basic Auth username
+  password: secret    # Optional: HTTP Basic Auth password
 ```
+
+When both `username` and `password` are set, all `/elero` endpoints require HTTP Basic Authentication.
 
 Navigating to `http://<device-ip>/` will redirect to `/elero` automatically.
 
@@ -731,7 +759,7 @@ The `compile_test.yaml` includes system monitoring sensors for Home Assistant to
 - **Using `web_server:` instead of `web_server_base:`**: Adding `web_server:` to your YAML re-enables the default ESPHome entity UI at `/`. Use `web_server_base:` (or rely on its auto-load via `elero_web`) to serve only the Elero UI at `/elero`. Navigating to `/` will redirect automatically to `/elero`.
 - **Position tracking**: Leave `open_duration` and `close_duration` at `0s` if you only need open/close without position — setting incorrect durations causes wrong position estimates. Both must be set or both zero (enforced by `_validate_duration_consistency`).
 - **Poll interval `never`**: Set `poll_interval: never` for blinds that reliably push state updates (avoids unnecessary RF traffic). Internally this maps to `uint32_t` max (4 294 967 295 ms).
-- **TX busy**: `send_command()` returns `false` when the TX state machine is not idle. Callers must check `is_tx_idle()` or handle the rejection.
+- **TX busy**: `send_command()` and `send_command_priority()` return `false` when the respective FreeRTOS queue is full. Callers should handle the rejection (the `tx_drop_count` diagnostic counter tracks dropped commands).
 - **CC1101 SFTX/SFRX validity**: SFTX is only valid in IDLE or TXFIFO_UNDERFLOW states; SFRX is only valid in IDLE or RXFIFO_OVERFLOW states (per CC1101 datasheet). Issuing these strobes in other states silently corrupts radio state. The TX state machine must respect this.
 - **RX FIFO stale data after TX**: When `standby()` interrupts an in-progress packet reception, partial data remains in the RX FIFO. `send_command()` flushes both FIFOs after entering IDLE to prevent `process_rx()` from misinterpreting stale data after TX completes.
 - **RXFIFO_OVERFLOW during TX**: While TX is active, `process_rx()` does not run, so RX FIFO overflow goes undetected until the post-TX FIFO health check or the 5-second radio watchdog catches it.

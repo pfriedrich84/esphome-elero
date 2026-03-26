@@ -460,6 +460,19 @@ light:
 
 ## Diagnose-Sensoren
 
+### Hub-Diagnose-Sensoren
+
+Bei `auto_sensors: true` (Standard) erzeugt der Hub automatisch vier Diagnose-Sensoren:
+
+| Sensor | Einheit | Beschreibung |
+|---|---|---|
+| Elero Frequency | MHz | Aktuelle CC1101-Frequenz |
+| Elero RX Count | - | Empfangene Pakete (gesamt) |
+| Elero TX Count | - | Gesendete Pakete (gesamt) |
+| Elero Watchdog Recovery Count | - | Radio-Watchdog-Wiederherstellungen |
+
+Diese können mit `auto_sensors: false` am Hub deaktiviert oder individuell überschrieben werden (`frequency_sensor`, `rx_count_sensor`, `tx_count_sensor`, `watchdog_recovery_sensor`).
+
 ### RSSI-Sensor
 
 Überwacht die Signalstärke der Kommunikation:
