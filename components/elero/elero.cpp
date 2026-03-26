@@ -175,6 +175,15 @@ void dispatch_commands(Elero *parent, std::queue<uint8_t> &queue,
   if (parent->is_failed()) return;
   if (!parent->is_tx_idle()) return;
 
+  // When stop_urgent is active, defer non-stop commands from other covers
+  // so the stopping cover's packets transmit without queue contention.
+  if (parent->is_stop_urgent() && !queue.empty()) {
+    uint8_t front_cmd = queue.front();
+    if (front_cmd != ELERO_COMMAND_COVER_STOP) {
+      return;  // defer until stop_urgent clears
+    }
+  }
+
   // Exponential backoff on retries: normal delay is send_delay (1ms),
   // but after failures we wait 10/20/40ms to break the thundering herd
   // when multiple covers retry simultaneously.
@@ -245,6 +254,7 @@ Elero::~Elero() {
   this->radio_module_ = nullptr;
   // 3. Clean up FreeRTOS resources
   if (this->tx_queue_) { vQueueDelete(this->tx_queue_); this->tx_queue_ = nullptr; }
+  if (this->tx_priority_queue_) { vQueueDelete(this->tx_priority_queue_); this->tx_priority_queue_ = nullptr; }
   if (this->rx_queue_) { vQueueDelete(this->rx_queue_); this->rx_queue_ = nullptr; }
 #ifdef USE_LOGGER
   // Callback-based log listener — no heap allocation to clean up.
@@ -719,7 +729,16 @@ void Elero::radio_task_func_(void *param) {
   ESP_LOGI(TAG, "Radio task started on Core %d", xPortGetCoreID());
   while (!hub->task_shutdown_.load(std::memory_order_acquire)) {
     hub->radio_task_loop_();
-    vTaskDelay(1);  // yield to WiFi/system tasks (~1ms)
+    // Adaptive delay: yield immediately when TX active or queues have pending work
+    // to minimize stop command latency; sleep 1ms when idle to save CPU.
+    bool has_work = (hub->tx_state_.load(std::memory_order_acquire) != TxState::IDLE) ||
+                    (hub->tx_priority_queue_ && uxQueueMessagesWaiting(hub->tx_priority_queue_) > 0) ||
+                    (hub->tx_queue_ && uxQueueMessagesWaiting(hub->tx_queue_) > 0);
+    if (has_work) {
+      taskYIELD();
+    } else {
+      vTaskDelay(1);  // yield to WiFi/system tasks (~1ms)
+    }
   }
   ESP_LOGI(TAG, "Radio task shutting down");
   hub->radio_task_handle_ = nullptr;  // signal destructor we're done
@@ -727,9 +746,15 @@ void Elero::radio_task_func_(void *param) {
 }
 
 void Elero::radio_task_loop_() {
-  // 1. Process TX commands from Core 1
+  // 1. Process TX commands from Core 1 — priority queue first for time-critical stop commands
   RadioMessage msg{};
-  if (this->tx_queue_ && xQueueReceive(this->tx_queue_, &msg, 0) == pdTRUE) {
+  bool got_msg = false;
+  if (this->tx_priority_queue_ && xQueueReceive(this->tx_priority_queue_, &msg, 0) == pdTRUE) {
+    got_msg = true;
+  } else if (this->tx_queue_ && xQueueReceive(this->tx_queue_, &msg, 0) == pdTRUE) {
+    got_msg = true;
+  }
+  if (got_msg) {
     switch (msg.type) {
       case RadioControlType::TX_COMMAND:
         this->send_command_internal_(&msg.tx.cmd);
@@ -893,8 +918,9 @@ void Elero::setup() {
 
   // Create FreeRTOS queues for dual-core communication
   this->tx_queue_ = xQueueCreate(16, sizeof(RadioMessage));
+  this->tx_priority_queue_ = xQueueCreate(4, sizeof(RadioMessage));  // small priority queue for stop commands
   this->rx_queue_ = xQueueCreate(32, sizeof(RxResult));  // 32 deep for 5+ simultaneous blind responses
-  if (!this->tx_queue_ || !this->rx_queue_) {
+  if (!this->tx_queue_ || !this->tx_priority_queue_ || !this->rx_queue_) {
     ESP_LOGE(TAG, "Failed to create FreeRTOS queues for radio task");
     this->mark_failed(LOG_STR("Failed to allocate radio task queues"));
     return;
@@ -1636,6 +1662,26 @@ bool Elero::send_command(t_elero_command *cmd) {
     return true;
   }
   ESP_LOGW(TAG, "TX queue full, command to 0x%06x dropped", cmd->blind_addr);
+  return false;
+}
+
+// ---------------------------------------------------------------------------
+// send_command_priority — public API (Core 1): enqueue a high-priority TX
+// command (e.g. stop) that bypasses the normal queue.
+// ---------------------------------------------------------------------------
+bool Elero::send_command_priority(t_elero_command *cmd) {
+  if (this->spi_failed_.load(std::memory_order_acquire))
+    return false;
+  if (!this->tx_priority_queue_)
+    return false;
+
+  RadioMessage msg{};
+  msg.type = RadioControlType::TX_COMMAND;
+  msg.tx.cmd = *cmd;
+  if (xQueueSend(this->tx_priority_queue_, &msg, pdMS_TO_TICKS(10)) == pdTRUE) {
+    return true;
+  }
+  ESP_LOGW(TAG, "Priority TX queue full, command to 0x%06x dropped", cmd->blind_addr);
   return false;
 }
 
