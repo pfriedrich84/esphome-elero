@@ -138,17 +138,43 @@ The hub uses [RadioLib](https://github.com/jgromes/RadioLib) v7.1.2 (added via P
 
 The `Elero` class owns the RadioLib instances (`radio_hal_`, `radio_module_`, `radio_`) and cleans them up in its destructor.
 
+### Dual-core architecture
+
+The component uses both ESP32 cores for improved RF responsiveness:
+
+```
+Core 0: Radio Task (FreeRTOS, priority 19, 8KB stack)
+  ├─ process_rx()           — read CC1101 FIFO, decode, push RxResult to rx_queue_
+  ├─ advance_tx()           — poll TX state machine (TRANSMITTING → COOLDOWN → IDLE)
+  ├─ send_command_internal_()  — execute SPI TX (standby, flush, load FIFO, STX)
+  ├─ check_radio_state_()   — 5s periodic radio health watchdog
+  └─ RadioMessage handler   — REINIT_FREQ, START/STOP_SCAN, START/STOP_DUMP, SHUTDOWN
+
+Core 1: ESPHome Main Loop (Elero::loop())
+  ├─ Drain rx_queue_ via dispatch_rx_result_()  — route to covers/lights/sensors
+  ├─ send_command()         — queue producer (enqueues RadioMessage to tx_queue_)
+  ├─ drain_runtime_queues() — runtime blind command scheduling
+  ├─ poll_runtime_blinds_() — periodic status checks
+  └─ recompute_runtime_positions_()  — dead-reckoning position updates
+```
+
+**ALL SPI access is exclusively on Core 0** after `setup()` completes. No SPI mutex is needed because only one core touches the SPI bus.
+
+Communication between cores uses two 16-deep FreeRTOS queues:
+- `tx_queue_` (Core 1 → Core 0): `RadioMessage` structs (TX commands + control)
+- `rx_queue_` (Core 0 → Core 1): `RxResult` structs (decoded RX packets)
+
 ### Non-blocking TX state machine
 
-The radio uses a simplified 3-state non-blocking TX state machine that processes one step per `loop()` iteration:
+The radio uses a simplified 3-state non-blocking TX state machine on Core 0:
 
 ```
 IDLE → TRANSMITTING → COOLDOWN → IDLE
 ```
 
-RadioLib's `standby()` handles the IDLE transition synchronously in `send_command()`, eliminating the previous `GOING_IDLE`, `LOADING`, `FIRING`, and `VERIFYING` states. See `TxState` enum in `elero.h:27–31`. The hub checks `is_tx_idle()` before accepting new commands.
+RadioLib's `standby()` handles the IDLE transition synchronously in `send_command_internal_()`. See `TxState` enum in `elero.h`. The hub checks `is_tx_idle()` (atomic read) before accepting new commands on Core 1.
 
-TX initiation in `send_command()`:
+TX initiation in `send_command_internal_()` (Core 0):
 1. `radio_->standby()` — blocks until CC1101 is in IDLE (~1 ms)
 2. Flush both TX and RX FIFOs (valid in IDLE per CC1101 spec)
 3. Load TX FIFO via burst write
@@ -173,12 +199,13 @@ The CC1101 can enter unrecoverable states (RXFIFO_OVERFLOW, stuck IDLE) during T
 
 ### Data flow
 
-1. `Elero::setup()` configures CC1101 via RadioLib's `begin()` and direct register writes, then attaches a GPIO interrupt on `gdo0_pin`.
+1. `Elero::setup()` (Core 1) configures CC1101 via RadioLib's `begin()` and direct register writes, attaches GDO0 interrupt, creates FreeRTOS queues, then spawns the radio task on Core 0.
 2. When the CC1101 signals a received packet (GDO0 interrupt), the ISR sets `rx_ready_`.
-3. `Elero::loop()` calls `process_rx()` when TX is idle or in cooldown (drains up to `ELERO_MAX_RX_PER_LOOP` packets per call), reads the FIFO, decodes and decrypts the packet, then dispatches the state to the matching `EleroBlindBase`/`EleroLightBase` via `set_rx_state()`.
-4. `Elero::loop()` calls `advance_tx()` to progress the TX state machine one step.
-5. When TX is idle, `Elero::loop()` drains runtime blind command queues and runs `check_radio_state_()` for periodic health monitoring.
-6. `EleroCover::loop()` / `EleroLight::loop()` handle polling timers, position/brightness recomputation, and drain the command queue by calling `parent_->send_command()`.
+3. The radio task (Core 0) calls `process_rx()` when TX is idle — reads FIFO, decodes, decrypts, builds an `RxResult`, and pushes it to `rx_queue_`.
+4. `Elero::loop()` (Core 1) drains `rx_queue_` via `dispatch_rx_result_()` — routes decoded packets to covers/lights/sensors/discovery/runtime blinds.
+5. `EleroCover::loop()` / `EleroLight::loop()` (Core 1) handle polling timers and drain command queues by calling `parent_->send_command()`, which enqueues a `RadioMessage` to `tx_queue_`.
+6. The radio task (Core 0) dequeues `RadioMessage` from `tx_queue_` and executes `send_command_internal_()` — the actual SPI TX.
+7. The radio task advances the TX state machine and runs `check_radio_state_()` for periodic health monitoring.
 
 ---
 
@@ -263,8 +290,14 @@ Key structs:
 - `LogEntry` — captured log line (timestamp, level, tag, message)
 
 Thread-safety:
+- `state_mutex_` (`std::mutex`) protects `runtime_blinds_` and `discovered_blinds_` (web handler vs loop access)
+- `packet_dump_mutex_` (`std::mutex`) protects `raw_packets_` (radio task vs web handler access)
 - `log_mutex_` (`std::mutex`) protects all log buffer access (`append_log`, `get_log_entries_copy`, `clear_log_entries`)
-- All `std::atomic` operations use explicit `std::memory_order_acquire`/`release` for correct multi-core ESP32 ISR synchronization
+- `scan_mode_`, `packet_dump_mode_`, `spi_failed_` are `std::atomic<bool>`
+- `rx_count_`, `tx_count_`, `watchdog_recovery_count_` are `std::atomic<uint32_t>`
+- `task_shutdown_`, `radio_fatal_error_` are `std::atomic<bool>` for radio task lifecycle
+- All `std::atomic` operations use explicit `std::memory_order_acquire`/`release` for correct multi-core ESP32 synchronization
+- `get_runtime_blinds()`, `get_discovered_blinds()`, `get_raw_packets()` return copies (not const refs) for thread safety
 
 ### `components/elero/cover/EleroCover.h` / `EleroCover.cpp`
 
