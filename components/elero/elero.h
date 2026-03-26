@@ -402,6 +402,15 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void register_cover(EleroBlindBase *cover);
   void register_light(EleroLightBase *light);
   bool send_command(t_elero_command *cmd);
+  /// Priority TX: bypasses the normal queue for time-critical commands (e.g. stop).
+  bool send_command_priority(t_elero_command *cmd);
+  /// Current number of messages waiting in the normal TX queue (for dynamic latency compensation).
+  uint32_t get_tx_queue_depth() const {
+    return tx_queue_ ? uxQueueMessagesWaiting(tx_queue_) : 0;
+  }
+  /// Signal that a stop command is urgent — other covers should defer non-stop TX.
+  void set_stop_urgent(bool urgent) { stop_urgent_.store(urgent, std::memory_order_release); }
+  bool is_stop_urgent() const { return stop_urgent_.load(std::memory_order_acquire); }
 
 #ifdef USE_SENSOR
   void register_rssi_sensor(uint32_t address, sensor::Sensor *sensor);
@@ -637,8 +646,10 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
 
   // Radio task (Core 0) — handles ALL SPI communication after setup()
   TaskHandle_t radio_task_handle_{nullptr};
-  QueueHandle_t tx_queue_{nullptr};   // Core 1 → Core 0: RadioMessage (TX commands, control)
-  QueueHandle_t rx_queue_{nullptr};   // Core 0 → Core 1: RxResult (decoded packets)
+  QueueHandle_t tx_queue_{nullptr};           // Core 1 → Core 0: RadioMessage (TX commands, control)
+  QueueHandle_t tx_priority_queue_{nullptr};  // Core 1 → Core 0: high-priority TX (stop commands)
+  QueueHandle_t rx_queue_{nullptr};           // Core 0 → Core 1: RxResult (decoded packets)
+  std::atomic<bool> stop_urgent_{false};      // true when a cover is sending urgent stop commands
   std::atomic<bool> task_shutdown_{false};       // Core 1 sets to signal radio task to exit
   std::atomic<bool> radio_fatal_error_{false};   // Core 0 sets when SPI permanently fails
 };
