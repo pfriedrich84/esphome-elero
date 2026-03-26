@@ -3,13 +3,18 @@ import logging
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome import pins
-from esphome.components import spi
-from esphome.const import CONF_ID
+from esphome.components import spi, sensor
+from esphome.const import (
+    CONF_ID,
+    STATE_CLASS_MEASUREMENT,
+    STATE_CLASS_TOTAL_INCREASING,
+)
 from esphome.core import CORE
 
 _LOGGER = logging.getLogger(__name__)
 
 DEPENDENCIES = ["spi"]
+AUTO_LOAD = ["sensor"]
 
 # ESP32 strapping pins that can cause boot issues when used for SPI or I/O.
 # GPIO12 (MTDI) is especially problematic on original ESP32: if pulled HIGH at
@@ -30,8 +35,61 @@ CONF_FREQ1 = "freq1"
 CONF_FREQ2 = "freq2"
 CONF_SEND_REPEATS = "send_repeats"
 CONF_SEND_DELAY = "send_delay"
+CONF_AUTO_SENSORS = "auto_sensors"
+CONF_FREQUENCY_SENSOR = "frequency_sensor"
+CONF_RX_COUNT_SENSOR = "rx_count_sensor"
+CONF_TX_COUNT_SENSOR = "tx_count_sensor"
+CONF_WATCHDOG_RECOVERY_SENSOR = "watchdog_recovery_sensor"
 
-CONFIG_SCHEMA = (
+_FREQUENCY_SENSOR_SCHEMA = sensor.sensor_schema(
+    unit_of_measurement="MHz",
+    accuracy_decimals=2,
+    state_class=STATE_CLASS_MEASUREMENT,
+    icon="mdi:sine-wave",
+)
+_RX_COUNT_SENSOR_SCHEMA = sensor.sensor_schema(
+    accuracy_decimals=0,
+    state_class=STATE_CLASS_TOTAL_INCREASING,
+    icon="mdi:counter",
+)
+_TX_COUNT_SENSOR_SCHEMA = sensor.sensor_schema(
+    accuracy_decimals=0,
+    state_class=STATE_CLASS_TOTAL_INCREASING,
+    icon="mdi:counter",
+)
+_WATCHDOG_RECOVERY_SENSOR_SCHEMA = sensor.sensor_schema(
+    accuracy_decimals=0,
+    state_class=STATE_CLASS_TOTAL_INCREASING,
+    icon="mdi:alert-circle-outline",
+)
+
+
+def _auto_sensor_validator(config):
+    """At validation time, inject hub-level diagnostic sensor configs when auto_sensors=True."""
+    if not config.get(CONF_AUTO_SENSORS, True):
+        return config
+    result = dict(config)
+    prefix = "Elero"
+    if CONF_FREQUENCY_SENSOR not in result:
+        result[CONF_FREQUENCY_SENSOR] = _FREQUENCY_SENSOR_SCHEMA(
+            {"name": f"{prefix} Frequency"}
+        )
+    if CONF_RX_COUNT_SENSOR not in result:
+        result[CONF_RX_COUNT_SENSOR] = _RX_COUNT_SENSOR_SCHEMA(
+            {"name": f"{prefix} RX Count"}
+        )
+    if CONF_TX_COUNT_SENSOR not in result:
+        result[CONF_TX_COUNT_SENSOR] = _TX_COUNT_SENSOR_SCHEMA(
+            {"name": f"{prefix} TX Count"}
+        )
+    if CONF_WATCHDOG_RECOVERY_SENSOR not in result:
+        result[CONF_WATCHDOG_RECOVERY_SENSOR] = _WATCHDOG_RECOVERY_SENSOR_SCHEMA(
+            {"name": f"{prefix} Watchdog Recovery Count"}
+        )
+    return result
+
+
+CONFIG_SCHEMA = cv.All(
     cv.Schema(
         {
             cv.GenerateID(): cv.declare_id(elero),
@@ -41,10 +99,16 @@ CONFIG_SCHEMA = (
             cv.Optional(CONF_FREQ2, default=0x21): cv.hex_int_range(min=0x0, max=0xff),
             cv.Optional(CONF_SEND_REPEATS, default=1): cv.int_range(min=1, max=20),
             cv.Optional(CONF_SEND_DELAY, default="1ms"): cv.positive_time_period_milliseconds,
+            cv.Optional(CONF_AUTO_SENSORS, default=True): cv.boolean,
+            cv.Optional(CONF_FREQUENCY_SENSOR): _FREQUENCY_SENSOR_SCHEMA,
+            cv.Optional(CONF_RX_COUNT_SENSOR): _RX_COUNT_SENSOR_SCHEMA,
+            cv.Optional(CONF_TX_COUNT_SENSOR): _TX_COUNT_SENSOR_SCHEMA,
+            cv.Optional(CONF_WATCHDOG_RECOVERY_SENSOR): _WATCHDOG_RECOVERY_SENSOR_SCHEMA,
         }
     )
     .extend(cv.COMPONENT_SCHEMA)
-    .extend(spi.spi_device_schema(cs_pin_required=True))
+    .extend(spi.spi_device_schema(cs_pin_required=True)),
+    _auto_sensor_validator,
 )
 
 
@@ -105,6 +169,20 @@ async def to_code(config):
     cg.add(var.set_freq2(config[CONF_FREQ2]))
     cg.add(var.set_send_repeats(config[CONF_SEND_REPEATS]))
     cg.add(var.set_send_delay(config[CONF_SEND_DELAY].total_milliseconds))
+
+    # Hub-level diagnostic sensors (auto_sensors or explicitly configured)
+    if CONF_FREQUENCY_SENSOR in config:
+        freq_sens = await sensor.new_sensor(config[CONF_FREQUENCY_SENSOR])
+        cg.add(var.set_frequency_sensor(freq_sens))
+    if CONF_RX_COUNT_SENSOR in config:
+        rx_sens = await sensor.new_sensor(config[CONF_RX_COUNT_SENSOR])
+        cg.add(var.set_rx_count_sensor(rx_sens))
+    if CONF_TX_COUNT_SENSOR in config:
+        tx_sens = await sensor.new_sensor(config[CONF_TX_COUNT_SENSOR])
+        cg.add(var.set_tx_count_sensor(tx_sens))
+    if CONF_WATCHDOG_RECOVERY_SENSOR in config:
+        wd_sens = await sensor.new_sensor(config[CONF_WATCHDOG_RECOVERY_SENSOR])
+        cg.add(var.set_watchdog_recovery_sensor(wd_sens))
 
     # Add RadioLib as PlatformIO library dependency.
     # RadioLib's Module.h includes <SPI.h> when RADIOLIB_BUILD_ARDUINO is defined
