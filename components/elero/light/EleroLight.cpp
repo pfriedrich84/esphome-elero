@@ -31,6 +31,11 @@ void EleroLight::setup() {
     return;
   }
   this->parent_->register_light(this);
+  // Queue an initial status CHECK so the text sensor populates shortly after
+  // boot instead of waiting for the first external event.
+  if (this->command_check_ != 0x00) {
+    this->enqueue_command(this->command_check_);
+  }
 }
 
 LightTraits EleroLight::get_traits() {

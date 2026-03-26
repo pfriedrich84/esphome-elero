@@ -41,6 +41,10 @@ void EleroCover::setup() {
     if((this->open_duration_ > 0) && (this->close_duration_ > 0))
       this->position = 0.5f;
   }
+  // Queue an initial status CHECK so the text sensor populates shortly after
+  // boot instead of waiting for the first poll_interval to elapse.
+  // The poll_offset_ stagger ensures covers don't all poll simultaneously.
+  this->commands_to_send_.push(this->command_check_);
 }
 
 void EleroCover::loop() {

@@ -1751,9 +1751,8 @@ void Elero::dispatch_rx_result_(const RxResult &rx) {
   }
 
   // 3. Status packets (0xca/0xc9): dispatch state to entities
+  //    Deduplication already handled on Core 0 in interpret_msg().
   if (rx.is_status) {
-    if (this->is_duplicate_packet_(rx.blind_address, rx.cnt))
-      return;
 
 #ifdef USE_TEXT_SENSOR
     {
