@@ -97,8 +97,12 @@ void EleroCover::loop() {
 #ifdef USE_TEXT_SENSOR
       this->parent_->publish_text_sensor_state(this->command_.blind_addr, "stop_failed");
 #endif
-      // Position is uncertain after failed stop verification
-      this->position = NAN;
+      // Position is uncertain after failed stop verification.
+      // Keep the last known position rather than setting NAN — NAN breaks
+      // all position-based commands and creates an irrecoverable state where
+      // current_operation gets stuck, the poll queue fills, and group
+      // commands are silently dropped.
+      this->current_operation = cover::COVER_OPERATION_IDLE;
       this->publish_state(false);
     }
   }
@@ -337,15 +341,24 @@ void EleroCover::control(const cover::CoverCall &call) {
   if (call.get_position().has_value()) {
     auto pos = *call.get_position();
     this->target_position_ = pos;
+    // Recover from NAN position: treat as 0.5 (mid-point) so direction
+    // decisions work.  NAN breaks all comparisons (IEEE 754).
+    float cur = this->position;
+    if (std::isnan(cur)) {
+      cur = 0.5f;
+      this->position = cur;
+      ESP_LOGW(TAG, "Blind 0x%06x position was NAN, reset to 0.5",
+               this->command_.blind_addr);
+    }
     // Dead-zone: if already within 1% of target (and not requesting fully
     // open/closed), skip movement.  Without this, requesting the exact
     // current position would incorrectly start closing because
     // (pos > this->position) is false when they're equal.
     if (pos != COVER_OPEN && pos != COVER_CLOSED &&
         (this->open_duration_ > 0) && (this->close_duration_ > 0) &&
-        std::abs(pos - this->position) < 0.01f) {
+        std::abs(pos - cur) < 0.01f) {
       // Already at target — no movement needed
-    } else if((pos > this->position) || (pos == COVER_OPEN)) {
+    } else if((pos > cur) || (pos == COVER_OPEN)) {
       this->start_movement(COVER_OPERATION_OPENING);
     } else {
       this->start_movement(COVER_OPERATION_CLOSING);
