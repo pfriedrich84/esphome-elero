@@ -87,8 +87,8 @@ static const uint8_t ELERO_STATE_ON = 0x10;
 
 static const uint8_t ELERO_MAX_PACKET_SIZE = 57; // according to FCC documents
 
-static const uint32_t ELERO_POLL_INTERVAL_MOVING = 2000;  // poll every two seconds while moving
-static const uint32_t ELERO_DEFAULT_SEND_DELAY = 1; // 1ms default send delay between repeats
+static const uint32_t ELERO_POLL_INTERVAL_MOVING = 5000;  // poll every 5s while moving (blinds broadcast status on their own)
+static const uint32_t ELERO_DEFAULT_SEND_DELAY = 50; // 50ms default send delay between repeats (matches commercial Elero remote timing)
 static const uint32_t ELERO_TIMEOUT_MOVEMENT = 120000; // poll for up to two minutes while moving
 static const uint32_t ELERO_POST_MOVEMENT_POLL_DELAY = 5000; // poll 5s after open/close duration elapses
 
@@ -99,8 +99,8 @@ static const uint8_t ELERO_MAX_COMMAND_QUEUE = 10; // max commands per blind to 
 // Auto-stop reliability: repeat stop commands, compensate for TX latency, verify motor stopped
 static const uint8_t  ELERO_STOP_REPEAT_COUNT = 2;              // stop commands queued on auto-stop (x2 RF packets each)
 static const uint32_t ELERO_TX_LATENCY_COMPENSATION_MS = 300;   // position check lead time (accounts for multi-cover queue contention)
-static const uint32_t ELERO_STOP_VERIFY_DELAY_MS = 500;         // delay before polling to verify motor stopped
-static const uint8_t  ELERO_STOP_VERIFY_MAX_RETRIES = 2;        // max stop-verify cycles before giving up (keep low to avoid RF flooding)
+static const uint32_t ELERO_STOP_VERIFY_DELAY_MS = 1500;        // delay before polling to verify motor stopped (give blind time to broadcast)
+static const uint8_t  ELERO_STOP_VERIFY_MAX_RETRIES = 1;        // single verify poll — blinds broadcast status, no need to hammer
 
 static const uint8_t ELERO_TX_QUEUE_DEPTH = 16;          // normal TX queue depth
 static const uint8_t ELERO_TX_PRIORITY_QUEUE_DEPTH = 8;  // priority TX queue depth (stop commands)
