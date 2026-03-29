@@ -258,7 +258,8 @@ void dispatch_commands(Elero *parent, std::queue<uint8_t> &queue,
                        uint8_t &send_retries, uint32_t &last_command,
                        bool &queue_full_published, uint32_t now,
                        const char *tag, uint32_t blind_addr,
-                       void (*increase_counter_fn)(void *ctx), void *ctx);
+                       void (*increase_counter_fn)(void *ctx), void *ctx,
+                       bool stop_urgent_self = false);
 
 /// Abstract base class for light actuators registered with the Elero hub.
 /// EleroLight inherits from this so the hub never needs the light header.

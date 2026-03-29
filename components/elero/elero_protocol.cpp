@@ -590,8 +590,9 @@ void Elero::drain_runtime_queues() {
           else
             rb.cmd_counter++;
         }
+      } else {
+        break;  // TX queue full — stop enqueuing, retry next loop
       }
-      break;
     }
   }
 }

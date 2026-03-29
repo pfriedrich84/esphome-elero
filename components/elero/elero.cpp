@@ -139,16 +139,18 @@ void dispatch_commands(Elero *parent, std::queue<uint8_t> &queue,
                        uint8_t &send_retries, uint32_t &last_command,
                        bool &queue_full_published, uint32_t now,
                        const char *tag, uint32_t blind_addr,
-                       void (*increase_counter_fn)(void *ctx), void *ctx) {
+                       void (*increase_counter_fn)(void *ctx), void *ctx,
+                       bool stop_urgent_self) {
   // Skip immediately if hub SPI is permanently broken — no point retrying.
   if (parent->is_failed()) return;
 
-  // When stop_urgent is active, defer non-stop commands from other covers
-  // so the stopping cover's packets transmit without queue contention.
-  if (parent->is_stop_urgent() && !queue.empty()) {
+  // When THIS cover is in stop-verification, defer its own non-stop commands
+  // so the stop packets transmit without self-contention.  Other covers are
+  // no longer blocked — only the cover that triggered auto-stop defers.
+  if (stop_urgent_self && !queue.empty()) {
     uint8_t front_cmd = queue.front();
     if (front_cmd != ELERO_COMMAND_COVER_STOP) {
-      return;  // defer until stop_urgent clears
+      return;  // defer until this cover's stop verification completes
     }
   }
 
@@ -245,7 +247,16 @@ void Elero::loop() {
   if (this->spi_failed_.load(std::memory_order_acquire))
     return;
 
-  // 1. Drain RX results from radio task (Core 0 → Core 1 via queue).
+  // 1. Drain runtime blind command queues (enqueues to TX queue).
+  //    TX-first: prioritise outgoing commands over incoming results so group
+  //    commands fill the TX pipeline as early as possible.
+  //    No is_tx_idle() gate: the FreeRTOS TX queue (depth 16) buffers commands
+  //    while the radio is busy.  send_command() returns false if the queue is
+  //    full, and callers retry next loop.
+  this->drain_runtime_queues();
+  this->poll_runtime_blinds_();
+
+  // 2. Drain RX results from radio task (Core 0 → Core 1 via queue).
   if (this->rx_queue_) {
     RxResult rx;
     uint8_t rx_drain_count = 0;
@@ -254,12 +265,6 @@ void Elero::loop() {
       this->dispatch_rx_result_(rx);
       rx_drain_count++;
     }
-  }
-
-  // 2. Drain runtime blind command queues (enqueues to TX queue).
-  if (this->is_tx_idle()) {
-    this->drain_runtime_queues();
-    this->poll_runtime_blinds_();
   }
 
   // 3. Recompute dead-reckoning positions for runtime-adopted blinds.
