@@ -108,7 +108,7 @@ static const uint32_t ELERO_COMMAND_QUEUE_MAX_AGE_MS = 30000; // clear stale que
 // Auto-stop reliability: repeat stop commands, compensate for TX latency, verify motor stopped
 static const uint8_t  ELERO_STOP_REPEAT_COUNT = 2;              // stop commands queued on auto-stop (x2 RF packets each)
 static const uint32_t ELERO_TX_LATENCY_COMPENSATION_MS = 300;   // position check lead time (accounts for multi-cover queue contention)
-static const uint32_t ELERO_STOP_VERIFY_DELAY_MS = 1500;        // delay before polling to verify motor stopped (give blind time to broadcast)
+static const uint32_t ELERO_STOP_VERIFY_DELAY_MS = 2000;        // delay before polling to verify motor stopped (give blind time to broadcast)
 static const uint8_t  ELERO_STOP_VERIFY_MAX_RETRIES = 1;        // single verify poll — blinds broadcast status, no need to hammer
 
 static const uint8_t ELERO_TX_QUEUE_DEPTH = 16;          // normal TX queue depth
