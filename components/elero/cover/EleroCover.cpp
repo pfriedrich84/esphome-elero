@@ -195,7 +195,8 @@ void EleroCover::handle_commands(uint32_t now) {
   dispatch_commands(this->parent_, this->commands_to_send_, this->command_,
                     this->send_packets_, this->send_retries_, this->last_command_,
                     this->queue_full_published_, now, TAG, this->command_.blind_addr,
-                    &cover_increase_counter, this, this->stop_urgent_active_);
+                    &cover_increase_counter, this, this->stop_urgent_active_,
+                    &this->last_queue_drain_ms_);
 }
 
 float EleroCover::get_setup_priority() const { return setup_priority::DATA; }

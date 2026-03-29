@@ -140,9 +140,26 @@ void dispatch_commands(Elero *parent, std::queue<uint8_t> &queue,
                        bool &queue_full_published, uint32_t now,
                        const char *tag, uint32_t blind_addr,
                        void (*increase_counter_fn)(void *ctx), void *ctx,
-                       bool stop_urgent_self) {
+                       bool stop_urgent_self,
+                       uint32_t *last_queue_drain_ms) {
   // Skip immediately if hub SPI is permanently broken — no point retrying.
   if (parent->is_failed()) return;
+
+  // Queue aging: if commands have been sitting without a successful drain
+  // for too long, the blind is likely offline.  Clear stale commands.
+  if (last_queue_drain_ms != nullptr && !queue.empty()) {
+    if (*last_queue_drain_ms == 0) {
+      *last_queue_drain_ms = now;
+    } else if ((now - *last_queue_drain_ms) > ELERO_COMMAND_QUEUE_MAX_AGE_MS) {
+      ESP_LOGW(tag, "Queue stale for 0x%06x (%lums without drain), clearing %d commands",
+               blind_addr, (unsigned long)(now - *last_queue_drain_ms), (int)queue.size());
+      while (!queue.empty()) queue.pop();
+      send_packets = 0;
+      send_retries = 0;
+      *last_queue_drain_ms = now;
+      return;
+    }
+  }
 
   // When THIS cover is in stop-verification, defer its own non-stop commands
   // so the stop packets transmit without self-contention.  Other covers are
@@ -168,12 +185,15 @@ void dispatch_commands(Elero *parent, std::queue<uint8_t> &queue,
   if (is_stop || (now - last_command) > delay) {
     if (!queue.empty()) {
       cmd.payload[4] = queue.front();
-      if (parent->send_command(&cmd)) {
+      auto result = parent->send_command(&cmd);
+      if (result == SendResult::OK) {
         send_packets++;
         send_retries = 0;
         if (send_packets >= parent->get_send_repeats()) {
           queue.pop();
           send_packets = 0;
+          if (last_queue_drain_ms != nullptr)
+            *last_queue_drain_ms = now;
           increase_counter_fn(ctx);
 #ifdef USE_TEXT_SENSOR
           if (queue_full_published && queue.empty()) {
@@ -182,24 +202,20 @@ void dispatch_commands(Elero *parent, std::queue<uint8_t> &queue,
 #endif
         }
         last_command = now;
+      } else if (result == SendResult::QUEUE_FULL) {
+        // TX queue congested — retry next loop iteration, no penalty
       } else {
-        // Queue-full is transient (radio busy) — just retry next loop
-        // without incrementing the retry counter or applying backoff.
-        // Only count actual RF failures (SPI broken, etc.) as retries.
-        if (parent->is_tx_queue_full()) {
-          // TX queue congested — retry next loop iteration, no penalty
-        } else {
-          send_retries++;
-          ESP_LOGD(tag, "Retry #%d for 0x%06x (backoff %lums)",
-                   send_retries, blind_addr, (unsigned long)delay);
-          if (send_retries > ELERO_SEND_RETRIES) {
-            ESP_LOGE(tag, "Hit maximum retries for 0x%06x, giving up.", blind_addr);
-            parent->increment_tx_drop_count();
-            send_retries = 0;
-            queue.pop();
-          }
-          last_command = now;
+        // Real failure (SPI broken, etc.)
+        send_retries++;
+        ESP_LOGD(tag, "Retry #%d for 0x%06x (backoff %lums)",
+                 send_retries, blind_addr, (unsigned long)delay);
+        if (send_retries > ELERO_SEND_RETRIES) {
+          ESP_LOGE(tag, "Hit maximum retries for 0x%06x, giving up.", blind_addr);
+          parent->increment_tx_drop_count();
+          send_retries = 0;
+          queue.pop();
         }
+        last_command = now;
       }
     }
   }
@@ -539,22 +555,20 @@ void Elero::setup() {
 // ---------------------------------------------------------------------------
 // send_command — public API (Core 1): enqueue a TX command to the radio task
 // ---------------------------------------------------------------------------
-bool Elero::send_command(t_elero_command *cmd) {
+SendResult Elero::send_command(t_elero_command *cmd) {
   if (this->spi_failed_.load(std::memory_order_acquire))
-    return false;
+    return SendResult::FAILED;
   if (!this->tx_queue_)
-    return false;
+    return SendResult::FAILED;
 
   RadioMessage msg{};
   msg.type = RadioControlType::TX_COMMAND;
   msg.tx.cmd = *cmd;
   if (xQueueSend(this->tx_queue_, &msg, pdMS_TO_TICKS(10)) == pdTRUE) {
-    this->tx_queue_full_.store(false, std::memory_order_release);
-    return true;
+    return SendResult::OK;
   }
-  this->tx_queue_full_.store(true, std::memory_order_release);
   ESP_LOGV(TAG, "TX queue full, will retry for 0x%06x", cmd->blind_addr);
-  return false;
+  return SendResult::QUEUE_FULL;
 }
 
 // ---------------------------------------------------------------------------

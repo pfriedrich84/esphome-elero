@@ -176,7 +176,8 @@ void EleroLight::handle_commands(uint32_t now) {
   dispatch_commands(this->parent_, this->commands_to_send_, this->command_,
                     this->send_packets_, this->send_retries_, this->last_command_,
                     this->queue_full_published_, now, TAG, this->command_.blind_addr,
-                    &light_increase_counter, this);
+                    &light_increase_counter, this, false,
+                    &this->last_queue_drain_ms_);
 }
 
 void EleroLight::schedule_immediate_poll() {

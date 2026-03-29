@@ -111,6 +111,7 @@ class EleroLight : public light::LightOutput, public Component, public EleroLigh
   uint32_t last_command_{0};
   uint8_t send_retries_{0};
   uint8_t send_packets_{0};
+  uint32_t last_queue_drain_ms_{0};  // for command queue aging
 
   // Metadata
   uint32_t last_seen_ms_{0};

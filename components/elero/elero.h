@@ -37,6 +37,14 @@ enum class TxState : uint8_t {
   COOLDOWN,       ///< Brief pause before resuming RX
 };
 
+/// Result of send_command() — lets callers distinguish transient queue-full
+/// from permanent SPI failure without a racy side-channel flag.
+enum class SendResult : uint8_t {
+  OK,           ///< Command enqueued successfully
+  QUEUE_FULL,   ///< FreeRTOS TX queue is full — transient, retry next loop
+  FAILED,       ///< SPI broken or queue not initialized — permanent failure
+};
+
 /// Minimum interval between schedule_immediate_poll() calls per blind (ms).
 static const uint32_t ELERO_IMMEDIATE_POLL_MIN_INTERVAL_MS = 2000;
 
@@ -95,6 +103,7 @@ static const uint32_t ELERO_POST_MOVEMENT_POLL_DELAY = 5000; // poll 5s after op
 static const uint8_t ELERO_SEND_RETRIES = 3;
 static const uint8_t ELERO_DEFAULT_SEND_REPEATS = 1;  // RF packet repetitions per command (configurable via send_repeats)
 static const uint8_t ELERO_MAX_COMMAND_QUEUE = 10; // max commands per blind to prevent OOM
+static const uint32_t ELERO_COMMAND_QUEUE_MAX_AGE_MS = 30000; // clear stale queue after 30s without successful send
 
 // Auto-stop reliability: repeat stop commands, compensate for TX latency, verify motor stopped
 static const uint8_t  ELERO_STOP_REPEAT_COUNT = 2;              // stop commands queued on auto-stop (x2 RF packets each)
@@ -182,7 +191,8 @@ struct RuntimeBlind {
   uint8_t cmd_counter{1};
   std::queue<uint8_t> command_queue;
   uint8_t send_packets_count{0};
-  uint32_t last_poll_ms{0};  // millis() of last periodic status poll
+  uint32_t last_poll_ms{0};           // millis() of last periodic status poll
+  uint32_t last_queue_drain_ms{0};    // millis() of last successful command pop (for aging)
   // Position tracking (dead-reckoning)
   float position{-1.0f};               // 0.0 = closed, 1.0 = open, -1.0 = unknown
   uint32_t last_recompute_ms{0};        // millis() of last position recompute
@@ -259,7 +269,8 @@ void dispatch_commands(Elero *parent, std::queue<uint8_t> &queue,
                        bool &queue_full_published, uint32_t now,
                        const char *tag, uint32_t blind_addr,
                        void (*increase_counter_fn)(void *ctx), void *ctx,
-                       bool stop_urgent_self = false);
+                       bool stop_urgent_self = false,
+                       uint32_t *last_queue_drain_ms = nullptr);
 
 /// Abstract base class for light actuators registered with the Elero hub.
 /// EleroLight inherits from this so the hub never needs the light header.
@@ -394,11 +405,9 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
 
   /// True when the TX state machine is idle and ready for send_command().
   bool is_tx_idle() const { return tx_state_.load(std::memory_order_acquire) == TxState::IDLE; }
-  /// True if the last send_command() failed because the TX queue was full.
-  bool is_tx_queue_full() const { return tx_queue_full_.load(std::memory_order_acquire); }
   void register_cover(EleroBlindBase *cover);
   void register_light(EleroLightBase *light);
-  bool send_command(t_elero_command *cmd);
+  SendResult send_command(t_elero_command *cmd);
   /// Priority TX: bypasses the normal queue for time-critical commands (e.g. stop).
   bool send_command_priority(t_elero_command *cmd);
   /// Current number of messages waiting in the normal TX queue (for dynamic latency compensation).
@@ -645,7 +654,6 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   std::atomic<uint32_t> tx_count_{0};
   std::atomic<uint32_t> watchdog_recovery_count_{0};
   std::atomic<uint32_t> tx_drop_count_{0};
-  std::atomic<bool> tx_queue_full_{false};  // set by send_command on queue-full
 
   // Request the main loop to skip its ~16ms sleep so loop() runs every pass.
   HighFrequencyLoopRequester high_freq_;

@@ -135,6 +135,7 @@ class EleroCover : public cover::Cover, public Component, public EleroBlindBase 
   float    stop_trigger_position_{0};   // position when auto-stop was triggered (for correction)
   uint32_t stop_trigger_ms_{0};         // millis() when auto-stop was triggered
   bool     stop_urgent_active_{false};  // true if this cover has incremented stop_urgent_count_
+  uint32_t last_queue_drain_ms_{0};    // millis() when command queue last had a successful pop (for aging)
 };
 
 } // namespace elero

@@ -565,9 +565,21 @@ void Elero::track_discovered_blind(uint32_t src, uint32_t remote, uint8_t channe
 
 void Elero::drain_runtime_queues() {
   std::lock_guard<std::mutex> lock(state_mutex_);
+  uint32_t now = millis();
   for (auto &entry : this->runtime_blinds_) {
     auto &rb = entry.second;
     if (!rb.command_queue.empty()) {
+      // Queue aging: clear stale commands if blind is offline
+      if (rb.last_queue_drain_ms == 0) {
+        rb.last_queue_drain_ms = now;
+      } else if ((now - rb.last_queue_drain_ms) > ELERO_COMMAND_QUEUE_MAX_AGE_MS) {
+        ESP_LOGW(TAG, "Runtime blind 0x%06x queue stale, clearing %d commands",
+                 rb.blind_address, (int)rb.command_queue.size());
+        while (!rb.command_queue.empty()) rb.command_queue.pop();
+        rb.send_packets_count = 0;
+        rb.last_queue_drain_ms = now;
+        continue;
+      }
       uint8_t cmd_byte = rb.command_queue.front();
       t_elero_command cmd{};
       cmd.counter = rb.cmd_counter;
@@ -580,18 +592,19 @@ void Elero::drain_runtime_queues() {
       cmd.payload[0] = rb.payload_1;
       cmd.payload[1] = rb.payload_2;
       cmd.payload[4] = cmd_byte;
-      if (this->send_command(&cmd)) {
+      if (this->send_command(&cmd) == SendResult::OK) {
         rb.send_packets_count++;
         if (rb.send_packets_count >= this->send_repeats_) {
           rb.command_queue.pop();
           rb.send_packets_count = 0;
+          rb.last_queue_drain_ms = now;
           if (rb.cmd_counter == 0xFF)
             rb.cmd_counter = 1;
           else
             rb.cmd_counter++;
         }
       } else {
-        break;  // TX queue full — stop enqueuing, retry next loop
+        break;  // TX queue full or failed — stop enqueuing, retry next loop
       }
     }
   }
