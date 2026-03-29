@@ -183,16 +183,23 @@ void dispatch_commands(Elero *parent, std::queue<uint8_t> &queue,
         }
         last_command = now;
       } else {
-        send_retries++;
-        ESP_LOGD(tag, "Retry #%d for 0x%06x (backoff %lums)",
-                 send_retries, blind_addr, (unsigned long)delay);
-        if (send_retries > ELERO_SEND_RETRIES) {
-          ESP_LOGE(tag, "Hit maximum retries for 0x%06x, giving up.", blind_addr);
-          parent->increment_tx_drop_count();
-          send_retries = 0;
-          queue.pop();
+        // Queue-full is transient (radio busy) — just retry next loop
+        // without incrementing the retry counter or applying backoff.
+        // Only count actual RF failures (SPI broken, etc.) as retries.
+        if (parent->is_tx_queue_full()) {
+          // TX queue congested — retry next loop iteration, no penalty
+        } else {
+          send_retries++;
+          ESP_LOGD(tag, "Retry #%d for 0x%06x (backoff %lums)",
+                   send_retries, blind_addr, (unsigned long)delay);
+          if (send_retries > ELERO_SEND_RETRIES) {
+            ESP_LOGE(tag, "Hit maximum retries for 0x%06x, giving up.", blind_addr);
+            parent->increment_tx_drop_count();
+            send_retries = 0;
+            queue.pop();
+          }
+          last_command = now;
         }
-        last_command = now;
       }
     }
   }
@@ -542,10 +549,11 @@ bool Elero::send_command(t_elero_command *cmd) {
   msg.type = RadioControlType::TX_COMMAND;
   msg.tx.cmd = *cmd;
   if (xQueueSend(this->tx_queue_, &msg, pdMS_TO_TICKS(10)) == pdTRUE) {
+    this->tx_queue_full_.store(false, std::memory_order_release);
     return true;
   }
-  ESP_LOGW(TAG, "TX queue full, command to 0x%06x dropped", cmd->blind_addr);
-  this->tx_drop_count_.fetch_add(1, std::memory_order_relaxed);
+  this->tx_queue_full_.store(true, std::memory_order_release);
+  ESP_LOGV(TAG, "TX queue full, will retry for 0x%06x", cmd->blind_addr);
   return false;
 }
 

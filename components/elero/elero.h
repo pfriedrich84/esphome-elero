@@ -93,7 +93,7 @@ static const uint32_t ELERO_TIMEOUT_MOVEMENT = 120000; // poll for up to two min
 static const uint32_t ELERO_POST_MOVEMENT_POLL_DELAY = 5000; // poll 5s after open/close duration elapses
 
 static const uint8_t ELERO_SEND_RETRIES = 3;
-static const uint8_t ELERO_DEFAULT_SEND_REPEATS = 3;  // RF packet repetitions per command (was 1, increased for reliability)
+static const uint8_t ELERO_DEFAULT_SEND_REPEATS = 1;  // RF packet repetitions per command (configurable via send_repeats)
 static const uint8_t ELERO_MAX_COMMAND_QUEUE = 10; // max commands per blind to prevent OOM
 
 // Auto-stop reliability: repeat stop commands, compensate for TX latency, verify motor stopped
@@ -394,6 +394,8 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
 
   /// True when the TX state machine is idle and ready for send_command().
   bool is_tx_idle() const { return tx_state_.load(std::memory_order_acquire) == TxState::IDLE; }
+  /// True if the last send_command() failed because the TX queue was full.
+  bool is_tx_queue_full() const { return tx_queue_full_.load(std::memory_order_acquire); }
   void register_cover(EleroBlindBase *cover);
   void register_light(EleroLightBase *light);
   bool send_command(t_elero_command *cmd);
@@ -643,6 +645,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   std::atomic<uint32_t> tx_count_{0};
   std::atomic<uint32_t> watchdog_recovery_count_{0};
   std::atomic<uint32_t> tx_drop_count_{0};
+  std::atomic<bool> tx_queue_full_{false};  // set by send_command on queue-full
 
   // Request the main loop to skip its ~16ms sleep so loop() runs every pass.
   HighFrequencyLoopRequester high_freq_;

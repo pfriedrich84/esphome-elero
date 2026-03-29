@@ -127,7 +127,12 @@ void EleroCover::loop() {
       this->send_stop_priority_();
       this->increase_counter();
       this->current_operation = COVER_OPERATION_IDLE;
-      this->target_position_ = COVER_OPEN;
+      // Keep target_position_ at the user's requested value — do NOT reset
+      // to COVER_OPEN here.  If the motor is still decelerating, set_rx_state()
+      // may reactivate CLOSING.  With the original target preserved,
+      // is_at_target() will fire again and re-send stop.  Resetting to
+      // COVER_OPEN caused is_at_target() to return false (early exit for
+      // COVER_OPEN/COVER_CLOSED), letting the cover run to bottom.
       // Schedule verification poll to confirm motor actually stopped
       this->stop_verify_at_ = now + ELERO_STOP_VERIFY_DELAY_MS;
       this->stop_verify_retries_ = 0;
