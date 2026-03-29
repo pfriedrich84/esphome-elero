@@ -103,6 +103,13 @@ void EleroCover::loop() {
       // current_operation gets stuck, the poll queue fills, and group
       // commands are silently dropped.
       this->current_operation = cover::COVER_OPERATION_IDLE;
+      // Clear any queued CHECK commands to prevent rapid-fire flooding
+      // that can lock up the blind's RF receiver after failed verification.
+      while (!this->commands_to_send_.empty())
+        this->commands_to_send_.pop();
+      // Cooldown: prevent dispatch_commands from sending anything for 3s,
+      // giving the blind time to settle after the stop command storm.
+      this->last_command_ = now + 3000;
       this->publish_state(false);
     }
   }
