@@ -42,18 +42,25 @@ esphome-elero/
 ├── .gitignore                         # Python cache, .esphome/ exclusions
 ├── CLAUDE.md                          # This file
 ├── IMPROVEMENT_PLAN.md                # Identified improvement issues (German)
+├── ISSUES_ARCHITECT_REVIEW.md         # Architect review issue tracking
+├── ISSUES_RADIOLIB_HA_LOGGING.md      # RadioLib/HA logging issue tracking
 ├── README.md                          # Main documentation (German + English)
+├── compile_test.yaml                  # ESPHome compile test config with system monitoring sensors
 ├── example.yaml                       # Complete ESPHome config example
 ├── docs/
 │   ├── INSTALLATION.md                # Step-by-step hardware and software setup
 │   ├── CONFIGURATION.md               # Full parameter reference
+│   ├── MULTICORE_EVALUATION.md        # Dual-core architecture evaluation
 │   ├── RADIOLIB_EVALUATION.md         # RadioLib integration evaluation
+│   ├── TEST_COVERAGE_ANALYSIS.md      # Test coverage analysis
 │   └── examples/                      # Additional YAML examples (.gitkeep)
 └── components/
     ├── elero/                         # Main hub component
     │   ├── __init__.py                # ESPHome component schema & code-gen (hub)
     │   ├── elero.h                    # C++ hub class header (~686 lines)
-    │   ├── elero.cpp                  # C++ RF protocol implementation (~2032 lines)
+    │   ├── elero.cpp                  # Core lifecycle, HAL, setup, loop, radio task (~558 lines)
+    │   ├── elero_cc1101.cpp           # CC1101 register access, TX/RX state machines, watchdog (~589 lines)
+    │   ├── elero_protocol.cpp         # Protocol crypto, message dispatch, runtime blinds (~786 lines)
     │   ├── cc1101.h                   # CC1101 register map & command strobes
     │   ├── cover/                     # Cover (blind) platform
     │   │   ├── __init__.py            # Cover schema, auto-sensors, validation
@@ -212,10 +219,15 @@ The CC1101 can enter unrecoverable states (RXFIFO_OVERFLOW, stuck IDLE) during T
 
 ## Key Classes and Files
 
-### `components/elero/elero.h` / `elero.cpp`
+### `components/elero/elero.h` / `elero.cpp` / `elero_cc1101.cpp` / `elero_protocol.cpp`
 
 **Class:** `Elero : public spi::SPIDevice<...>, public Component`
 **Namespace:** `esphome::elero`
+
+The implementation is split across three `.cpp` files (all part of the same `Elero` class):
+- **`elero.cpp`** (~558 lines) — core lifecycle: HAL adapter, `setup()`, `loop()`, radio task, FreeRTOS queue management
+- **`elero_cc1101.cpp`** (~589 lines) — CC1101 hardware: register access, TX/RX state machines, FIFO handling, radio watchdog
+- **`elero_protocol.cpp`** (~786 lines) — Elero protocol: encryption/decryption, message encoding/decoding, RX dispatch, runtime blind management
 
 Critical public API:
 - `register_cover(EleroBlindBase*)` — called by each `EleroCover` at setup
