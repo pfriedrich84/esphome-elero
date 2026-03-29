@@ -568,11 +568,11 @@ void Elero::drain_runtime_queues() {
   uint32_t now = millis();
   for (auto &entry : this->runtime_blinds_) {
     auto &rb = entry.second;
-    if (!rb.command_queue.empty()) {
+    if (rb.command_queue.empty()) {
+      rb.last_queue_drain_ms = now;  // reset timer while idle
+    } else {
       // Queue aging: clear stale commands if blind is offline
-      if (rb.last_queue_drain_ms == 0) {
-        rb.last_queue_drain_ms = now;
-      } else if ((now - rb.last_queue_drain_ms) > ELERO_COMMAND_QUEUE_MAX_AGE_MS) {
+      if ((now - rb.last_queue_drain_ms) > ELERO_COMMAND_QUEUE_MAX_AGE_MS) {
         ESP_LOGW(TAG, "Runtime blind 0x%06x queue stale, clearing %d commands",
                  rb.blind_address, (int)rb.command_queue.size());
         while (!rb.command_queue.empty()) rb.command_queue.pop();

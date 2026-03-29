@@ -147,8 +147,10 @@ void dispatch_commands(Elero *parent, std::queue<uint8_t> &queue,
 
   // Queue aging: if commands have been sitting without a successful drain
   // for too long, the blind is likely offline.  Clear stale commands.
-  if (last_queue_drain_ms != nullptr && !queue.empty()) {
-    if (*last_queue_drain_ms == 0) {
+  // Reset the timer whenever the queue is empty so freshly-added commands
+  // are never mistaken for stale ones.
+  if (last_queue_drain_ms != nullptr) {
+    if (queue.empty()) {
       *last_queue_drain_ms = now;
     } else if ((now - *last_queue_drain_ms) > ELERO_COMMAND_QUEUE_MAX_AGE_MS) {
       ESP_LOGW(tag, "Queue stale for 0x%06x (%lums without drain), clearing %d commands",
