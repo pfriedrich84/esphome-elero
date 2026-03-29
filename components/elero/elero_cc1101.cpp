@@ -501,8 +501,8 @@ void Elero::read_buf(uint8_t addr, uint8_t *buf, uint8_t len) {
 bool Elero::send_command_internal_(t_elero_command *cmd) {
   if (this->spi_failed_.load(std::memory_order_acquire))
     return false;
-  if (this->tx_state_.load(std::memory_order_acquire) != TxState::IDLE)
-    return false;
+  // Note: caller (radio_task_loop_) guarantees tx_state_ == IDLE before
+  // dequeuing a TX_COMMAND, so no idle check needed here.
 
   ESP_LOGVV(TAG, "send_command called");
   uint16_t code = (0x00 - (cmd->counter * ELERO_CRYPTO_MULT)) & ELERO_CRYPTO_MASK;

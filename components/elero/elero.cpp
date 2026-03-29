@@ -323,12 +323,23 @@ void Elero::radio_task_func_(void *param) {
 
 void Elero::radio_task_loop_() {
   // 1. Process TX commands from Core 1 — priority queue first for time-critical stop commands
+  //    Only dequeue TX_COMMAND when radio is idle — otherwise the message is
+  //    removed from the FreeRTOS queue but send_command_internal_ rejects it,
+  //    silently dropping the packet.  Control messages (REINIT, SCAN, etc.)
+  //    are always dequeued since they don't require radio idle.
   RadioMessage msg{};
   bool got_msg = false;
-  if (this->tx_priority_queue_ && xQueueReceive(this->tx_priority_queue_, &msg, 0) == pdTRUE) {
-    got_msg = true;
-  } else if (this->tx_queue_ && xQueueReceive(this->tx_queue_, &msg, 0) == pdTRUE) {
-    got_msg = true;
+  bool tx_idle = this->is_tx_idle();
+  if (this->tx_priority_queue_ && xQueuePeek(this->tx_priority_queue_, &msg, 0) == pdTRUE) {
+    if (msg.type != RadioControlType::TX_COMMAND || tx_idle) {
+      xQueueReceive(this->tx_priority_queue_, &msg, 0);
+      got_msg = true;
+    }
+  } else if (this->tx_queue_ && xQueuePeek(this->tx_queue_, &msg, 0) == pdTRUE) {
+    if (msg.type != RadioControlType::TX_COMMAND || tx_idle) {
+      xQueueReceive(this->tx_queue_, &msg, 0);
+      got_msg = true;
+    }
   }
   if (got_msg) {
     switch (msg.type) {
