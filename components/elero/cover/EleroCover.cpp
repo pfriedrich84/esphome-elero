@@ -51,9 +51,13 @@ void EleroCover::loop() {
   uint32_t intvl = this->poll_intvl_;
   uint32_t now = millis();
   if(this->current_operation != COVER_OPERATION_IDLE) {
-    if((now - this->movement_start_) < ELERO_TIMEOUT_MOVEMENT) {
-      // Poll frequently while moving, but stagger per cover to avoid
-      // all covers polling the RF channel simultaneously.
+    // Only poll frequently during movement when position tracking is NOT
+    // active (no open/close duration).  With durations configured, the
+    // cover dead-reckons position and auto-stops at target — the blind's
+    // own status broadcasts (caught by set_rx_state) are sufficient.
+    // This avoids burning message counter values on redundant CHECKs.
+    if((this->open_duration_ == 0 || this->close_duration_ == 0) &&
+       (now - this->movement_start_) < ELERO_TIMEOUT_MOVEMENT) {
       intvl = ELERO_POLL_INTERVAL_MOVING + (this->poll_offset_ % ELERO_POLL_INTERVAL_MOVING);
     }
   }

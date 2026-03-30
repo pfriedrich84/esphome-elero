@@ -96,7 +96,7 @@ static const uint8_t ELERO_STATE_ON = 0x10;
 static const uint8_t ELERO_MAX_PACKET_SIZE = 57; // according to FCC documents
 
 static const uint32_t ELERO_POLL_INTERVAL_MOVING = 5000;  // poll every 5s while moving (blinds broadcast status on their own)
-static const uint32_t ELERO_DEFAULT_SEND_DELAY = 50; // 50ms default send delay between repeats (matches commercial Elero remote timing)
+static const uint32_t ELERO_DEFAULT_SEND_DELAY = 20; // 20ms default send delay between consecutive dispatches per cover
 static const uint32_t ELERO_TIMEOUT_MOVEMENT = 120000; // poll for up to two minutes while moving
 static const uint32_t ELERO_POST_MOVEMENT_POLL_DELAY = 5000; // poll 5s after open/close duration elapses
 
