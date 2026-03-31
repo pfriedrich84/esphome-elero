@@ -112,3 +112,24 @@ jobs:
               });
               console.log(`Created issue: ${title}`);
             }
+
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure CMake
+        run: cmake -S tests -B tests/build -DCMAKE_BUILD_TYPE=Debug
+      - name: Build
+        run: cmake --build tests/build --parallel
+      - name: Run tests
+        run: cd tests/build && ctest --output-on-failure -V
+
+  python-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pytest esphome
+      - run: pytest tests/python/ -v --tb=short
