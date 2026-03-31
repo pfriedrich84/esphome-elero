@@ -42,4 +42,73 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install esphome
-      - run: esphome compile ${{ matrix.config }}
+      - name: Compile
+        id: compile
+        run: |
+          esphome compile ${{ matrix.config }} 2>&1 | tee compile.log
+          exit ${PIPESTATUS[0]}
+      - name: Create issues from compile warnings/errors
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            if (!fs.existsSync('compile.log')) return;
+            const log = fs.readFileSync('compile.log', 'utf8');
+            const config = '${{ matrix.config }}';
+
+            // Extract unique warnings and errors from compiler output
+            const issues = new Map();
+            for (const line of log.split('\n')) {
+              // Match GCC warning/error format: file.cpp:123:45: warning: message [-Wflag]
+              const m = line.match(/components\/[^:]+:\d+:\d+: (warning|error): (.+)/);
+              if (!m) continue;
+              const severity = m[1];
+              const message = m[2].trim();
+              // Deduplicate by message (ignore line numbers)
+              const key = message.replace(/\d+/g, 'N');
+              if (issues.has(key)) continue;
+              issues.set(key, { severity, message, line: line.trim() });
+            }
+
+            if (issues.size === 0) return;
+
+            // Check existing open issues to avoid duplicates
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'ci-detected',
+              per_page: 100,
+            });
+            const existingTitles = new Set(existing.data.map(i => i.title));
+
+            for (const [key, {severity, message, line}] of issues) {
+              const shortMsg = message.length > 80 ? message.substring(0, 77) + '...' : message;
+              const title = `ci: ${severity} in compile — ${shortMsg}`;
+              if (existingTitles.has(title)) continue;
+
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                labels: ['ci-detected', severity === 'error' ? 'bug' : 'enhancement'],
+                body: [
+                  `## Auto-detected by CI`,
+                  ``,
+                  `**Config:** \`${config}\``,
+                  `**Severity:** ${severity}`,
+                  `**Commit:** ${context.sha.substring(0, 7)}`,
+                  ``,
+                  '```',
+                  line,
+                  '```',
+                  ``,
+                  `[CI Run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`,
+                  ``,
+                  `---`,
+                  `🤖 Auto-created by CI pipeline`,
+                ].join('\n'),
+              });
+              console.log(`Created issue: ${title}`);
+            }
