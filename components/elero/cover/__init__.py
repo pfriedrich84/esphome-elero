@@ -1,6 +1,8 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import cover, sensor, text_sensor
+from esphome.components import cover
+from esphome.components import sensor as esphome_sensor
+from esphome.components import text_sensor as esphome_text_sensor
 from esphome.const import (
     CONF_ID,
     CONF_NAME,
@@ -37,13 +39,13 @@ CONF_STATUS_SENSOR = "status_sensor"
 
 EleroCover = elero_ns.class_("EleroCover", cover.Cover, cg.Component)
 
-_RSSI_SENSOR_SCHEMA = sensor.sensor_schema(
+_RSSI_SENSOR_SCHEMA = esphome_sensor.sensor_schema(
     unit_of_measurement=UNIT_DECIBEL_MILLIWATT,
     accuracy_decimals=1,
     device_class=DEVICE_CLASS_SIGNAL_STRENGTH,
     state_class=STATE_CLASS_MEASUREMENT,
 )
-_STATUS_SENSOR_SCHEMA = text_sensor.text_sensor_schema()
+_STATUS_SENSOR_SCHEMA = esphome_text_sensor.text_sensor_schema()
 
 
 def poll_interval(value):
@@ -192,10 +194,10 @@ async def to_code(config):
 
     # RSSI sensor — present when explicitly configured or auto_sensors=True
     if CONF_RSSI_SENSOR in config:
-        rssi_var = await sensor.new_sensor(config[CONF_RSSI_SENSOR])
+        rssi_var = await esphome_sensor.new_sensor(config[CONF_RSSI_SENSOR])
         cg.add(parent.register_rssi_sensor(addr, rssi_var))
 
     # Status text sensor — present when explicitly configured or auto_sensors=True
     if CONF_STATUS_SENSOR in config:
-        status_var = await text_sensor.new_text_sensor(config[CONF_STATUS_SENSOR])
+        status_var = await esphome_text_sensor.new_text_sensor(config[CONF_STATUS_SENSOR])
         cg.add(parent.register_text_sensor(addr, status_var))

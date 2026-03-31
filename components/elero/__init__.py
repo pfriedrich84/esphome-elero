@@ -3,7 +3,8 @@ import logging
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome import pins
-from esphome.components import spi, sensor
+from esphome.components import spi
+from esphome.components import sensor as esphome_sensor
 from esphome.const import (
     CONF_ID,
     STATE_CLASS_MEASUREMENT,
@@ -41,23 +42,23 @@ CONF_RX_COUNT_SENSOR = "rx_count_sensor"
 CONF_TX_COUNT_SENSOR = "tx_count_sensor"
 CONF_WATCHDOG_RECOVERY_SENSOR = "watchdog_recovery_sensor"
 
-_FREQUENCY_SENSOR_SCHEMA = sensor.sensor_schema(
+_FREQUENCY_SENSOR_SCHEMA = esphome_sensor.sensor_schema(
     unit_of_measurement="MHz",
     accuracy_decimals=2,
     state_class=STATE_CLASS_MEASUREMENT,
     icon="mdi:sine-wave",
 )
-_RX_COUNT_SENSOR_SCHEMA = sensor.sensor_schema(
+_RX_COUNT_SENSOR_SCHEMA = esphome_sensor.sensor_schema(
     accuracy_decimals=0,
     state_class=STATE_CLASS_TOTAL_INCREASING,
     icon="mdi:counter",
 )
-_TX_COUNT_SENSOR_SCHEMA = sensor.sensor_schema(
+_TX_COUNT_SENSOR_SCHEMA = esphome_sensor.sensor_schema(
     accuracy_decimals=0,
     state_class=STATE_CLASS_TOTAL_INCREASING,
     icon="mdi:counter",
 )
-_WATCHDOG_RECOVERY_SENSOR_SCHEMA = sensor.sensor_schema(
+_WATCHDOG_RECOVERY_SENSOR_SCHEMA = esphome_sensor.sensor_schema(
     accuracy_decimals=0,
     state_class=STATE_CLASS_TOTAL_INCREASING,
     icon="mdi:alert-circle-outline",
@@ -172,16 +173,16 @@ async def to_code(config):
 
     # Hub-level diagnostic sensors (auto_sensors or explicitly configured)
     if CONF_FREQUENCY_SENSOR in config:
-        freq_sens = await sensor.new_sensor(config[CONF_FREQUENCY_SENSOR])
+        freq_sens = await esphome_sensor.new_sensor(config[CONF_FREQUENCY_SENSOR])
         cg.add(var.set_frequency_sensor(freq_sens))
     if CONF_RX_COUNT_SENSOR in config:
-        rx_sens = await sensor.new_sensor(config[CONF_RX_COUNT_SENSOR])
+        rx_sens = await esphome_sensor.new_sensor(config[CONF_RX_COUNT_SENSOR])
         cg.add(var.set_rx_count_sensor(rx_sens))
     if CONF_TX_COUNT_SENSOR in config:
-        tx_sens = await sensor.new_sensor(config[CONF_TX_COUNT_SENSOR])
+        tx_sens = await esphome_sensor.new_sensor(config[CONF_TX_COUNT_SENSOR])
         cg.add(var.set_tx_count_sensor(tx_sens))
     if CONF_WATCHDOG_RECOVERY_SENSOR in config:
-        wd_sens = await sensor.new_sensor(config[CONF_WATCHDOG_RECOVERY_SENSOR])
+        wd_sens = await esphome_sensor.new_sensor(config[CONF_WATCHDOG_RECOVERY_SENSOR])
         cg.add(var.set_watchdog_recovery_sensor(wd_sens))
 
     # Add RadioLib as PlatformIO library dependency.
