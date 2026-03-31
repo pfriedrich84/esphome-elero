@@ -17,7 +17,7 @@ wifi:
 external_components:
   - source:
       type: local
-      path: components
+      path: ../../components
 
 spi:
   clk_pin: GPIO18
