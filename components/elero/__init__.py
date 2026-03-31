@@ -188,6 +188,40 @@ async def to_code(config):
     cg.add_library("jgromes/RadioLib", "7.1.2")
     cg.add_library("SPI", None)
 
+    # Exclude all unused RadioLib modules to reduce firmware binary size.
+    # This project only uses CC1101; all other radio drivers and protocol
+    # decoders are dead code.  RadioLib v7.1.2 honours RADIOLIB_EXCLUDE_*
+    # preprocessor defines (guarded via #if in each module header/source).
+    # Using add_build_flag (not add_define) so flags propagate to library code.
+    _radiolib_exclusions = [
+        # Hardware radio modules (everything except CC1101)
+        "RADIOLIB_EXCLUDE_NRF24",
+        "RADIOLIB_EXCLUDE_RF69",
+        "RADIOLIB_EXCLUDE_SX1231",
+        "RADIOLIB_EXCLUDE_SI443X",
+        "RADIOLIB_EXCLUDE_RFM2X",
+        "RADIOLIB_EXCLUDE_SX127X",
+        "RADIOLIB_EXCLUDE_SX126X",
+        "RADIOLIB_EXCLUDE_STM32WLX",
+        "RADIOLIB_EXCLUDE_SX128X",
+        "RADIOLIB_EXCLUDE_LR11X0",
+        # Protocol decoders (none used by this project)
+        "RADIOLIB_EXCLUDE_AFSK",
+        "RADIOLIB_EXCLUDE_AX25",
+        "RADIOLIB_EXCLUDE_APRS",
+        "RADIOLIB_EXCLUDE_BELL",
+        "RADIOLIB_EXCLUDE_HELLSCHREIBER",
+        "RADIOLIB_EXCLUDE_MORSE",
+        "RADIOLIB_EXCLUDE_PAGER",
+        "RADIOLIB_EXCLUDE_RTTY",
+        "RADIOLIB_EXCLUDE_SSTV",
+        "RADIOLIB_EXCLUDE_FSK4",
+        "RADIOLIB_EXCLUDE_LORAWAN",
+        "RADIOLIB_EXCLUDE_DIRECT_RECEIVE",
+    ]
+    for flag in _radiolib_exclusions:
+        cg.add_build_flag(f"-D{flag}=1")
+
     # Reserve a log listener slot so add_log_listener() works at runtime.
     # Required for ESPHome 2026.1.0+ (StaticVector migration).
     try:
