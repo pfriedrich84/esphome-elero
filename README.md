@@ -13,7 +13,6 @@
 
 - [Funktionsumfang](#funktionsumfang)
 - [Voraussetzungen](#voraussetzungen)
-- [Hardware-Verkabelung](#hardware-verkabelung)
 - [Schnellstart](#schnellstart)
 - [Konfigurationsreferenz](#konfigurationsreferenz)
 - [Blind-Adressen ermitteln](#blind-adressen-ermitteln)
@@ -44,63 +43,30 @@
 | Web-UI fuer Discovery und YAML-Export | Stabil |
 | Mehrere Blinds gleichzeitig | Stabil |
 | TempoTel 2 Kompatibilität | Getestet |
-| Lichter schalten (Ein/Aus und Dimmen) | Stabil |
+| Lichter schalten (Ein/Aus und Dimmen) | Beta (ungetestet) |
 
 ## Voraussetzungen
 
 ### Hardware
 
-- **ESP32** (empfohlen: D1 Mini ESP32, WT32-ETH01, ESP32-DevKit)
-- **CC1101 Funkmodul** (868 MHz für Europa, 433 MHz alternativ)
-- 5 Kabelverbindungen (SPI + GDO0)
+- **Lilygo T-Embed CC1101** (empfohlen — ESP32-S3 mit integriertem CC1101 868 MHz, TFT-Display und Rotary-Encoder)
+- Alternativ: Beliebiger **ESP32/ESP32-S3** mit separatem **CC1101 Funkmodul** (868 MHz) via SPI
 - Bestehende Elero-Fernbedienung (z.B. TempoTel 2) zum Auslesen der Protokollwerte
 
 ### Software
 
-- [ESPHome](https://esphome.io/) 2023.2.0 oder neuer
+- [ESPHome](https://esphome.io/) 2026.3.0 oder neuer
 - [Home Assistant](https://www.home-assistant.io/) (empfohlen, aber nicht zwingend)
 
-## Hardware-Verkabelung
+### Hinweise zur Verkabelung
 
-### Pinbelegung CC1101 zu ESP32
-
-```
-CC1101 Modul          ESP32
-┌─────────────┐       ┌──────────┐
-│ VCC  (3.3V) │──────>│ 3V3      │
-│ GND         │──────>│ GND      │
-│ SCK  (SCLK) │──────>│ GPIO18   │
-│ MOSI (SI)   │──────>│ GPIO23   │
-│ MISO (SO)   │──────>│ GPIO19   │
-│ CSN  (CS)   │──────>│ GPIO5    │
-│ GDO0        │──────>│ GPIO26   │
-│ GDO2        │       │ (nicht   │
-│             │       │ benötigt)│
-└─────────────┘       └──────────┘
-```
-
-> **Hinweis:** Im Gegensatz zu anderen Projekten wird GDO2 **nicht** benötigt. Nur GDO0 ist erforderlich.
-
-### Alternative Pinbelegung (WT32-ETH01)
-
-```
-CC1101 Modul          WT32-ETH01
-┌─────────────┐       ┌──────────┐
-│ VCC  (3.3V) │──────>│ 3V3      │
-│ GND         │──────>│ GND      │
-│ SCK  (SCLK) │──────>│ GPIO14   │
-│ MOSI (SI)   │──────>│ GPIO15   │
-│ MISO (SO)   │──────>│ GPIO35   │
-│ CSN  (CS)   │──────>│ GPIO4    │
-│ GDO0        │──────>│ GPIO2    │
-└─────────────┘       └──────────┘
-```
+Bei separatem CC1101-Modul werden 5 Kabelverbindungen benötigt (SPI + GDO0). GDO2 wird **nicht** benötigt. Die Pin-Zuordnung ist frei wählbar und wird in der YAML-Konfiguration festgelegt (`cs_pin`, `gdo0_pin`, SPI-Bus). Hinweise zu Strapping-Pins und SPI-Konflikten siehe [docs/INSTALLATION.md](docs/INSTALLATION.md).
 
 ## Schnellstart
 
 ### 1. ESPHome-Projekt einrichten
 
-Erstelle eine neue YAML-Datei (z.B. `elero-blinds.yaml`):
+Erstelle eine neue YAML-Datei (z.B. `elero-blinds.yaml`). Beispiel fuer Lilygo T-Embed CC1101:
 
 ```yaml
 esphome:
@@ -108,55 +74,48 @@ esphome:
   friendly_name: "Elero Rollladen"
 
 esp32:
-  board: esp32dev
-  variant: esp32
-  minimum_chip_revision: 3.1
+  board: esp32-s3-devkitc-1
+  framework:
+    type: esp-idf
 
-# WLAN-Konfiguration
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
-
-# Fallback-Hotspot bei WLAN-Problemen
   ap:
     ssid: "Elero-Blinds Fallback"
     password: !secret ap_password
 
-# Logging aktivieren (wichtig für Ersteinrichtung!)
 logger:
   level: DEBUG
 
-# Home Assistant API
 api:
   encryption:
     key: !secret api_key
 
-# OTA Updates
 ota:
   - platform: esphome
     password: !secret ota_password
 
-# Externe Elero-Komponente laden
 external_components:
   - source: github://pfriedrich84/esphome-elero
 
-# SPI-Bus konfigurieren
+# SPI-Bus (Lilygo T-Embed CC1101 Pins)
 spi:
-  clk_pin: GPIO18
-  mosi_pin: GPIO23
-  miso_pin: GPIO19
+  clk_pin: GPIO11
+  mosi_pin: GPIO09
+  miso_pin: GPIO10
 
 # Elero CC1101 Hub
 elero:
-  cs_pin: GPIO5
-  gdo0_pin: GPIO26
-  # Frequenz-Register anpassen falls nötig
-  # Standard-Einstellung für 868.35 MHz: freq0: 0x7a, freq1: 0x71, freq2: 0x21
-  # Alternative für 868.95 MHz (falls keine Pakete empfangen): freq0: 0xc0, freq1: 0x71, freq2: 0x21
-  # freq0: 0x7a
-  # freq1: 0x71
-  # freq2: 0x21
+  cs_pin: GPIO12
+  gdo0_pin: GPIO03
+  # Standard 868.35 MHz — alternativ freq0: 0xc0 fuer 868.95 MHz
+  freq0: 0x7a
+  freq1: 0x71
+  freq2: 0x21
 ```
+
+> **Andere Boards:** Die SPI-Pins und `cs_pin`/`gdo0_pin` muessen an das jeweilige Board angepasst werden. Siehe [docs/INSTALLATION.md](docs/INSTALLATION.md) fuer Details.
 
 ### 2. Blind-Adressen ermitteln
 
@@ -212,11 +171,13 @@ Der zentrale Hub für die CC1101-Kommunikation.
 
 ```yaml
 elero:
-  cs_pin: GPIO5         # Pflicht: SPI Chip-Select
-  gdo0_pin: GPIO26      # Pflicht: CC1101 GDO0 Interrupt-Pin
-  freq0: 0x7a           # Optional: Frequenz-Register FREQ0 (Standard: 0x7a)
-  freq1: 0x71           # Optional: Frequenz-Register FREQ1 (Standard: 0x71)
-  freq2: 0x21           # Optional: Frequenz-Register FREQ2 (Standard: 0x21)
+  cs_pin: GPIO12         # Pflicht: SPI Chip-Select (Board-abhaengig)
+  gdo0_pin: GPIO03       # Pflicht: CC1101 GDO0 Interrupt-Pin (Board-abhaengig)
+  freq0: 0x7a            # Optional: Frequenz-Register FREQ0 (Standard: 0x7a)
+  freq1: 0x71            # Optional: Frequenz-Register FREQ1 (Standard: 0x71)
+  freq2: 0x21            # Optional: Frequenz-Register FREQ2 (Standard: 0x21)
+  send_repeats: 1        # Optional: RF-Paketwiederholungen (1-20, Standard: 1)
+  send_delay: 20ms       # Optional: Pause zwischen Wiederholungen (Standard: 20ms)
 ```
 
 | Parameter | Typ | Pflicht | Standard | Beschreibung |
@@ -226,6 +187,9 @@ elero:
 | `freq0` | Hex (0x00-0xFF) | Nein | `0x7a` | CC1101 FREQ0 Register |
 | `freq1` | Hex (0x00-0xFF) | Nein | `0x71` | CC1101 FREQ1 Register |
 | `freq2` | Hex (0x00-0xFF) | Nein | `0x21` | CC1101 FREQ2 Register |
+| `send_repeats` | Int (1-20) | Nein | `1` | RF-Paketwiederholungen pro Befehl |
+| `send_delay` | Zeitdauer | Nein | `20ms` | Pause zwischen Wiederholungen |
+| `auto_sensors` | Boolean | Nein | `true` | Hub-Diagnose-Sensoren automatisch erstellen |
 
 ### Plattform `cover` (Rollladen)
 
@@ -613,21 +577,11 @@ entities:
 
 ### Kein Log-Output beim Drücken der Fernbedienung
 
-- **Verkabelung prüfen**: Alle SPI-Pins korrekt angeschlossen?
 - **Frequenz testen**: Europäische Elero-Module verwenden meist 868 MHz, aber es gibt zwei gängige Varianten:
-  - **Standard (868.35 MHz):** `freq0: 0x7a, freq1: 0x71, freq2: 0x21` ← **versuche zuerst diese**
-  - **Alternative (868.95 MHz):** `freq0: 0xc0, freq1: 0x71, freq2: 0x21` ← falls obige nicht funktioniert
-
-  Beispiel:
-  ```yaml
-  elero:
-    cs_pin: GPIO5
-    gdo0_pin: GPIO26
-    freq0: 0xc0    # Alternative wenn Standard nicht funktioniert
-    freq1: 0x71
-    freq2: 0x21
-  ```
-- **3.3V prüfen**: CC1101 benötigt stabile 3.3V Versorgung
+  - **Standard (868.35 MHz):** `freq0: 0x7a` ← **versuche zuerst diese**
+  - **Alternative (868.95 MHz):** `freq0: 0xc0` ← falls obige nicht funktioniert
+  - Die Frequenz kann auch zur Laufzeit ueber die Web-UI getestet werden (`/elero/api/frequency/set_mhz`)
+- **Verkabelung prüfen** (bei externem CC1101-Modul): Alle SPI-Pins korrekt? 3.3V stabil?
 
 ### Rollladen reagiert nicht auf Befehle
 
@@ -650,18 +604,17 @@ entities:
 
 ### ESP32 startet nicht / Bootloop
 
-- SPI-Pins nicht mit Boot-kritischen GPIOs belegen (z.B. GPIO0, GPIO2, GPIO12)
+- Bei externem CC1101: SPI-Pins nicht mit Strapping-GPIOs belegen (ESP32: GPIO0, GPIO2, GPIO12, GPIO15; ESP32-S3: GPIO0, GPIO3, GPIO45, GPIO46)
 - Ausreichend Strom (mindestens 500mA) sicherstellen
 
 ---
 
 ## Getestete Konfigurationen
 
-| Board | CC1101-Modul | Frequenz | Bewertung |
-|---|---|---|---|
-| D1 Mini ESP32 | Standard CC1101 | 433 MHz | Funktioniert, eingeschränkte Reichweite |
-| WT32-ETH01 | RWE Smart Home CC1101 | 868 MHz | Sehr gute Reichweite und Empfang |
-| ESP32-DevKit V1 | Standard CC1101 | 868 MHz | Gut |
+| Board | CC1101 | Framework | Frequenz | Bewertung |
+|---|---|---|---|---|
+| **Lilygo T-Embed CC1101** | Integriert (868 MHz) | ESP-IDF | 868 MHz | Empfohlen — kompakte Bauform, TFT-Display, Rotary-Encoder |
+| ESP32-DevKit V1 | Externes Modul | Arduino | 868 MHz | Gut |
 
 ---
 
