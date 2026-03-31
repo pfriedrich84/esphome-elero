@@ -29,8 +29,8 @@ TEST(RegistersToMhz, MaxRegisters) {
 }
 
 TEST(RegistersToMhz, Freq433) {
-  // 433.92 MHz: freq2=0x10, freq1=0xB2, freq0=0x14
-  float mhz = registers_to_mhz(0x10, 0xB2, 0x14);
+  // 433.92 MHz: freq2=0x10, freq1=0xB0, freq0=0x71
+  float mhz = registers_to_mhz(0x10, 0xB0, 0x71);
   EXPECT_NEAR(mhz, 433.92, 0.02);
 }
 
