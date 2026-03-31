@@ -1,0 +1,227 @@
+# ESP32-S3 + ESP-IDF config modeled after real Lilygo T-Embed CC1101 hardware
+# Tests: S3 variant, esp-idf framework, shared SPI bus (CC1101 + display),
+#        6 covers with position tracking, deep sleep, rotary encoder, TFT display
+# Based on a real production config with all secrets/addresses anonymized
+
+substitutions:
+  name: "test-s3-idf"
+  friendly_name: "Test S3 IDF"
+
+  pin_spi_clk: GPIO11
+  pin_spi_mosi: GPIO09
+  pin_spi_miso: GPIO10
+
+  pin_cc1101_cs: GPIO12
+  pin_cc1101_gdo0: GPIO03
+
+  pin_tft_cs: GPIO41
+  pin_tft_dc: GPIO16
+  pin_tft_rst: GPIO40
+  pin_tft_bl: GPIO21
+
+  pin_power_en: GPIO15
+  pin_enc_a: GPIO4
+  pin_enc_b: GPIO5
+  pin_enc_btn: GPIO0
+  pin_side_btn: GPIO6
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  platformio_options:
+    board_build.arduino.memory_type: qio_opi
+    board_build.flash_mode: qio
+    board_build.f_flash: 80000000L
+  on_boot:
+    priority: 800
+    then:
+      - switch.turn_on: power_rail
+      - switch.turn_off: ant_sw1
+      - switch.turn_on: ant_sw0
+      - delay: 150ms
+      - light.turn_on: disp_bl
+
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: esp-idf
+
+external_components:
+  - source:
+      type: local
+      path: components
+
+logger:
+  level: DEBUG
+
+wifi:
+  ssid: "test"
+  password: "testtest"
+
+deep_sleep:
+  id: deep_sleep_component
+  sleep_duration: 20s
+
+switch:
+  - platform: gpio
+    pin: ${pin_power_en}
+    id: power_rail
+    restore_mode: ALWAYS_ON
+  - platform: gpio
+    pin: 47
+    id: ant_sw1
+    restore_mode: ALWAYS_OFF
+    internal: true
+  - platform: gpio
+    pin: 48
+    id: ant_sw0
+    restore_mode: ALWAYS_ON
+    internal: true
+
+output:
+  - platform: ledc
+    pin: ${pin_tft_bl}
+    id: backlight_pwm
+
+spi:
+  clk_pin: ${pin_spi_clk}
+  mosi_pin: ${pin_spi_mosi}
+  miso_pin: ${pin_spi_miso}
+  id: system_spi
+
+elero:
+  id: elero_hub
+  cs_pin: ${pin_cc1101_cs}
+  gdo0_pin: ${pin_cc1101_gdo0}
+  spi_id: system_spi
+  send_repeats: 1
+  freq0: 0x7a
+  freq1: 0x71
+  freq2: 0x21
+
+font:
+  - file: "gfonts://Roboto"
+    id: font_log
+    size: 14
+    ignore_missing_glyphs: true
+
+display:
+  - platform: st7789v
+    id: main_display
+    spi_id: system_spi
+    cs_pin: ${pin_tft_cs}
+    dc_pin: ${pin_tft_dc}
+    reset_pin: ${pin_tft_rst}
+    model: Custom
+    height: 320
+    width: 170
+    offset_height: 35
+    offset_width: 0
+    rotation: 270
+    lambda: |-
+      it.print(0, 0, id(font_log), Color(200, 0, 200), "Elero Test Display");
+
+light:
+  - platform: monochromatic
+    output: backlight_pwm
+    name: "Display Backlight"
+    id: disp_bl
+    restore_mode: RESTORE_DEFAULT_ON
+
+sensor:
+  - platform: rotary_encoder
+    id: main_dial
+    pin_a: ${pin_enc_a}
+    pin_b: ${pin_enc_b}
+    min_value: 0
+    max_value: 200
+    resolution: 2
+
+binary_sensor:
+  - platform: gpio
+    pin:
+      number: ${pin_enc_btn}
+      inverted: true
+      mode: INPUT_PULLUP
+    name: "Encoder Button"
+    filters:
+      - delayed_on: 30ms
+
+  - platform: gpio
+    pin:
+      number: ${pin_side_btn}
+      inverted: true
+      mode: INPUT_PULLUP
+    name: "Side Button"
+    filters:
+      - delayed_on: 350ms
+    on_press:
+      then:
+        - deep_sleep.enter: deep_sleep_component
+
+button:
+  - platform: restart
+    id: sys_restart
+    name: "System Restart"
+  - platform: elero
+    name: "Start Scan"
+    scan_start: true
+  - platform: elero
+    name: "Stop Scan"
+    scan_start: false
+
+# 6 covers with position tracking — different durations, one with custom protocol params
+cover:
+  - platform: elero
+    blind_address: 0xaa0001
+    channel: 1
+    remote_address: 0xbb0001
+    name: "Cover 1 Horizontal"
+    open_duration: 31s
+    close_duration: 31s
+
+  - platform: elero
+    blind_address: 0xaa0002
+    channel: 2
+    remote_address: 0xbb0001
+    name: "Cover 2 Horizontal"
+    open_duration: 31s
+    close_duration: 31s
+
+  - platform: elero
+    blind_address: 0xaa0003
+    channel: 4
+    remote_address: 0xbb0001
+    name: "Cover 3 Vertical"
+    open_duration: 26s
+    close_duration: 26s
+
+  - platform: elero
+    blind_address: 0xaa0004
+    channel: 5
+    remote_address: 0xbb0001
+    name: "Cover 4 Vertical"
+    open_duration: 26s
+    close_duration: 26s
+
+  # Cover with custom protocol parameters
+  - platform: elero
+    blind_address: 0xaa0005
+    channel: 6
+    remote_address: 0xbb0001
+    name: "Cover 5 Custom Proto"
+    open_duration: 26s
+    close_duration: 26s
+    hop: 0x00
+    payload_1: 0x00
+    payload_2: 0x03
+    pck_inf1: 0x6a
+    pck_inf2: 0x10
+
+  - platform: elero
+    blind_address: 0xaa0006
+    channel: 7
+    remote_address: 0xbb0001
+    name: "Cover 6 Vertical"
+    open_duration: 26s
+    close_duration: 26s

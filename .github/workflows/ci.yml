@@ -35,6 +35,7 @@ jobs:
           - tests/configs/no_web.yaml
           - tests/configs/no_auto_sensors.yaml
           - tests/configs/custom_frequency.yaml
+          - tests/configs/esp32s3-idf.yaml
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
