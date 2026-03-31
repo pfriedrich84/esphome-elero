@@ -30,6 +30,8 @@ elero:
 
 > Der Hub erweitert die ESPHome SPI-Konfiguration. `spi:` muss separat mit `clk_pin`, `mosi_pin` und `miso_pin` konfiguriert sein.
 
+> **Tipp für ESP32-S3:** Bei Speichermangel-Abstürzen während der Kompilierung (`Killed signal terminated program cc1plus`) hilft `compile_process_limit: 1` unter `esphome:`. Das serialisiert die Kompilierung und verhindert OOM-Kills.
+
 ### Hub-Diagnose-Sensoren
 
 Bei `auto_sensors: true` (Standard) werden folgende Sensoren automatisch erstellt:

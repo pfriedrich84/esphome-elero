@@ -63,6 +63,16 @@ GDO0 ──────>    GPIO26
 >
 > **IMPORTANT:** Do **not** use ESP32 strapping pins (GPIO0, GPIO2, GPIO5, GPIO12, GPIO15) for SPI signals (SCK, MOSI, MISO). **GPIO12 as MISO** is especially problematic: the CC1101 module can pull GPIO12 HIGH at boot, setting VDD_SDIO to 1.8V and breaking all SPI communication. The recommended pins above (GPIO18/23/19) are safe.
 
+### Hinweis: ESP32-S3 Kompilierungsproblem
+
+Bei ESP32-S3 Boards (z.B. Lilygo T-Embed CC1101) kann der Compiler bei paralleler Kompilierung wegen Speichermangel abstürzen (`fatal error: Killed signal terminated program cc1plus`). Lösung: Kompilierung serialisieren:
+
+```yaml
+esphome:
+  name: mein-geraet
+  compile_process_limit: 1  # Verhindert OOM bei ESP32-S3
+```
+
 ### Schritt 2.2: Verkabelung prüfen
 
 Prüfe alle Verbindungen nochmals:
