@@ -297,10 +297,13 @@ void EleroCover::set_rx_state(uint8_t state) {
 
   // Stop verification: if we sent a stop and are waiting for confirmation,
   // check whether the motor actually stopped or is still moving.
-  if (this->stop_verify_retries_ < ELERO_STOP_VERIFY_MAX_RETRIES) {
-    if (state == ELERO_STATE_MOVING_UP || state == ELERO_STATE_MOVING_DOWN ||
-        state == ELERO_STATE_START_MOVING_UP || state == ELERO_STATE_START_MOVING_DOWN) {
-      // Motor is still moving — re-send stop via priority queue
+  // Guard on stop_verify_at_ (not retries) so a "stopped" response always
+  // cancels verification — even after retries have been exhausted.
+  if (this->stop_verify_at_ > 0) {
+    if ((state == ELERO_STATE_MOVING_UP || state == ELERO_STATE_MOVING_DOWN ||
+         state == ELERO_STATE_START_MOVING_UP || state == ELERO_STATE_START_MOVING_DOWN) &&
+        this->stop_verify_retries_ < ELERO_STOP_VERIFY_MAX_RETRIES) {
+      // Motor is still moving and retries remain — re-send stop via priority queue
       this->stop_verify_retries_++;
       ESP_LOGW(TAG, "Blind 0x%06x still moving after stop, retry #%d",
                this->command_.blind_addr, this->stop_verify_retries_);
@@ -310,7 +313,8 @@ void EleroCover::set_rx_state(uint8_t state) {
       this->increase_counter();
       this->stop_verify_at_ = millis() + ELERO_STOP_VERIFY_DELAY_MS;
       op = COVER_OPERATION_IDLE;  // keep our side idle while retrying
-    } else {
+    } else if (state != ELERO_STATE_MOVING_UP && state != ELERO_STATE_MOVING_DOWN &&
+               state != ELERO_STATE_START_MOVING_UP && state != ELERO_STATE_START_MOVING_DOWN) {
       // Motor confirmed stopped — correct position for actual stop delay
       if (this->stop_trigger_ms_ > 0 && this->open_duration_ > 0 && this->close_duration_ > 0) {
         uint32_t actual_delay = millis() - this->stop_trigger_ms_;
@@ -334,6 +338,7 @@ void EleroCover::set_rx_state(uint8_t state) {
       this->stop_verify_retries_ = ELERO_STOP_VERIFY_MAX_RETRIES;
       this->stop_verify_at_ = 0;
     }
+    // else: still moving but retries exhausted — let the timer in loop() handle exhaustion
   }
 
   if((pos != this->position) || (op != this->current_operation) || (current_tilt != this->tilt)) {

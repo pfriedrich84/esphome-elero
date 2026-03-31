@@ -166,9 +166,10 @@ void dispatch_commands(Elero *parent, std::queue<uint8_t> &queue,
   // When THIS cover is in stop-verification, defer its own non-stop commands
   // so the stop packets transmit without self-contention.  Other covers are
   // no longer blocked — only the cover that triggered auto-stop defers.
+  // CHECK (status poll) is exempt — it's the verify poll itself and must go through.
   if (stop_urgent_self && !queue.empty()) {
     uint8_t front_cmd = queue.front();
-    if (front_cmd != ELERO_COMMAND_COVER_STOP) {
+    if (front_cmd != ELERO_COMMAND_COVER_STOP && front_cmd != ELERO_COMMAND_COVER_CHECK) {
       return;  // defer until this cover's stop verification completes
     }
   }
