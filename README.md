@@ -37,14 +37,14 @@
 | Rollläden hoch/runter/stopp steuern | Stabil |
 | Bidirektionale Kommunikation (Status empfangen) | Stabil |
 | Positionssteuerung (zeitbasiert) | Stabil |
-| Tilt/Kipp-Steuerung | Experimentell |
+| Tilt/Kipp-Steuerung | Stabil |
 | RSSI-Signalstärke als Sensor | Stabil |
 | Blind-Status als Text-Sensor | Stabil |
 | RF-Discovery (Blinds finden) | Stabil |
 | Web-UI fuer Discovery und YAML-Export | Stabil |
 | Mehrere Blinds gleichzeitig | Stabil |
 | TempoTel 2 Kompatibilität | Getestet |
-| Lichter schalten (Ein/Aus und Dimmen) | Experimentell |
+| Lichter schalten (Ein/Aus und Dimmen) | Stabil |
 
 ## Voraussetzungen
 

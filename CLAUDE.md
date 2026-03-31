@@ -41,18 +41,12 @@ esphome-elero/
 │   └── FUNDING.yml                    # GitHub Sponsors config
 ├── .gitignore                         # Python cache, .esphome/ exclusions
 ├── CLAUDE.md                          # This file
-├── IMPROVEMENT_PLAN.md                # Identified improvement issues (German)
-├── ISSUES_ARCHITECT_REVIEW.md         # Architect review issue tracking
-├── ISSUES_RADIOLIB_HA_LOGGING.md      # RadioLib/HA logging issue tracking
 ├── README.md                          # Main documentation (German + English)
 ├── compile_test.yaml                  # ESPHome compile test config with system monitoring sensors
 ├── example.yaml                       # Complete ESPHome config example
 ├── docs/
 │   ├── INSTALLATION.md                # Step-by-step hardware and software setup
 │   ├── CONFIGURATION.md               # Full parameter reference
-│   ├── MULTICORE_EVALUATION.md        # Dual-core architecture evaluation
-│   ├── RADIOLIB_EVALUATION.md         # RadioLib integration evaluation
-│   ├── TEST_COVERAGE_ANALYSIS.md      # Test coverage analysis
 │   └── examples/                      # Additional YAML examples (.gitkeep)
 └── components/
     ├── elero/                         # Main hub component
@@ -232,7 +226,7 @@ The implementation is split across three `.cpp` files (all part of the same `Ele
 Critical public API:
 - `register_cover(EleroBlindBase*)` — called by each `EleroCover` at setup
 - `register_light(EleroLightBase*)` — called by each `EleroLight` at setup
-- `send_command(t_elero_command*)` — encodes, encrypts, and transmits a command via normal TX queue
+- `send_command(t_elero_command*)` → `SendResult` — encodes, encrypts, and transmits a command via normal TX queue
 - `send_command_priority(t_elero_command*)` — priority TX queue for time-critical commands (e.g. stop), bypasses the normal queue
 - `is_tx_idle()` — check if TX state machine is ready for a new command
 - `get_tx_queue_depth()` — current normal TX queue depth (for dynamic latency compensation)
@@ -275,13 +269,14 @@ Key constants (defined in `elero.h` unless noted):
 |---|---|---|
 | `ELERO_MAX_PACKET_SIZE` | 57 | Maximum RF packet length (FCC spec) |
 | `ELERO_MIN_PACKET_SIZE` | 17 | Minimum valid Elero packet (shorter = RF noise) — defined in `elero.cpp` |
-| `ELERO_POLL_INTERVAL_MOVING` | 2 000 ms | Status poll while blind is moving |
+| `ELERO_POLL_INTERVAL_MOVING` | 5 000 ms | Status poll while blind is moving (blinds broadcast status on their own) |
 | `ELERO_TIMEOUT_MOVEMENT` | 120 000 ms | Give up movement tracking after 2 min |
 | `ELERO_POST_MOVEMENT_POLL_DELAY` | 5 000 ms | Poll delay after open/close duration elapses |
 | `ELERO_SEND_RETRIES` | 3 | Command retry count |
-| `ELERO_DEFAULT_SEND_REPEATS` | 3 | C++ default RF packet repetitions (YAML schema default is 1; configurable 1–20) |
-| `ELERO_DEFAULT_SEND_DELAY` | 1 ms | Default delay between repeated packets (configurable) |
+| `ELERO_DEFAULT_SEND_REPEATS` | 1 | RF packet repetitions per command (configurable 1–20) |
+| `ELERO_DEFAULT_SEND_DELAY` | 20 ms | Default delay between repeated packets (configurable) |
 | `ELERO_MAX_COMMAND_QUEUE` | 10 | Max queued commands per blind (prevents OOM) |
+| `ELERO_COMMAND_QUEUE_MAX_AGE_MS` | 30 000 ms | Clear stale command queue after 30 s without successful send |
 | `ELERO_TX_QUEUE_DEPTH` | 16 | Normal TX FreeRTOS queue depth |
 | `ELERO_TX_PRIORITY_QUEUE_DEPTH` | 8 | Priority TX queue depth (stop commands) |
 | `ELERO_MAX_DISCOVERED` | 20 | Max blinds tracked in scan mode |
@@ -292,8 +287,8 @@ Key constants (defined in `elero.h` unless noted):
 | `ELERO_DEDUP_WINDOW_MS` | 5 000 ms | Packet deduplication time window (src, cnt pairs) |
 | `ELERO_STOP_REPEAT_COUNT` | 2 | Stop commands queued on auto-stop (x2 RF packets each) |
 | `ELERO_TX_LATENCY_COMPENSATION_MS` | 300 ms | Position check lead time (accounts for multi-cover queue contention) |
-| `ELERO_STOP_VERIFY_DELAY_MS` | 500 ms | Delay before polling to verify motor stopped |
-| `ELERO_STOP_VERIFY_MAX_RETRIES` | 3 | Max stop-verify cycles before giving up |
+| `ELERO_STOP_VERIFY_DELAY_MS` | 2 000 ms | Delay before polling to verify motor stopped (give blind time to broadcast) |
+| `ELERO_STOP_VERIFY_MAX_RETRIES` | 1 | Single verify poll — blinds broadcast status, no need to hammer |
 | `ELERO_MSG_LENGTH` | 0x1d (29) | Fixed message length for TX |
 | `ELERO_CRYPTO_MULT` | 0x708f | Encryption multiplier for counter-based code |
 | `TX_STATE_TIMEOUT_MS` | 50 ms | Per-state watchdog timeout for TX state machine — defined in `elero.cpp` |
@@ -304,6 +299,7 @@ State constants (`ELERO_STATE_*`): `UNKNOWN`, `TOP`, `BOTTOM`, `INTERMEDIATE`, `
 
 Key enums:
 - `TxState` — TX state machine states (`IDLE`, `TRANSMITTING`, `COOLDOWN`)
+- `SendResult` — return type of `send_command()` (`OK`, `QUEUE_FULL`, `FAILED`) — lets callers distinguish transient queue-full from permanent SPI failure
 - `DeviceType` — device classification (`COVER = 0`, `LIGHT = 1`)
 
 Key structs:
@@ -330,7 +326,7 @@ Thread-safety:
 
 Key behaviors:
 - Maintains an internal `std::queue<uint8_t> commands_to_send_` for reliable delivery (capped at `ELERO_MAX_COMMAND_QUEUE`)
-- Polls blind status at a configurable interval (`poll_intvl_`, default 5 min); while moving, polls every `ELERO_POLL_INTERVAL_MOVING` (2 s)
+- Polls blind status at a configurable interval (`poll_intvl_`, default 5 min); while moving, polls every `ELERO_POLL_INTERVAL_MOVING` (5 s). When position tracking is enabled (`open_duration`/`close_duration` set), movement CHECKs are skipped because blinds broadcast their own status — this reduces RF traffic and prevents blind lockout.
 - Tracks cover `position` (0.0–1.0) by dead-reckoning against `open_duration_` / `close_duration_` timestamps
 - Supports tilt as a separate operation via `command_tilt_`
 - Staggered poll offsets (`poll_offset_`) prevent all covers from polling simultaneously
@@ -528,7 +524,7 @@ elero:
   freq1: 0x71            # CC1101 FREQ1 register
   freq2: 0x21            # CC1101 FREQ2 register
   send_repeats: 1        # RF packet repetitions per command (1–20, default 1)
-  send_delay: 1ms        # Delay between repeated packets (default 1ms)
+  send_delay: 20ms       # Delay between repeated packets (default 20ms)
   auto_sensors: true     # Auto-generate hub diagnostic sensors (default true)
 ```
 

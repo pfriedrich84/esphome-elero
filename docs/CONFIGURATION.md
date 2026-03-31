@@ -25,7 +25,7 @@ elero:
 | `freq1` | Hex (0x00-0xFF) | Nein | `0x71` | CC1101 Frequenz-Register FREQ1 |
 | `freq2` | Hex (0x00-0xFF) | Nein | `0x21` | CC1101 Frequenz-Register FREQ2 |
 | `send_repeats` | Integer (1-20) | Nein | `1` | Anzahl der RF-Paketwiederholungen pro Befehl |
-| `send_delay` | Zeitdauer | Nein | `1ms` | Verzögerung zwischen wiederholten Paketen |
+| `send_delay` | Zeitdauer | Nein | `20ms` | Verzögerung zwischen wiederholten Paketen |
 | `auto_sensors` | Boolean | Nein | `true` | Erstellt automatisch Hub-Diagnose-Sensoren (Frequenz, RX/TX-Zähler, Watchdog-Recovery) |
 
 > Der Hub erweitert die ESPHome SPI-Konfiguration. `spi:` muss separat mit `clk_pin`, `mosi_pin` und `miso_pin` konfiguriert sein.
@@ -94,7 +94,7 @@ cover:
 |---|---|---|---|
 | `open_duration` | Zeitdauer | `0s` | Fahrzeit zum vollständigen Öffnen. Wird für die zeitbasierte Positionssteuerung benötigt. Wenn gesetzt, muss auch `close_duration` gesetzt werden. |
 | `close_duration` | Zeitdauer | `0s` | Fahrzeit zum vollständigen Schließen. Wird für die zeitbasierte Positionssteuerung benötigt. Wenn gesetzt, muss auch `open_duration` gesetzt werden. |
-| `poll_interval` | Zeitdauer / `never` | `5min` | Intervall für Status-Abfragen. `never` deaktiviert das Polling. Während der Fahrt wird automatisch alle 2 s abgefragt. |
+| `poll_interval` | Zeitdauer / `never` | `5min` | Intervall für Status-Abfragen. `never` deaktiviert das Polling. Während der Fahrt wird alle 5 s abgefragt (bei aktivierter Positionssteuerung werden Fahrt-Abfragen übersprungen, da der Motor seinen Status selbst sendet). |
 | `supports_tilt` | Boolean | `false` | Aktiviert Tilt/Kipp-Unterstützung (z.B. für Raffstore). |
 | `auto_sensors` | Boolean | `true` | Erstellt automatisch RSSI- und Status-Sensoren für diesen Rollladen. Setzen Sie auf `false`, um diese manuell zu konfigurieren. |
 
@@ -161,6 +161,9 @@ light:
 | Parameter | Typ | Standard | Beschreibung |
 |---|---|---|---|
 | `dim_duration` | Zeitdauer | `0s` | Dimm-Fahrzeit von 0 % auf 100 %. `0s` = nur Ein/Aus (`ColorMode::ON_OFF`); Wert > 0 = Helligkeitssteuerung aktiv (`ColorMode::BRIGHTNESS`). |
+| `auto_sensors` | Boolean | `true` | Erstellt automatisch RSSI- und Status-Sensoren für dieses Licht. Setzen Sie auf `false`, um diese manuell zu konfigurieren. |
+| `rssi_sensor` | Sensor-Konfig | - | Explizite RSSI-Sensor-Konfiguration (überschreibt auto-generierten Sensor). |
+| `status_sensor` | Text-Sensor-Konfig | - | Explizite Status-Text-Sensor-Konfiguration (überschreibt auto-generierten Sensor). |
 
 ### Protokoll-Parameter
 
