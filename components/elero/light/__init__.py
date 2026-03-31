@@ -7,11 +7,12 @@ from esphome.const import (
     CONF_CHANNEL,
     CONF_NAME,
     CONF_OUTPUT_ID,
-    UNIT_DECIBEL_MILLIWATT,
     DEVICE_CLASS_SIGNAL_STRENGTH,
     STATE_CLASS_MEASUREMENT,
+    UNIT_DECIBEL_MILLIWATT,
 )
-from .. import elero_ns, elero, CONF_ELERO_ID
+
+from .. import CONF_ELERO_ID, elero, elero_ns
 
 DEPENDENCIES = ["elero"]
 AUTO_LOAD = ["sensor", "text_sensor"]
@@ -57,13 +58,9 @@ def _auto_sensor_validator(config):
     light_name = config.get(CONF_NAME, "Elero Light")
     result = dict(config)
     if CONF_RSSI_SENSOR not in result:
-        result[CONF_RSSI_SENSOR] = _RSSI_SENSOR_SCHEMA(
-            {CONF_NAME: f"{light_name} RSSI"}
-        )
+        result[CONF_RSSI_SENSOR] = _RSSI_SENSOR_SCHEMA({CONF_NAME: f"{light_name} RSSI"})
     if CONF_STATUS_SENSOR not in result:
-        result[CONF_STATUS_SENSOR] = _STATUS_SENSOR_SCHEMA(
-            {CONF_NAME: f"{light_name} Status"}
-        )
+        result[CONF_STATUS_SENSOR] = _STATUS_SENSOR_SCHEMA({CONF_NAME: f"{light_name} Status"})
     return result
 
 
@@ -91,8 +88,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_RSSI_SENSOR): _RSSI_SENSOR_SCHEMA,
             cv.Optional(CONF_STATUS_SENSOR): _STATUS_SENSOR_SCHEMA,
         }
-    )
-    .extend(cv.COMPONENT_SCHEMA),
+    ).extend(cv.COMPONENT_SCHEMA),
     _auto_sensor_validator,
 )
 

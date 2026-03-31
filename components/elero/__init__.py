@@ -3,8 +3,8 @@ import logging
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome import pins
-from esphome.components import spi
 from esphome.components import sensor as esphome_sensor
+from esphome.components import spi
 from esphome.const import (
     CONF_ID,
     STATE_CLASS_MEASUREMENT,
@@ -72,17 +72,11 @@ def _auto_sensor_validator(config):
     result = dict(config)
     prefix = "Elero"
     if CONF_FREQUENCY_SENSOR not in result:
-        result[CONF_FREQUENCY_SENSOR] = _FREQUENCY_SENSOR_SCHEMA(
-            {"name": f"{prefix} Frequency"}
-        )
+        result[CONF_FREQUENCY_SENSOR] = _FREQUENCY_SENSOR_SCHEMA({"name": f"{prefix} Frequency"})
     if CONF_RX_COUNT_SENSOR not in result:
-        result[CONF_RX_COUNT_SENSOR] = _RX_COUNT_SENSOR_SCHEMA(
-            {"name": f"{prefix} RX Count"}
-        )
+        result[CONF_RX_COUNT_SENSOR] = _RX_COUNT_SENSOR_SCHEMA({"name": f"{prefix} RX Count"})
     if CONF_TX_COUNT_SENSOR not in result:
-        result[CONF_TX_COUNT_SENSOR] = _TX_COUNT_SENSOR_SCHEMA(
-            {"name": f"{prefix} TX Count"}
-        )
+        result[CONF_TX_COUNT_SENSOR] = _TX_COUNT_SENSOR_SCHEMA({"name": f"{prefix} TX Count"})
     if CONF_WATCHDOG_RECOVERY_SENSOR not in result:
         result[CONF_WATCHDOG_RECOVERY_SENSOR] = _WATCHDOG_RECOVERY_SENSOR_SCHEMA(
             {"name": f"{prefix} Watchdog Recovery Count"}
@@ -95,9 +89,9 @@ CONFIG_SCHEMA = cv.All(
         {
             cv.GenerateID(): cv.declare_id(elero),
             cv.Required(CONF_GDO0_PIN): pins.gpio_input_pin_schema,
-            cv.Optional(CONF_FREQ0, default=0x7a): cv.hex_int_range(min=0x0, max=0xff),
-            cv.Optional(CONF_FREQ1, default=0x71): cv.hex_int_range(min=0x0, max=0xff),
-            cv.Optional(CONF_FREQ2, default=0x21): cv.hex_int_range(min=0x0, max=0xff),
+            cv.Optional(CONF_FREQ0, default=0x7A): cv.hex_int_range(min=0x0, max=0xFF),
+            cv.Optional(CONF_FREQ1, default=0x71): cv.hex_int_range(min=0x0, max=0xFF),
+            cv.Optional(CONF_FREQ2, default=0x21): cv.hex_int_range(min=0x0, max=0xFF),
             cv.Optional(CONF_SEND_REPEATS, default=1): cv.int_range(min=1, max=20),
             cv.Optional(CONF_SEND_DELAY, default="20ms"): cv.positive_time_period_milliseconds,
             cv.Optional(CONF_AUTO_SENSORS, default=True): cv.boolean,
@@ -198,6 +192,7 @@ async def to_code(config):
     # Required for ESPHome 2026.1.0+ (StaticVector migration).
     try:
         from esphome.components.logger import request_log_listener
+
         request_log_listener()
     except ImportError:
         pass  # Older ESPHome without StaticVector migration

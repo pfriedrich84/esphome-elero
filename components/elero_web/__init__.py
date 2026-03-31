@@ -1,9 +1,9 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import web_server_base
+from esphome.components.elero import CONF_ELERO_ID, elero, elero_ns
 from esphome.components.web_server_base import CONF_WEB_SERVER_BASE_ID
-from esphome.const import CONF_ID, CONF_USERNAME, CONF_PASSWORD
-from esphome.components.elero import elero_ns, elero, CONF_ELERO_ID
+from esphome.const import CONF_ID, CONF_PASSWORD, CONF_USERNAME
 
 DEPENDENCIES = ["elero"]
 AUTO_LOAD = ["web_server_base"]
@@ -12,20 +12,15 @@ AUTO_LOAD = ["web_server_base"]
 CONF_ELERO_WEB_ID = "elero_web_id"
 EleroWebServer = elero_ns.class_("EleroWebServer", cg.Component)
 
-CONFIG_SCHEMA = (
-    cv.Schema(
-        {
-            cv.GenerateID(): cv.declare_id(EleroWebServer),
-            cv.GenerateID(CONF_ELERO_ID): cv.use_id(elero),
-            cv.GenerateID(CONF_WEB_SERVER_BASE_ID): cv.use_id(
-                web_server_base.WebServerBase
-            ),
-            cv.Optional(CONF_USERNAME): cv.string_strict,
-            cv.Optional(CONF_PASSWORD): cv.string_strict,
-        }
-    )
-    .extend(cv.COMPONENT_SCHEMA)
-)
+CONFIG_SCHEMA = cv.Schema(
+    {
+        cv.GenerateID(): cv.declare_id(EleroWebServer),
+        cv.GenerateID(CONF_ELERO_ID): cv.use_id(elero),
+        cv.GenerateID(CONF_WEB_SERVER_BASE_ID): cv.use_id(web_server_base.WebServerBase),
+        cv.Optional(CONF_USERNAME): cv.string_strict,
+        cv.Optional(CONF_PASSWORD): cv.string_strict,
+    }
+).extend(cv.COMPONENT_SCHEMA)
 
 
 async def to_code(config):
