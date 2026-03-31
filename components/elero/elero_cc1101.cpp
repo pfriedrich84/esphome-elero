@@ -1,4 +1,6 @@
 #include "elero.h"
+#include "elero_crypto.h"
+#include "elero_utils.h"
 #include "esphome/core/log.h"
 #include "esphome/core/helpers.h"
 #include <cstring>
@@ -286,9 +288,7 @@ void Elero::check_radio_state_() {
 // ---------------------------------------------------------------------------
 
 float Elero::registers_to_mhz(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
-  return (26.0f / 65536.0f) * ((static_cast<uint32_t>(freq2) << 16) |
-                                (static_cast<uint32_t>(freq1) << 8) |
-                                 static_cast<uint32_t>(freq0));
+  return utils::registers_to_mhz(freq2, freq1, freq0);
 }
 
 bool Elero::reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
@@ -532,7 +532,7 @@ bool Elero::send_command_internal_(t_elero_command *cmd) {
   this->msg_tx_[23] = (code & 0xff);
 
   uint8_t *payload = &this->msg_tx_[22];
-  msg_encode(payload);
+  crypto::msg_encode(payload);
 
   ESP_LOGD(TAG, "send to 0x%06x: cmd=0x%02x ch=%02d cnt=%02d",
            cmd->blind_addr, cmd->payload[4], cmd->channel, cmd->counter);

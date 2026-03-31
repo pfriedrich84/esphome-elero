@@ -1,5 +1,6 @@
 #include "elero_web_server.h"
 #include "elero_web_ui.h"
+#include "elero_web_utils.h"
 #include "esphome/core/log.h"
 #include "esphome/core/application.h"
 #include <cstdio>
@@ -11,27 +12,8 @@ namespace elero {
 
 static const char *const TAG = "elero.web_server";
 
-// ─── JSON helpers ─────────────────────────────────────────────────────────────
-
-static std::string json_escape(const std::string &s) {
-  std::string out;
-  out.reserve(s.size() + 8);
-  for (unsigned char c : s) {
-    if      (c == '"')  { out += "\\\""; }
-    else if (c == '\\') { out += "\\\\"; }
-    else if (c == '\n') { out += "\\n";  }
-    else if (c == '\r') { out += "\\r";  }
-    else if (c == '\t') { out += "\\t";  }
-    else if (c < 0x20)  {
-      // Escape control characters as \u00XX for valid JSON
-      char buf[8];
-      snprintf(buf, sizeof(buf), "\\u%04x", c);
-      out += buf;
-    }
-    else { out += static_cast<char>(c); }
-  }
-  return out;
-}
+// json_escape() and parse_addr_url() are in elero_web_utils.h (extracted for testability)
+using web_utils::json_escape;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -60,32 +42,9 @@ void EleroWebServer::handle_options(AsyncWebServerRequest *request) {
   request->send(response);
 }
 
-// Parse URLs of the form /elero/api/<prefix>/0xABCDEF/<action>
-// e.g. prefix = "covers" → url "/elero/api/covers/0xa831e5/command"
 bool EleroWebServer::parse_addr_url(const std::string &url, const char *prefix,
                                     uint32_t &addr_out, std::string &action_out) {
-  // Build expected start: /elero/api/<prefix>/
-  std::string base = std::string("/elero/api/") + prefix + "/";
-  if (url.size() <= base.size()) return false;
-  if (url.compare(0, base.size(), base) != 0) return false;
-
-  // Find next slash after the address
-  size_t addr_start = base.size();
-  size_t slash = url.find('/', addr_start);
-  std::string addr_str;
-  if (slash == std::string::npos) {
-    addr_str = url.substr(addr_start);
-    action_out = "";
-  } else {
-    addr_str = url.substr(addr_start, slash - addr_start);
-    action_out = url.substr(slash + 1);
-  }
-  char *end;
-  unsigned long v = strtoul(addr_str.c_str(), &end, 0);
-  if (end == addr_str.c_str()) return false;
-  if (v > 0xFFFFFF) return false;  // Elero addresses are 3 bytes max
-  addr_out = (uint32_t)v;
-  return true;
+  return web_utils::parse_addr_url(url, prefix, addr_out, action_out);
 }
 
 // ─── Authentication ──────────────────────────────────────────────────────────

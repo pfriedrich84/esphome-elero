@@ -573,16 +573,8 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
 
   bool wait_rx();
 
-  uint8_t count_bits(uint8_t byte);
-  void calc_parity(uint8_t* msg);
-  void add_r20_to_nibbles(uint8_t* msg, uint8_t r20, uint8_t start, uint8_t length);
-  void sub_r20_from_nibbles(uint8_t* msg, uint8_t r20, uint8_t start, uint8_t length);
-  void xor_2byte_in_array_encode(uint8_t* msg, uint8_t xor0, uint8_t xor1);
-  void xor_2byte_in_array_decode(uint8_t* msg, uint8_t xor0, uint8_t xor1);
-  void encode_nibbles(uint8_t* msg);
-  void decode_nibbles(uint8_t* msg, uint8_t len);
-  void msg_decode(uint8_t *msg);
-  void msg_encode(uint8_t* msg);
+  // Crypto functions extracted to elero_crypto.h (namespace esphome::elero::crypto)
+  // Utility functions extracted to elero_utils.h (namespace esphome::elero::utils)
   void track_discovered_blind(uint32_t src, uint32_t remote, uint8_t channel,
                               uint8_t pck_inf0, uint8_t pck_inf1, uint8_t hop,
                               uint8_t payload_1, uint8_t payload_2,
