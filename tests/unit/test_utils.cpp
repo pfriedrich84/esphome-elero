@@ -24,13 +24,13 @@ TEST(RegistersToMhz, AllZeros) {
 
 TEST(RegistersToMhz, MaxRegisters) {
   float mhz = registers_to_mhz(0xFF, 0xFF, 0xFF);
-  // (26.0 / 65536.0) * 0xFFFFFF = (26.0 / 65536.0) * 16777215 ≈ 6647.7
-  EXPECT_NEAR(mhz, 6647.7, 0.1);
+  // (26.0 / 65536.0) * 0xFFFFFF = (26.0 / 65536.0) * 16777215 ≈ 6656.0
+  EXPECT_NEAR(mhz, 6656.0, 0.01);
 }
 
 TEST(RegistersToMhz, Freq433) {
-  // 433.92 MHz: freq2=0x10, freq1=0xA7, freq0=0x62
-  float mhz = registers_to_mhz(0x10, 0xA7, 0x62);
+  // 433.92 MHz: freq2=0x10, freq1=0xB2, freq0=0x14
+  float mhz = registers_to_mhz(0x10, 0xB2, 0x14);
   EXPECT_NEAR(mhz, 433.92, 0.02);
 }
 
