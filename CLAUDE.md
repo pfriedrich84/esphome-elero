@@ -38,16 +38,38 @@ external_components:
 ```
 esphome-elero/
 ├── .github/
-│   └── FUNDING.yml                    # GitHub Sponsors config
+│   ├── FUNDING.yml                    # GitHub Sponsors config
+│   └── workflows/
+│       └── ci.yml                     # CI pipeline (lint + 8-config compile matrix + auto-issue creation)
+├── .claude/
+│   └── skills/                        # Claude Code slash commands
+│       ├── compile.md                 # /compile — ESPHome compile test
+│       ├── test.md                    # /test — run C++ + Python tests
+│       ├── build-web-ui.md            # /build-web-ui — rebuild frontend
+│       ├── review.md                  # /review — quality gate checks
+│       ├── elero-protocol.md          # /elero-protocol — RF protocol reference
+│       └── validate.md               # /validate — YAML schema validation
+├── .clang-format                      # C++ formatting (Google-based, 120 col, 2-space)
+├── .clang-tidy                        # C++ static analysis (bugprone-*, performance-*)
 ├── .gitignore                         # Python cache, .esphome/ exclusions
 ├── CLAUDE.md                          # This file
 ├── README.md                          # Main documentation (German + English)
 ├── compile_test.yaml                  # ESPHome compile test config with system monitoring sensors
 ├── example.yaml                       # Complete ESPHome config example
+├── pyproject.toml                     # Ruff linting + pytest config
 ├── docs/
 │   ├── INSTALLATION.md                # Step-by-step hardware and software setup
 │   ├── CONFIGURATION.md               # Full parameter reference
 │   └── examples/                      # Additional YAML examples (.gitkeep)
+├── tests/
+│   └── configs/                       # ESPHome compile test variants (CI matrix)
+│       ├── minimal.yaml               # Hub + 1 cover only
+│       ├── multi_cover.yaml           # 3 covers with different settings
+│       ├── light_only.yaml            # 2 lights (on/off + dimmable)
+│       ├── no_web.yaml                # No elero_web component
+│       ├── no_auto_sensors.yaml       # All auto_sensors disabled, explicit sensors
+│       ├── custom_frequency.yaml      # Non-default frequency + send params
+│       └── esp32s3-idf.yaml           # ESP32-S3 + esp-idf + shared SPI + display
 └── components/
     ├── elero/                         # Main hub component
     │   ├── __init__.py                # ESPHome component schema & code-gen (hub)
@@ -703,6 +725,19 @@ npm run build        # Vite build → generate_header.mjs → elero_web_ui.h
 
 The generated `elero_web_ui.h` must be committed. Do not edit it manually.
 
+### Claude Skills (slash commands)
+
+The repository includes 6 Claude Code skills in `.claude/skills/`. Use these during development:
+
+| Skill | Purpose |
+|-------|---------|
+| `/compile` | Run `esphome compile` on a config. Args: `minimal`, `s3`, `all`, or a YAML path. Default: `compile_test.yaml` |
+| `/test` | Run C++ unit tests (GoogleTest) and/or Python tests (pytest). Args: `cpp`, `python`, or both |
+| `/build-web-ui` | Rebuild frontend: `npm run build` → regenerate `elero_web_ui.h` |
+| `/review` | Check pending changes against all 6 quality gates (CI, thread safety, buffer safety, web API, ESPHome compat, docs) |
+| `/elero-protocol` | Load RF protocol reference into context: packet structure, encryption chain, state/command bytes, RSSI/frequency formulas |
+| `/validate` | Run `esphome config` (schema validation only, no compile — much faster). Args: `all` or a YAML path |
+
 ### Finding blind addresses
 
 The typical workflow for a new installation:
@@ -716,9 +751,64 @@ The typical workflow for a new installation:
 
 ---
 
+## CI Pipeline
+
+CI runs automatically on every push to `main`, `beta`, `devops` and on pull requests to `main`. Defined in `.github/workflows/ci.yml`.
+
+### Jobs
+
+| Job | What it does | Trigger |
+|-----|-------------|---------|
+| **lint** | `ruff check components/` + `ruff format --check components/` | Every push/PR |
+| **esphome-compile** | `esphome compile` across 8 config variants (matrix, `fail-fast: false`) | Every push/PR |
+| **auto-issue creation** | Parses compile log for GCC warnings/errors, creates GitHub issues labeled `ci-detected` | After each compile (even on success) |
+
+### Compile Test Matrix (8 configs)
+
+| Config | What it tests |
+|--------|--------------|
+| `compile_test.yaml` | Full features: hub + cover + light + web + sensors + monitoring |
+| `tests/configs/minimal.yaml` | Smallest valid config: hub + 1 cover, no web/light/sensors |
+| `tests/configs/multi_cover.yaml` | 3 covers: position tracking, no-duration, tilt |
+| `tests/configs/light_only.yaml` | 2 lights: on/off + dimmable, no covers |
+| `tests/configs/no_web.yaml` | Hub + cover + light, no `elero_web` |
+| `tests/configs/no_auto_sensors.yaml` | All `auto_sensors: false`, explicit sensor declarations |
+| `tests/configs/custom_frequency.yaml` | Non-default frequency (868.35 MHz), `send_repeats: 3`, `send_delay: 50ms` |
+| `tests/configs/esp32s3-idf.yaml` | ESP32-S3 + esp-idf framework, shared SPI (CC1101 + TFT display), 6 covers, deep sleep |
+
+Test configs in `tests/configs/` use `path: ../../components` to reference the local component source relative to their location.
+
+### Auto-Issue Creation
+
+After each compile job, the CI parses the build log for GCC warnings and errors from `components/` code. For each unique finding:
+1. Deduplicates by message pattern (ignoring line numbers)
+2. Checks existing open issues labeled `ci-detected` to avoid duplicates
+3. Creates a GitHub issue with the label `ci-detected` + `bug` (errors) or `enhancement` (warnings)
+4. Includes the compiler message, config name, commit SHA, and link to the CI run
+
+This ensures compile warnings (like deprecation notices) automatically become trackable issues.
+
+### Linting
+
+**Python (Ruff):** Configured in `pyproject.toml`. Rules: `E`, `F`, `W`, `I`, `UP`, `B`. Line length 120. Run locally: `ruff check components/` and `ruff format components/`.
+
+**C++ (clang-format / clang-tidy):** Configured in `.clang-format` (Google-based, 120 col, 2-space indent) and `.clang-tidy` (bugprone-\*, performance-\*, naming conventions). Not yet enforced in CI — baseline application pending.
+
+---
+
 ## Testing
 
-There are no automated tests in this repository. Validation is done manually on real hardware:
+### Automated (CI)
+
+The CI pipeline runs lint + 8-config compile matrix on every push. See [CI Pipeline](#ci-pipeline) above.
+
+**Planned but not yet implemented:**
+- C++ unit tests with GoogleTest (see GitHub issue #133)
+- Python schema validation tests with pytest (see GitHub issue #134)
+
+### Manual Hardware Testing
+
+Validation on real hardware before release:
 
 1. Flash the firmware and verify the CC1101 initialises (check `esphome logs` for `[I][elero:...]` messages)
 2. Use the RF scan to confirm blind discovery
@@ -727,6 +817,43 @@ There are no automated tests in this repository. Validation is done manually on 
 5. Verify RSSI and status text sensors update correctly
 6. Test web UI discovery, adoption, and control workflows
 7. Verify position tracking accuracy with `open_duration`/`close_duration`
+
+---
+
+## Quality Gates
+
+These rules are enforced by the `/review` Claude skill and should be checked before merging.
+
+### Gate 1: CI Green
+All CI jobs must pass: lint clean + all 8 compile configs succeed.
+
+### Gate 2: Thread Safety
+- `std::atomic` loads use `std::memory_order_acquire`, stores use `std::memory_order_release`
+- Shared data (`runtime_blinds_`, `discovered_blinds_`) accessed under `state_mutex_`
+- Log buffer accessed under `log_mutex_`
+- No SPI access outside Core 0 after `setup()` completes
+
+### Gate 3: Buffer Safety
+- Array accesses in protocol code preceded by length checks
+- `msg_rx_` indices validated against `ELERO_MAX_PACKET_SIZE` (57)
+- Packet length ≥ `ELERO_MIN_PACKET_SIZE` (17) before parsing
+- FreeRTOS queue operations check return values
+
+### Gate 4: Web API Consistency
+- New endpoints have CORS headers via `add_cors_headers()`
+- Auth check guarded with `#ifdef USE_WEBSERVER_AUTH`
+- POST/DELETE endpoints also handle OPTIONS for preflight
+- User-controlled strings passed through `json_escape()` before embedding in JSON
+
+### Gate 5: ESPHome Compatibility
+- Python imports from `esphome.components` must be aliased to avoid shadowing by local sub-packages (e.g., `from esphome.components import sensor as esphome_sensor`)
+- Conditional defines (`USE_WEBSERVER_AUTH`) added in Python codegen when features are configured
+- Watch for deprecated ESPHome APIs — CI auto-creates issues for deprecation warnings
+
+### Gate 6: Documentation
+- New YAML parameters documented in `docs/CONFIGURATION.md`
+- New constants added to the key constants table in this file (`CLAUDE.md`)
+- New REST API endpoints added to the REST API table in this file
 
 ---
 
@@ -784,3 +911,11 @@ The `compile_test.yaml` includes system monitoring sensors for Home Assistant to
 - Document new configuration parameters in both `README.md` and `docs/CONFIGURATION.md`.
 - When modifying the web UI, rebuild `elero_web_ui.h` and commit it alongside the source changes.
 - The primary development branch convention used by automation is `claude/<session-id>`.
+
+### Before merging
+
+- **CI must pass** — all 8 compile configs green + lint clean.
+- **Run `ruff check components/`** before committing Python changes. Use `ruff check --fix` for auto-fixable issues.
+- **Python imports** — when importing `sensor`, `text_sensor`, or other platform modules from `esphome.components` inside a component that has a same-named sub-package, alias the import (e.g., `from esphome.components import sensor as esphome_sensor`).
+- **Compile warnings become issues** — CI auto-creates GitHub issues from GCC warnings/errors (labeled `ci-detected`). Fix them or close with explanation.
+- **Use `/review`** — the Claude skill checks all 6 quality gates before you submit.
