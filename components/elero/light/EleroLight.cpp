@@ -31,6 +31,11 @@ void EleroLight::setup() {
     return;
   }
   this->parent_->register_light(this);
+  // Queue an initial status CHECK so the text sensor populates shortly after
+  // boot instead of waiting for the first external event.
+  if (this->command_check_ != 0x00) {
+    this->enqueue_command(this->command_check_);
+  }
 }
 
 LightTraits EleroLight::get_traits() {
@@ -171,12 +176,18 @@ void EleroLight::handle_commands(uint32_t now) {
   dispatch_commands(this->parent_, this->commands_to_send_, this->command_,
                     this->send_packets_, this->send_retries_, this->last_command_,
                     this->queue_full_published_, now, TAG, this->command_.blind_addr,
-                    &light_increase_counter, this);
+                    &light_increase_counter, this, false,
+                    &this->last_queue_drain_ms_);
 }
 
 void EleroLight::schedule_immediate_poll() {
+  uint32_t now = millis();
+  if ((now - this->last_immediate_poll_ms_) < ELERO_IMMEDIATE_POLL_MIN_INTERVAL_MS) {
+    return;  // rate-limited
+  }
   if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE) {
     this->commands_to_send_.push(this->command_check_);
+    this->last_immediate_poll_ms_ = now;
   }
 }
 

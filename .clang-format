@@ -1,0 +1,12 @@
+BasedOnStyle: Google
+ColumnLimit: 120
+IndentWidth: 2
+PointerAlignment: Right
+SpaceAfterCStyleCast: true
+AlignAfterOpenBracket: Align
+AlignTrailingComments: true
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: Never
+IncludeBlocks: Preserve
+SortIncludes: Never
+AccessModifierOffset: -1
