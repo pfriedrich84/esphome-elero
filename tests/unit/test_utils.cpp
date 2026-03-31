@@ -7,14 +7,15 @@ using namespace esphome::elero::utils;
 // --- registers_to_mhz ---
 
 TEST(RegistersToMhz, Default868) {
+  // (26.0/65536.0) * 0x21717a = 869.525 MHz (the CC1101 register value for "868.35 MHz" setting)
   float mhz = registers_to_mhz(0x21, 0x71, 0x7a);
-  EXPECT_NEAR(mhz, 868.35, 0.02);
+  EXPECT_NEAR(mhz, 869.525, 0.01);
 }
 
 TEST(RegistersToMhz, Alternative868) {
+  // (26.0/65536.0) * 0x2171c0 = 869.553 MHz
   float mhz = registers_to_mhz(0x21, 0x71, 0xc0);
-  EXPECT_GT(mhz, 868.35);  // Should be ~868.95
-  EXPECT_NEAR(mhz, 868.95, 0.02);
+  EXPECT_NEAR(mhz, 869.553, 0.01);
 }
 
 TEST(RegistersToMhz, AllZeros) {

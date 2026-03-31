@@ -9,7 +9,7 @@ from components.elero.cover import _final_validate
 
 
 def test_single_cover_passes():
-    with patch("components.elero.cover.CORE") as mock_core:
+    with patch("esphome.core.CORE") as mock_core:
         mock_core.config = {
             "cover": [make_cover_config(blind_address=0x111111, name="Cover1")]
         }
@@ -18,7 +18,7 @@ def test_single_cover_passes():
 
 
 def test_two_covers_different_addresses_pass():
-    with patch("components.elero.cover.CORE") as mock_core:
+    with patch("esphome.core.CORE") as mock_core:
         mock_core.config = {
             "cover": [
                 make_cover_config(blind_address=0x111111, name="Cover1"),
@@ -30,7 +30,7 @@ def test_two_covers_different_addresses_pass():
 
 
 def test_duplicate_address_raises():
-    with patch("components.elero.cover.CORE") as mock_core:
+    with patch("esphome.core.CORE") as mock_core:
         mock_core.config = {
             "cover": [
                 make_cover_config(blind_address=0x111111, name="Cover1"),
@@ -42,21 +42,21 @@ def test_duplicate_address_raises():
 
 
 def test_core_config_none_passes():
-    with patch("components.elero.cover.CORE") as mock_core:
+    with patch("esphome.core.CORE") as mock_core:
         mock_core.config = None
         result = _final_validate(make_cover_config())
         assert result is not None
 
 
 def test_no_cover_section_passes():
-    with patch("components.elero.cover.CORE") as mock_core:
+    with patch("esphome.core.CORE") as mock_core:
         mock_core.config = {}
         result = _final_validate(make_cover_config())
         assert result is not None
 
 
 def test_non_elero_covers_ignored():
-    with patch("components.elero.cover.CORE") as mock_core:
+    with patch("esphome.core.CORE") as mock_core:
         mock_core.config = {
             "cover": [
                 {"platform": "template", "blind_address": 0x111111, "name": "Other"},
@@ -68,7 +68,7 @@ def test_non_elero_covers_ignored():
 
 
 def test_cover_without_address_skipped():
-    with patch("components.elero.cover.CORE") as mock_core:
+    with patch("esphome.core.CORE") as mock_core:
         mock_core.config = {
             "cover": [
                 {"platform": "elero", "name": "NoAddr"},
@@ -80,7 +80,7 @@ def test_cover_without_address_skipped():
 
 
 def test_error_contains_hex_address():
-    with patch("components.elero.cover.CORE") as mock_core:
+    with patch("esphome.core.CORE") as mock_core:
         mock_core.config = {
             "cover": [
                 make_cover_config(blind_address=0xABCDEF, name="First"),
@@ -92,7 +92,7 @@ def test_error_contains_hex_address():
 
 
 def test_error_contains_both_names():
-    with patch("components.elero.cover.CORE") as mock_core:
+    with patch("esphome.core.CORE") as mock_core:
         mock_core.config = {
             "cover": [
                 make_cover_config(blind_address=0x123456, name="Alpha"),

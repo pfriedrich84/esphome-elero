@@ -9,7 +9,7 @@ from components.elero.light import _final_validate
 
 
 def test_single_light_passes():
-    with patch("components.elero.light.CORE") as mock_core:
+    with patch("esphome.core.CORE") as mock_core:
         mock_core.config = {
             "light": [make_light_config(blind_address=0x111111, name="Light1")]
         }
@@ -18,7 +18,7 @@ def test_single_light_passes():
 
 
 def test_two_lights_different_addresses_pass():
-    with patch("components.elero.light.CORE") as mock_core:
+    with patch("esphome.core.CORE") as mock_core:
         mock_core.config = {
             "light": [
                 make_light_config(blind_address=0x111111, name="Light1"),
@@ -30,7 +30,7 @@ def test_two_lights_different_addresses_pass():
 
 
 def test_duplicate_light_address_raises():
-    with patch("components.elero.light.CORE") as mock_core:
+    with patch("esphome.core.CORE") as mock_core:
         mock_core.config = {
             "light": [
                 make_light_config(blind_address=0x111111, name="Light1"),
@@ -42,7 +42,7 @@ def test_duplicate_light_address_raises():
 
 
 def test_cross_platform_duplicate_raises():
-    with patch("components.elero.light.CORE") as mock_core:
+    with patch("esphome.core.CORE") as mock_core:
         mock_core.config = {
             "light": [make_light_config(blind_address=0x111111, name="MyLight")],
             "cover": [make_cover_config(blind_address=0x111111, name="MyCover")],
@@ -52,7 +52,7 @@ def test_cross_platform_duplicate_raises():
 
 
 def test_cross_platform_different_addresses_pass():
-    with patch("components.elero.light.CORE") as mock_core:
+    with patch("esphome.core.CORE") as mock_core:
         mock_core.config = {
             "light": [make_light_config(blind_address=0x111111, name="MyLight")],
             "cover": [make_cover_config(blind_address=0x222222, name="MyCover")],
@@ -62,21 +62,21 @@ def test_cross_platform_different_addresses_pass():
 
 
 def test_core_config_none_passes():
-    with patch("components.elero.light.CORE") as mock_core:
+    with patch("esphome.core.CORE") as mock_core:
         mock_core.config = None
         result = _final_validate(make_light_config())
         assert result is not None
 
 
 def test_no_light_section_passes():
-    with patch("components.elero.light.CORE") as mock_core:
+    with patch("esphome.core.CORE") as mock_core:
         mock_core.config = {}
         result = _final_validate(make_light_config())
         assert result is not None
 
 
 def test_non_elero_lights_ignored():
-    with patch("components.elero.light.CORE") as mock_core:
+    with patch("esphome.core.CORE") as mock_core:
         mock_core.config = {
             "light": [
                 {"platform": "rgb", "blind_address": 0x111111, "name": "RGB"},
@@ -88,7 +88,7 @@ def test_non_elero_lights_ignored():
 
 
 def test_non_elero_covers_ignored_in_cross_check():
-    with patch("components.elero.light.CORE") as mock_core:
+    with patch("esphome.core.CORE") as mock_core:
         mock_core.config = {
             "light": [make_light_config(blind_address=0x111111, name="MyLight")],
             "cover": [{"platform": "template", "blind_address": 0x111111, "name": "Other"}],
@@ -98,7 +98,7 @@ def test_non_elero_covers_ignored_in_cross_check():
 
 
 def test_light_without_address_skipped():
-    with patch("components.elero.light.CORE") as mock_core:
+    with patch("esphome.core.CORE") as mock_core:
         mock_core.config = {
             "light": [
                 {"platform": "elero", "name": "NoAddr"},
@@ -110,7 +110,7 @@ def test_light_without_address_skipped():
 
 
 def test_no_cover_section_passes():
-    with patch("components.elero.light.CORE") as mock_core:
+    with patch("esphome.core.CORE") as mock_core:
         mock_core.config = {
             "light": [make_light_config(blind_address=0x111111, name="Light1")]
         }
@@ -119,7 +119,7 @@ def test_no_cover_section_passes():
 
 
 def test_cross_platform_error_mentions_both():
-    with patch("components.elero.light.CORE") as mock_core:
+    with patch("esphome.core.CORE") as mock_core:
         mock_core.config = {
             "light": [make_light_config(blind_address=0xABCDEF, name="LightX")],
             "cover": [make_cover_config(blind_address=0xABCDEF, name="CoverY")],
@@ -132,7 +132,7 @@ def test_cross_platform_error_mentions_both():
 
 
 def test_multiple_lights_and_covers_all_unique_pass():
-    with patch("components.elero.light.CORE") as mock_core:
+    with patch("esphome.core.CORE") as mock_core:
         mock_core.config = {
             "light": [
                 make_light_config(blind_address=0x111111, name="L1"),
