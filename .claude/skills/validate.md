@@ -11,7 +11,7 @@ Run ESPHome schema validation (no compilation) to quickly catch YAML errors.
 ## Task
 
 1. Determine which config to validate:
-   - No argument: `compile_test.yaml`
+   - No argument: `tests/configs/compile_test.yaml`
    - `all`: validate all YAML configs in project
    - Any `.yaml` path: validate that specific file
 
@@ -33,11 +33,11 @@ Much faster than `/compile` — use this first when iterating on YAML changes.
 
 ## Arguments
 
-`$ARGUMENTS` — config file path, `all`, or empty (defaults to `compile_test.yaml`)
+`$ARGUMENTS` — config file path, `all`, or empty (defaults to `tests/configs/compile_test.yaml`)
 
 ## Files validated when `all`:
 
-- `compile_test.yaml`
+- `tests/configs/compile_test.yaml`
 - `example.yaml`
 - `tests/configs/minimal.yaml`
 - `tests/configs/multi_cover.yaml`

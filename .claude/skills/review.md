@@ -13,7 +13,7 @@ Review pending changes against project-specific quality gates.
 Check each gate and report pass/fail:
 
 ### Gate 1: Compilation
-Run `esphome compile compile_test.yaml` — must succeed.
+Run `esphome compile tests/configs/compile_test.yaml` — must succeed.
 
 ### Gate 2: Linting
 Run `ruff check components/` — no errors.

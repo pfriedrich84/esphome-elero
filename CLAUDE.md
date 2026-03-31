@@ -54,7 +54,6 @@ esphome-elero/
 ├── .gitignore                         # Python cache, .esphome/ exclusions
 ├── CLAUDE.md                          # This file
 ├── README.md                          # Main documentation (German + English)
-├── compile_test.yaml                  # ESPHome compile test config with system monitoring sensors
 ├── example.yaml                       # Complete ESPHome config example
 ├── pyproject.toml                     # Ruff linting + pytest config
 ├── docs/
@@ -63,6 +62,7 @@ esphome-elero/
 │   └── examples/                      # Additional YAML examples (.gitkeep)
 ├── tests/
 │   └── configs/                       # ESPHome compile test variants (CI matrix)
+│       ├── compile_test.yaml          # Full features: hub + cover + light + web + monitoring sensors
 │       ├── minimal.yaml               # Hub + 1 cover only
 │       ├── multi_cover.yaml           # 3 covers with different settings
 │       ├── light_only.yaml            # 2 lights (on/off + dimmable)
@@ -731,7 +731,7 @@ The repository includes 6 Claude Code skills in `.claude/skills/`. Use these dur
 
 | Skill | Purpose |
 |-------|---------|
-| `/compile` | Run `esphome compile` on a config. Args: `minimal`, `s3`, `all`, or a YAML path. Default: `compile_test.yaml` |
+| `/compile` | Run `esphome compile` on a config. Args: `minimal`, `s3`, `all`, or a YAML path. Default: `tests/configs/compile_test.yaml` |
 | `/test` | Run C++ unit tests (GoogleTest) and/or Python tests (pytest). Args: `cpp`, `python`, or both |
 | `/build-web-ui` | Rebuild frontend: `npm run build` → regenerate `elero_web_ui.h` |
 | `/review` | Check pending changes against all 6 quality gates (CI, thread safety, buffer safety, web API, ESPHome compat, docs) |
@@ -767,7 +767,7 @@ CI runs automatically on every push to `main`, `beta`, `devops` and on pull requ
 
 | Config | What it tests |
 |--------|--------------|
-| `compile_test.yaml` | Full features: hub + cover + light + web + sensors + monitoring |
+| `tests/configs/compile_test.yaml` | Full features: hub + cover + light + web + sensors + monitoring |
 | `tests/configs/minimal.yaml` | Smallest valid config: hub + 1 cover, no web/light/sensors |
 | `tests/configs/multi_cover.yaml` | 3 covers: position tracking, no-duration, tilt |
 | `tests/configs/light_only.yaml` | 2 lights: on/off + dimmable, no covers |
@@ -859,7 +859,7 @@ All CI jobs must pass: lint clean + all 8 compile configs succeed.
 
 ## ESP32 System Monitoring Sensors
 
-The `compile_test.yaml` includes system monitoring sensors for Home Assistant to track dual-core health:
+The `tests/configs/compile_test.yaml` includes system monitoring sensors for Home Assistant to track dual-core health:
 
 ### RAM
 - **Free Heap** / **Largest Free Block** — via `debug` platform (bytes, 10s)

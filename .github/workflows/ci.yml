@@ -28,7 +28,7 @@ jobs:
       fail-fast: false
       matrix:
         config:
-          - compile_test.yaml
+          - tests/configs/compile_test.yaml
           - tests/configs/minimal.yaml
           - tests/configs/multi_cover.yaml
           - tests/configs/light_only.yaml

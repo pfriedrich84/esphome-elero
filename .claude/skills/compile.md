@@ -11,7 +11,7 @@ Compile the ESPHome firmware to verify the component builds without errors.
 ## Task
 
 1. Determine which config to compile:
-   - No argument or `default`: `compile_test.yaml`
+   - No argument or `default`: `tests/configs/compile_test.yaml`
    - `minimal`: `tests/configs/minimal.yaml`
    - `multi`: `tests/configs/multi_cover.yaml`
    - `light`: `tests/configs/light_only.yaml`
