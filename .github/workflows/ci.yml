@@ -5,10 +5,14 @@ on:
     branches: [main, beta, devops]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   lint:
@@ -18,12 +22,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install ruff
+          cache: "pip"
+      - run: pip install ruff==0.15.8
       - run: ruff check components/ --output-format=github
       - run: ruff format --check components/
 
   esphome-compile:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
     strategy:
       fail-fast: false
       matrix:
@@ -41,14 +49,22 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install esphome
+          cache: "pip"
+      - run: pip install esphome==2026.3.1
       - name: Compile
         id: compile
         run: |
           esphome compile ${{ matrix.config }} 2>&1 | tee compile.log
           exit ${PIPESTATUS[0]}
-      - name: Create issues from compile warnings/errors
+      - name: Upload compile log
         if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compile-log-${{ strategy.job-index }}
+          path: compile.log
+          retention-days: 14
+      - name: Create issues from compile warnings/errors
+        if: always() && github.event_name == 'push'
         uses: actions/github-script@v7
         with:
           script: |
@@ -131,5 +147,21 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install pytest esphome
+          cache: "pip"
+      - run: pip install pytest==9.0.2 esphome==2026.3.1
       - run: pytest tests/python/ -v --tb=short
+
+  ci-ok:
+    if: always()
+    needs: [lint, esphome-compile, unit-tests, python-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify all jobs passed
+        run: |
+          if [[ "${{ needs.lint.result }}" != "success" ]] ||
+             [[ "${{ needs.esphome-compile.result }}" != "success" ]] ||
+             [[ "${{ needs.unit-tests.result }}" != "success" ]] ||
+             [[ "${{ needs.python-tests.result }}" != "success" ]]; then
+            echo "::error::One or more CI jobs failed"
+            exit 1
+          fi
