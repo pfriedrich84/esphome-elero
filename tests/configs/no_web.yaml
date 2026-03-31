@@ -1,0 +1,45 @@
+# No-web config: hub + cover + light, NO elero_web component
+# Tests: web server is truly optional, no dangling references
+
+esphome:
+  name: test-no-web
+
+esp32:
+  board: esp32dev
+  variant: esp32
+  framework:
+    type: arduino
+
+wifi:
+  ssid: "test"
+  password: "testtest"
+
+external_components:
+  - source:
+      type: local
+      path: components
+
+spi:
+  clk_pin: GPIO18
+  mosi_pin: GPIO23
+  miso_pin: GPIO19
+
+elero:
+  cs_pin: GPIO5
+  gdo0_pin: GPIO26
+
+cover:
+  - platform: elero
+    blind_address: 0xa831e5
+    channel: 4
+    remote_address: 0xf0d008
+    name: "Cover No Web"
+    open_duration: 25s
+    close_duration: 22s
+
+light:
+  - platform: elero
+    blind_address: 0xc41a2b
+    channel: 6
+    remote_address: 0xf0d008
+    name: "Light No Web"

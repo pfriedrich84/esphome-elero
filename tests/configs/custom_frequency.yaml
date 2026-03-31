@@ -1,0 +1,51 @@
+# Custom frequency config: non-default frequency registers
+# Tests: frequency override compiles, no hardcoded 868 MHz assumptions
+
+esphome:
+  name: test-custom-freq
+
+esp32:
+  board: esp32dev
+  variant: esp32
+  framework:
+    type: arduino
+
+wifi:
+  ssid: "test"
+  password: "testtest"
+
+external_components:
+  - source:
+      type: local
+      path: components
+
+spi:
+  clk_pin: GPIO18
+  mosi_pin: GPIO23
+  miso_pin: GPIO19
+
+elero:
+  cs_pin: GPIO5
+  gdo0_pin: GPIO26
+  freq0: 0x7a
+  freq1: 0x71
+  freq2: 0x21
+  send_repeats: 3
+  send_delay: 50ms
+
+cover:
+  - platform: elero
+    blind_address: 0xa831e5
+    channel: 4
+    remote_address: 0xf0d008
+    name: "Cover Custom Freq"
+    open_duration: 25s
+    close_duration: 22s
+
+button:
+  - platform: elero
+    name: "Start Scan"
+    scan_start: true
+  - platform: elero
+    name: "Stop Scan"
+    scan_start: false

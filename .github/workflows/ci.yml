@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main, beta, devops]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff
+      - run: ruff check components/ --output-format=github
+      - run: ruff format --check components/
+
+  esphome-compile:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - compile_test.yaml
+          - tests/configs/minimal.yaml
+          - tests/configs/multi_cover.yaml
+          - tests/configs/light_only.yaml
+          - tests/configs/no_web.yaml
+          - tests/configs/no_auto_sensors.yaml
+          - tests/configs/custom_frequency.yaml
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install esphome
+      - run: esphome compile ${{ matrix.config }}

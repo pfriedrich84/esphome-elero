@@ -1,0 +1,57 @@
+# Multi-cover config: 3 covers with different settings
+# Tests: multiple cover registration, poll stagger, position tracking variations
+
+esphome:
+  name: test-multi-cover
+
+esp32:
+  board: esp32dev
+  variant: esp32
+  framework:
+    type: arduino
+
+wifi:
+  ssid: "test"
+  password: "testtest"
+
+external_components:
+  - source:
+      type: local
+      path: components
+
+spi:
+  clk_pin: GPIO18
+  mosi_pin: GPIO23
+  miso_pin: GPIO19
+
+elero:
+  cs_pin: GPIO5
+  gdo0_pin: GPIO26
+
+cover:
+  # Cover with position tracking
+  - platform: elero
+    blind_address: 0xa831e5
+    channel: 4
+    remote_address: 0xf0d008
+    name: "Cover With Position"
+    open_duration: 25s
+    close_duration: 22s
+
+  # Cover without position tracking
+  - platform: elero
+    blind_address: 0xb912f3
+    channel: 5
+    remote_address: 0xf0d008
+    name: "Cover No Position"
+
+  # Cover with tilt
+  - platform: elero
+    blind_address: 0xc41a2c
+    channel: 7
+    remote_address: 0xf0d008
+    name: "Cover With Tilt"
+    supports_tilt: true
+    open_duration: 30s
+    close_duration: 28s
+    poll_interval: never
