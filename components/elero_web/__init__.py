@@ -33,7 +33,7 @@ async def to_code(config):
     web_server_base_var = await cg.get_variable(config[CONF_WEB_SERVER_BASE_ID])
     cg.add(var.set_web_server(web_server_base_var))
 
-    if CONF_USERNAME in config:
+    if CONF_USERNAME in config and CONF_PASSWORD in config:
+        cg.add_define("USE_WEBSERVER_AUTH")
         cg.add(var.set_auth_username(config[CONF_USERNAME]))
-    if CONF_PASSWORD in config:
         cg.add(var.set_auth_password(config[CONF_PASSWORD]))

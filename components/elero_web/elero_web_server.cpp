@@ -90,6 +90,7 @@ bool EleroWebServer::parse_addr_url(const std::string &url, const char *prefix,
 
 // ─── Authentication ──────────────────────────────────────────────────────────
 
+#ifdef USE_WEBSERVER_AUTH
 bool EleroWebServer::check_auth_(AsyncWebServerRequest *request) {
   if (this->auth_username_.empty() || this->auth_password_.empty())
     return false;  // No auth configured — allow all requests
@@ -98,6 +99,7 @@ bool EleroWebServer::check_auth_(AsyncWebServerRequest *request) {
   request->requestAuthentication();
   return true;  // Not authenticated — 401 sent, caller should return
 }
+#endif
 
 // ─── Setup / config ───────────────────────────────────────────────────────────
 
@@ -131,8 +133,10 @@ void EleroWebServer::dump_config() {
   ESP_LOGCONFIG(TAG, "  URL: /elero");
   ESP_LOGCONFIG(TAG, "  API: /elero/api/*");
   ESP_LOGCONFIG(TAG, "  Enabled: %s", this->enabled_.load(std::memory_order_acquire) ? "yes" : "no");
+#ifdef USE_WEBSERVER_AUTH
   ESP_LOGCONFIG(TAG, "  Authentication: %s",
                 (!this->auth_username_.empty() && !this->auth_password_.empty()) ? "yes" : "no");
+#endif
 }
 
 // ─── Routing ──────────────────────────────────────────────────────────────────
@@ -149,8 +153,10 @@ void EleroWebServer::handleRequest(AsyncWebServerRequest *request) {
 
   if (method == HTTP_OPTIONS) { handle_options(request); return; }
 
+#ifdef USE_WEBSERVER_AUTH
   // ── Authentication check (all non-OPTIONS requests) ──
   if (this->check_auth_(request)) return;
+#endif
 
   // ── Redirect root to /elero ──
   if (url == "/" && method == HTTP_GET) { request->redirect("/elero"); return; }

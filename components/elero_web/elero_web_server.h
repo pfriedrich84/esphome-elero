@@ -17,9 +17,11 @@ class EleroWebServer : public Component, public AsyncWebHandler {
   void set_elero_parent(Elero *parent) { this->parent_ = parent; }
   void set_web_server(web_server_base::WebServerBase *base) { this->base_ = base; }
 
+#ifdef USE_WEBSERVER_AUTH
   // Optional HTTP Basic Auth — when both are non-empty, all endpoints require authentication.
   void set_auth_username(const std::string &username) { this->auth_username_ = username; }
   void set_auth_password(const std::string &password) { this->auth_password_ = password; }
+#endif
 
   // Enable / disable the web UI (used by the HA switch)
   void set_enabled(bool en) { this->enabled_.store(en, std::memory_order_release); }
@@ -86,15 +88,17 @@ class EleroWebServer : public Component, public AsyncWebHandler {
   void send_json_error(AsyncWebServerRequest *request, int code, const char *message);
   void handle_options(AsyncWebServerRequest *request);
 
+#ifdef USE_WEBSERVER_AUTH
   /// Returns true if authentication is required and the request is NOT authenticated.
   /// Sends a 401 response if so. Callers should return immediately when this returns true.
   bool check_auth_(AsyncWebServerRequest *request);
+  std::string auth_username_;
+  std::string auth_password_;
+#endif
 
   Elero *parent_{nullptr};
   web_server_base::WebServerBase *base_{nullptr};
   std::atomic<bool> enabled_{true};
-  std::string auth_username_;
-  std::string auth_password_;
 };
 
 }  // namespace elero
