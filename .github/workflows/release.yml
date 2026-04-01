@@ -47,7 +47,6 @@ jobs:
           PREV_TAG=$(git tag -l --sort=-creatordate | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' | head -1)
 
           if [ -z "$PREV_TAG" ]; then
-            # No previous release tag — use all commits
             RANGE="HEAD"
             echo "First release — including all commits"
           else
@@ -55,12 +54,45 @@ jobs:
             echo "Changelog since $PREV_TAG"
           fi
 
-          # Build changelog from commit messages (skip merge commits)
+          # Collect non-merge commits
+          COMMITS=$(git log "$RANGE" --pretty=format:"%s" --no-merges)
+
+          # Categorize commits by conventional-commit prefix
+          feat=""
+          fix=""
+          perf=""
+          ci=""
+          docs=""
+          refactor=""
+          other=""
+
+          while IFS= read -r msg; do
+            [ -z "$msg" ] && continue
+            case "$msg" in
+              feat*)     feat="$feat"$'\n'"- $msg" ;;
+              fix*)      fix="$fix"$'\n'"- $msg" ;;
+              perf*)     perf="$perf"$'\n'"- $msg" ;;
+              ci*|devops*) ci="$ci"$'\n'"- $msg" ;;
+              docs*)     docs="$docs"$'\n'"- $msg" ;;
+              refactor*|test*) refactor="$refactor"$'\n'"- $msg" ;;
+              *)         other="$other"$'\n'"- $msg" ;;
+            esac
+          done <<< "$COMMITS"
+
+          # Build categorized changelog
           {
             echo "## What's Changed"
             echo ""
-            git log "$RANGE" --pretty=format:"- %s (%h)" --no-merges
+            [ -n "$feat" ]     && echo "### New Features" && echo "$feat" && echo ""
+            [ -n "$fix" ]      && echo "### Bug Fixes" && echo "$fix" && echo ""
+            [ -n "$perf" ]     && echo "### Performance" && echo "$perf" && echo ""
+            [ -n "$ci" ]       && echo "### CI / DevOps" && echo "$ci" && echo ""
+            [ -n "$refactor" ] && echo "### Refactoring & Tests" && echo "$refactor" && echo ""
+            [ -n "$docs" ]     && echo "### Documentation" && echo "$docs" && echo ""
+            [ -n "$other" ]    && echo "### Other" && echo "$other" && echo ""
+            echo "---"
             echo ""
+            echo "**Installation:** Use \`ref: ${{ steps.version.outputs.tag }}\` in your ESPHome YAML."
           } > changelog.md
 
           cat changelog.md
