@@ -1,8 +1,9 @@
 name: Release
 
 on:
-  push:
-    branches: [main]
+  schedule:
+    - cron: "0 6 * * *"   # daily at 06:00 UTC
+  workflow_dispatch:       # allow manual trigger
 
 permissions:
   contents: write
@@ -10,16 +11,26 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
-    # Only run when the push is a merge commit (not direct pushes or CI commits)
-    if: >-
-      github.event.head_commit.committer.username != 'github-actions[bot]'
-      && contains(github.event.head_commit.message, 'Merge')
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0   # full history for tag lookup and changelog
 
+      - name: Check for new commits since last release
+        id: check
+        run: |
+          PREV_TAG=$(git tag -l --sort=-creatordate | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' | head -1)
+          if [ -n "$PREV_TAG" ]; then
+            COUNT=$(git rev-list "${PREV_TAG}..HEAD" --count --no-merges)
+            echo "New commits since $PREV_TAG: $COUNT"
+          else
+            COUNT=$(git rev-list HEAD --count --no-merges)
+            echo "First release — $COUNT commits total"
+          fi
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+
       - name: Determine next version tag
+        if: steps.check.outputs.count != '0'
         id: version
         run: |
           YEAR_MONTH=$(date -u +%Y-%m)
@@ -41,13 +52,13 @@ jobs:
           echo "Next release: $NEXT"
 
       - name: Generate changelog
+        if: steps.check.outputs.count != '0'
         id: changelog
         run: |
           # Find the previous release tag (any format, most recent)
           PREV_TAG=$(git tag -l --sort=-creatordate | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' | head -1)
 
           if [ -z "$PREV_TAG" ]; then
-            # No previous release tag — use all commits
             RANGE="HEAD"
             echo "First release — including all commits"
           else
@@ -55,17 +66,62 @@ jobs:
             echo "Changelog since $PREV_TAG"
           fi
 
-          # Build changelog from commit messages (skip merge commits)
+          # Collect non-merge commits
+          COMMITS=$(git log "$RANGE" --pretty=format:"%s" --no-merges)
+
+          # Categorize commits by conventional-commit prefix
+          feat=""
+          fix=""
+          perf=""
+          ci=""
+          docs=""
+          refactor=""
+          other=""
+
+          while IFS= read -r msg; do
+            [ -z "$msg" ] && continue
+            case "$msg" in
+              feat*)     feat="$feat"$'\n'"- $msg" ;;
+              fix*)      fix="$fix"$'\n'"- $msg" ;;
+              perf*)     perf="$perf"$'\n'"- $msg" ;;
+              ci*|devops*) ci="$ci"$'\n'"- $msg" ;;
+              docs*)     docs="$docs"$'\n'"- $msg" ;;
+              refactor*|test*) refactor="$refactor"$'\n'"- $msg" ;;
+              *)         other="$other"$'\n'"- $msg" ;;
+            esac
+          done <<< "$COMMITS"
+
+          # Build categorized changelog
           {
             echo "## What's Changed"
             echo ""
-            git log "$RANGE" --pretty=format:"- %s (%h)" --no-merges
+            [ -n "$feat" ]     && echo "### New Features" && echo "$feat" && echo ""
+            [ -n "$fix" ]      && echo "### Bug Fixes" && echo "$fix" && echo ""
+            [ -n "$perf" ]     && echo "### Performance" && echo "$perf" && echo ""
+            [ -n "$ci" ]       && echo "### CI / DevOps" && echo "$ci" && echo ""
+            [ -n "$refactor" ] && echo "### Refactoring & Tests" && echo "$refactor" && echo ""
+            [ -n "$docs" ]     && echo "### Documentation" && echo "$docs" && echo ""
+            [ -n "$other" ]    && echo "### Other" && echo "$other" && echo ""
+            echo "---"
             echo ""
+            echo "**Installation:** Use \`ref: ${{ steps.version.outputs.tag }}\` in your ESPHome YAML."
           } > changelog.md
 
           cat changelog.md
 
+      - name: Select release notes
+        if: steps.check.outputs.count != '0'
+        run: |
+          if [ -f RELEASE_NOTES.md ]; then
+            echo "Using curated RELEASE_NOTES.md"
+            cp RELEASE_NOTES.md notes.md
+          else
+            echo "Using auto-generated changelog"
+            cp changelog.md notes.md
+          fi
+
       - name: Create release
+        if: steps.check.outputs.count != '0'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
@@ -74,5 +130,5 @@ jobs:
           git push origin "$TAG"
           gh release create "$TAG" \
             --title "$TAG" \
-            --notes-file changelog.md \
+            --notes-file notes.md \
             --latest
