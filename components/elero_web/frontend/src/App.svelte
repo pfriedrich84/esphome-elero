@@ -1,7 +1,6 @@
 <script>
   import { onMount } from 'svelte'
   import { DarkMode } from 'flowbite-svelte'
-  import { CheckCircleSolid, CloseCircleSolid } from 'flowbite-svelte-icons'
   import { s, init, getDiscoveredNew } from './lib/stores.svelte.js'
   import { uptimeFmt } from './lib/utils.js'
   import DevicesTab from './components/devices/DevicesTab.svelte'
@@ -101,11 +100,7 @@
 {#if s.toast.show}
   <div class="fixed bottom-5 left-1/2 -translate-x-1/2 z-50">
     <div class="flex items-center gap-3 px-4 py-3 rounded-lg shadow-lg text-sm {s.toast.error ? 'text-red-800 bg-red-50 dark:bg-red-800 dark:text-red-200' : 'text-green-800 bg-green-50 dark:bg-green-800 dark:text-green-200'}">
-      {#if s.toast.error}
-        <CloseCircleSolid class="w-5 h-5" />
-      {:else}
-        <CheckCircleSolid class="w-5 h-5" />
-      {/if}
+      {s.toast.error ? '&#x2716;' : '&#x2714;'}
       {s.toast.msg}
     </div>
   </div>

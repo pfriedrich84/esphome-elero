@@ -17,7 +17,6 @@
   },
   "dependencies": {
     "flowbite": "^3.0.0",
-    "flowbite-svelte": "^1.0.0",
-    "flowbite-svelte-icons": "^2.0.0"
+    "flowbite-svelte": "^1.0.0"
   }
 }
