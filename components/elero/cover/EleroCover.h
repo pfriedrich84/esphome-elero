@@ -96,6 +96,9 @@ class EleroCover : public cover::Cover, public Component, public EleroBlindBase 
 
  protected:
   void control(const cover::CoverCall &call) override;
+  /// Send stop via priority queue with retry (max 3 attempts, 5ms apart).
+  /// Returns true if enqueued, false if all retries failed (increments tx_drop_count_).
+  bool send_stop_priority_();
 
   t_elero_command command_ = {
     .counter = 1,
@@ -127,7 +130,12 @@ class EleroCover : public cover::Cover, public Component, public EleroBlindBase 
   cover::CoverOperation last_operation_{cover::COVER_OPERATION_OPENING};
   uint32_t stop_verify_at_{0};          // millis() when to poll for stop confirmation (0 = inactive)
   uint8_t  stop_verify_retries_{ELERO_STOP_VERIFY_MAX_RETRIES};  // verification counter (MAX = inactive)
+  uint32_t last_immediate_poll_ms_{0};  // rate-limit schedule_immediate_poll()
   bool queue_full_published_{false};    // true when "queue_full" has been published to text sensor
+  float    stop_trigger_position_{0};   // position when auto-stop was triggered (for correction)
+  uint32_t stop_trigger_ms_{0};         // millis() when auto-stop was triggered
+  bool     stop_urgent_active_{false};  // true if this cover has incremented stop_urgent_count_
+  uint32_t last_queue_drain_ms_{0};    // millis() when command queue last had a successful pop (for aging)
 };
 
 } // namespace elero

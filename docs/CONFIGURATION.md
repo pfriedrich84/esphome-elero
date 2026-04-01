@@ -24,8 +24,26 @@ elero:
 | `freq0` | Hex (0x00-0xFF) | Nein | `0x7a` | CC1101 Frequenz-Register FREQ0 |
 | `freq1` | Hex (0x00-0xFF) | Nein | `0x71` | CC1101 Frequenz-Register FREQ1 |
 | `freq2` | Hex (0x00-0xFF) | Nein | `0x21` | CC1101 Frequenz-Register FREQ2 |
+| `send_repeats` | Integer (1-20) | Nein | `1` | Anzahl der RF-Paketwiederholungen pro Befehl |
+| `send_delay` | Zeitdauer | Nein | `20ms` | Verzögerung zwischen wiederholten Paketen |
+| `auto_sensors` | Boolean | Nein | `true` | Erstellt automatisch Hub-Diagnose-Sensoren (Frequenz, RX/TX-Zähler, Watchdog-Recovery) |
 
 > Der Hub erweitert die ESPHome SPI-Konfiguration. `spi:` muss separat mit `clk_pin`, `mosi_pin` und `miso_pin` konfiguriert sein.
+
+> **Tipp für ESP32-S3:** Bei Speichermangel-Abstürzen während der Kompilierung (`Killed signal terminated program cc1plus`) hilft `compile_process_limit: 1` unter `esphome:`. Das serialisiert die Kompilierung und verhindert OOM-Kills.
+
+### Hub-Diagnose-Sensoren
+
+Bei `auto_sensors: true` (Standard) werden folgende Sensoren automatisch erstellt:
+
+| Sensor | Einheit | Beschreibung |
+|---|---|---|
+| Elero Frequency | MHz | Aktuelle CC1101-Frequenz |
+| Elero RX Count | - | Empfangene Pakete (gesamt) |
+| Elero TX Count | - | Gesendete Pakete (gesamt) |
+| Elero Watchdog Recovery Count | - | Radio-Watchdog-Wiederherstellungen |
+
+Diese können individuell überschrieben werden (`frequency_sensor`, `rx_count_sensor`, `tx_count_sensor`, `watchdog_recovery_sensor`) oder mit `auto_sensors: false` komplett deaktiviert werden.
 
 ### Frequenz-Varianten
 
@@ -78,7 +96,7 @@ cover:
 |---|---|---|---|
 | `open_duration` | Zeitdauer | `0s` | Fahrzeit zum vollständigen Öffnen. Wird für die zeitbasierte Positionssteuerung benötigt. Wenn gesetzt, muss auch `close_duration` gesetzt werden. |
 | `close_duration` | Zeitdauer | `0s` | Fahrzeit zum vollständigen Schließen. Wird für die zeitbasierte Positionssteuerung benötigt. Wenn gesetzt, muss auch `open_duration` gesetzt werden. |
-| `poll_interval` | Zeitdauer / `never` | `5min` | Intervall für Status-Abfragen. `never` deaktiviert das Polling. Während der Fahrt wird automatisch alle 2 s abgefragt. |
+| `poll_interval` | Zeitdauer / `never` | `5min` | Intervall für Status-Abfragen. `never` deaktiviert das Polling. Während der Fahrt wird alle 5 s abgefragt (bei aktivierter Positionssteuerung werden Fahrt-Abfragen übersprungen, da der Motor seinen Status selbst sendet). |
 | `supports_tilt` | Boolean | `false` | Aktiviert Tilt/Kipp-Unterstützung (z.B. für Raffstore). |
 | `auto_sensors` | Boolean | `true` | Erstellt automatisch RSSI- und Status-Sensoren für diesen Rollladen. Setzen Sie auf `false`, um diese manuell zu konfigurieren. |
 
@@ -145,6 +163,9 @@ light:
 | Parameter | Typ | Standard | Beschreibung |
 |---|---|---|---|
 | `dim_duration` | Zeitdauer | `0s` | Dimm-Fahrzeit von 0 % auf 100 %. `0s` = nur Ein/Aus (`ColorMode::ON_OFF`); Wert > 0 = Helligkeitssteuerung aktiv (`ColorMode::BRIGHTNESS`). |
+| `auto_sensors` | Boolean | `true` | Erstellt automatisch RSSI- und Status-Sensoren für dieses Licht. Setzen Sie auf `false`, um diese manuell zu konfigurieren. |
+| `rssi_sensor` | Sensor-Konfig | - | Explizite RSSI-Sensor-Konfiguration (überschreibt auto-generierten Sensor). |
+| `status_sensor` | Text-Sensor-Konfig | - | Explizite Status-Text-Sensor-Konfiguration (überschreibt auto-generierten Sensor). |
 
 ### Protokoll-Parameter
 
@@ -280,7 +301,16 @@ web_server_base:
   port: 80
 
 elero_web:
+  username: admin     # Optional: HTTP Basic Auth Benutzername
+  password: secret    # Optional: HTTP Basic Auth Passwort
 ```
+
+| Parameter | Typ | Pflicht | Standard | Beschreibung |
+|---|---|---|---|---|
+| `username` | String | Nein | - | HTTP Basic Auth Benutzername. Nur aktiv wenn auch `password` gesetzt ist. |
+| `password` | String | Nein | - | HTTP Basic Auth Passwort. Nur aktiv wenn auch `username` gesetzt ist. |
+
+Wenn beide gesetzt sind, erfordern alle `/elero`-Endpoints HTTP Basic Authentication (401 bei fehlender/falscher Authentifizierung).
 
 **Voraussetzungen:**
 - `web_server_base` wird automatisch von `elero_web` geladen. **Nicht** `web_server:` verwenden – das aktiviert die Standard-ESPHome-UI unter `/` wieder. Zugriff auf `/` leitet automatisch zu `/elero` weiter.
@@ -304,18 +334,28 @@ Alle Endpoints unterstuetzen CORS (Cross-Origin Resource Sharing).
 | `/elero/api/scan/start` | POST | RF-Scan starten |
 | `/elero/api/scan/stop` | POST | RF-Scan stoppen |
 | `/elero/api/discovered` | GET | Gefundene Geraete (JSON) |
-| `/elero/api/configured` | GET | Konfigurierte Covers mit aktuellem Status (JSON) |
+| `/elero/api/configured` | GET | Konfigurierte Covers und Lichter mit aktuellem Status (JSON) |
+| `/elero/api/status` | GET | Kombinierter Status: Covers, Lichter, Runtime, Diagnose (einzelner Poll) |
 | `/elero/api/yaml` | GET | YAML-Export fuer entdeckte Blinds |
 | `/elero/api/info` | GET | Geraete-Informationen (Version, Entdeckungen, etc.) |
-| `/elero/api/runtime` | GET | Laufzeitstatus (Scan aktiv, Blind-Anzahl, etc.) |
+| `/elero/api/runtime` | GET | Runtime-adoptierte Blinds (JSON Array) |
 
 **Rollladen-/Licht-Steuerung (erfordert Adresse):**
 
 | Endpoint | Methode | Beschreibung |
 |---|---|---|
-| `/elero/api/covers/0xADDRESS/command` | POST | Befehl an Rollladen/Licht senden (Body: `{"cmd": "up"\|"down"\|"stop"\|"tilt"}`) |
+| `/elero/api/covers/0xADDRESS/command` | POST | Befehl an Rollladen senden (Body: `{"cmd": "up"\|"down"\|"stop"\|"tilt"}`) |
 | `/elero/api/covers/0xADDRESS/settings` | POST | Einstellungen des Rollladens zur Laufzeit aendern (Body: JSON mit Timing/Poll-Einstellungen) |
-| `/elero/api/discovered/0xADDRESS/adopt` | POST | Entdeckten Rollladen in konfigurierte Covers aufnehmen |
+| `/elero/api/lights/0xADDRESS/command` | POST | Befehl an Licht senden (Body: `{"cmd": "on"\|"off"\|"stop"}`) |
+
+**Runtime-Blind-Adoption:**
+
+| Endpoint | Methode | Beschreibung |
+|---|---|---|
+| `/elero/api/discovered/0xADDRESS/adopt` | POST | Entdeckten Rollladen/Licht in Runtime-Blinds aufnehmen |
+| `/elero/api/runtime/0xADDRESS/command` | POST | Befehl an Runtime-Blind senden |
+| `/elero/api/runtime/0xADDRESS` | DELETE | Runtime-Blind entfernen |
+| `/elero/api/runtime/0xADDRESS/settings` | POST | Runtime-Blind-Einstellungen aendern |
 
 **Diagnose-Endpoints:**
 
@@ -323,6 +363,7 @@ Alle Endpoints unterstuetzen CORS (Cross-Origin Resource Sharing).
 |---|---|---|
 | `/elero/api/frequency` | GET | Aktuelle CC1101-Frequenzeinstellungen |
 | `/elero/api/frequency/set` | POST | CC1101-Frequenz aendern (Body: `{"freq0": 0x7a, "freq1": 0x71, "freq2": 0x21}`) |
+| `/elero/api/frequency/set_mhz` | POST | CC1101-Frequenz per MHz setzen (Body: `{"mhz": 868.35}`) |
 | `/elero/api/logs` | GET | Aktuelle Log-Eintraege (unterstützt `since`-Query-Parameter) |
 | `/elero/api/logs/clear` | POST | Erfasste Logs loeschen |
 | `/elero/api/logs/capture/start` | POST | Log-Erfassung starten |
@@ -331,6 +372,8 @@ Alle Endpoints unterstuetzen CORS (Cross-Origin Resource Sharing).
 | `/elero/api/dump/stop` | POST | RF-Paket-Dump beenden |
 | `/elero/api/packets` | GET | Erfasste RF-Pakete |
 | `/elero/api/packets/clear` | POST | Erfasste Pakete loeschen |
+| `/elero/api/packets/download` | GET | Erfasste RF-Pakete als Datei herunterladen |
+| `/elero/api/diagnostics/reset` | POST | Diagnose-Zaehler zuruecksetzen (RX, TX, Watchdog Recovery) |
 
 **Web-UI-Zustand (elero_web switch Sub-Plattform):**
 
@@ -344,18 +387,15 @@ Alle Endpoints unterstuetzen CORS (Cross-Origin Resource Sharing).
 | Code | Bedeutung | Wann |
 |---|---|---|
 | 200 | OK | Erfolgreiche Anfrage |
+| 401 | Unauthorized | HTTP Basic Auth erforderlich aber nicht angegeben/falsch |
 | 409 | Conflict | Scan starten wenn bereits laeuft, oder Scan stoppen wenn keiner laeuft |
 | 503 | Service Unavailable | Wenn Web-UI via Switch deaktiviert ist |
 
 Fehlerantworten werden als JSON zurueckgegeben: `{"error": "Beschreibung"}`
 
-**CORS-Unterstuetzung:**
+**CORS-Verhalten:**
 
-Alle API-Endpoints unterstuetzen Cross-Origin-Zugriff (CORS):
-- `Access-Control-Allow-Origin: *`
-- `Access-Control-Allow-Methods: GET, POST, OPTIONS`
-- `Access-Control-Allow-Headers: Content-Type`
-- Preflight-Requests (OPTIONS) werden auf allen API-Endpoints unterstuetzt
+Die API-Endpoints sind auf Same-Origin-Zugriff beschraenkt (kein `Access-Control-Allow-Origin` Header). Zugriff ueber den Browser funktioniert nur direkt ueber die IP-Adresse des Geraets. Cross-Origin-Requests (z.B. von anderen Webseiten) werden vom Browser blockiert. Preflight-Requests (OPTIONS) werden beantwortet, aber ohne Cross-Origin-Freigabe.
 
 ---
 
@@ -399,6 +439,8 @@ spi:
 elero:
   cs_pin: GPIO5
   gdo0_pin: GPIO26
+  # send_repeats: 1     # RF packet repetitions (1-20, default 1)
+  # auto_sensors: true  # Auto-generate hub diagnostic sensors (default true)
 
 cover:
   - platform: elero
