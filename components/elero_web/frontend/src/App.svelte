@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte'
   import { DarkMode } from 'flowbite-svelte'
-  import { s, init, getDiscoveredNew } from './lib/stores.svelte.js'
+  import { s, init, getDiscoveredNew, getFilteredLog } from './lib/stores.svelte.js'
   import { uptimeFmt } from './lib/utils.js'
   import DevicesTab from './components/devices/DevicesTab.svelte'
   import DiscoveryTab from './components/discovery/DiscoveryTab.svelte'
@@ -66,9 +66,9 @@
         <button onclick={() => s.tab = 'log'}
           class="inline-flex items-center gap-2 p-4 border-b-2 rounded-t-lg {s.tab === 'log' ? 'text-primary-600 border-primary-600 dark:text-primary-500 dark:border-primary-500' : 'border-transparent hover:text-gray-600 hover:border-gray-300 dark:hover:text-gray-300 text-gray-500 dark:text-gray-400'}">
           Log
-          {#if s.logEntries.length > 0}
-            <span class="inline-flex items-center justify-center w-5 h-5 text-xs font-semibold text-yellow-800 bg-yellow-100 rounded-full dark:bg-yellow-900 dark:text-yellow-300">
-              {s.logEntries.length}
+          {#if getFilteredLog().length > 0}
+            <span class="inline-flex items-center justify-center px-1.5 h-5 text-xs font-semibold text-yellow-800 bg-yellow-100 rounded-full dark:bg-yellow-900 dark:text-yellow-300">
+              {getFilteredLog().length}
             </span>
           {/if}
         </button>

@@ -34,13 +34,16 @@ export function stateColor(s) {
   return 'dark'
 }
 
-export function relTime(ms) {
-  if (!ms) return 'never'
-  const diff = Math.floor((Date.now() - ms) / 1000)
+/** Calculate relative time from ESP32 millis() timestamp vs current uptime */
+export function relTime(ms, uptimeMs) {
+  if (!ms || !uptimeMs) return 'never'
+  const diff = Math.floor((uptimeMs - ms) / 1000)
+  if (diff < 0)    return 'just now'
   if (diff < 5)    return 'just now'
   if (diff < 60)   return `${diff}s ago`
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
-  return `${Math.floor(diff / 3600)}h ago`
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
+  return `${Math.floor(diff / 86400)}d ago`
 }
 
 export function fmtTs(ms) {
@@ -73,9 +76,15 @@ export function escHtml(s) {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
+/** Strip ANSI escape codes (color codes from ESPHome logs) */
+export function stripAnsi(s) {
+  return s.replace(/\x1b\[[0-9;]*m/g, '').replace(/\[0?;?\d*m/g, '')
+}
+
 /** Replace 0xABCDEF hex addresses with name annotations in log messages */
 export function linkAddrs(msg, covers, lights) {
   if (!msg) return ''
+  msg = stripAnsi(msg)
   const addrMap = {}
   for (const c of covers) addrMap[c.blind_address] = c.name
   for (const l of lights) addrMap[l.blind_address] = l.name

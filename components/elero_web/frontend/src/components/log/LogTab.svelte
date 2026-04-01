@@ -1,6 +1,6 @@
 <script>
   import { s, startCapture, stopCapture, clearLog, getFilteredLog } from '../../lib/stores.svelte.js'
-  import { fmtTs, linkAddrs } from '../../lib/utils.js'
+  import { fmtTs, linkAddrs, stripAnsi } from '../../lib/utils.js'
   import { tick } from 'svelte'
 
   let logBox
@@ -78,8 +78,8 @@
       {#each filteredLog as entry (entry.t + '_' + entry.idx)}
         <div class="flex gap-2 py-px hover:bg-white/5">
           <span class="text-gray-500 min-w-[52px] shrink-0">{fmtTs(entry.t)}</span>
-          <span class="{levelColors[entry.level_str] || 'text-gray-500'} min-w-[44px] shrink-0 font-bold">{entry.level_str.toUpperCase().padEnd(5)}</span>
-          <span class="text-cyan-400 min-w-[80px] shrink-0">{entry.tag}</span>
+          <span class="{levelColors[stripAnsi(entry.level_str)] || 'text-gray-500'} min-w-[44px] shrink-0 font-bold">{stripAnsi(entry.level_str).toUpperCase().padEnd(5)}</span>
+          <span class="text-cyan-400 min-w-[80px] shrink-0">{stripAnsi(entry.tag)}</span>
           <span class="break-all">{@html linkAddrs(entry.msg, s.covers, s.lights)}</span>
         </div>
       {/each}
