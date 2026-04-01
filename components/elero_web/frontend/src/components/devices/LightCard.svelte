@@ -1,6 +1,6 @@
 <script>
   import { Badge } from 'flowbite-svelte'
-  import { lightCmd } from '../../lib/stores.svelte.js'
+  import { s, lightCmd } from '../../lib/stores.svelte.js'
   import { stateLabel, stateColor, relTime, rssiIcon } from '../../lib/utils.js'
 
   let { light } = $props()
@@ -52,7 +52,7 @@
     {/if}
 
     <!-- Last seen -->
-    <p class="text-[11px] text-gray-400 dark:text-gray-500 mt-2">Last seen: {relTime(light.last_seen_ms)}</p>
+    <p class="text-[11px] text-gray-400 dark:text-gray-500 mt-2">Last seen: {relTime(light.last_seen_ms, s.uptimeMs)}</p>
   </div>
 
   <!-- Control buttons -->

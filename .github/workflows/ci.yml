@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, beta, devops]
+    branches: [main, beta, devops, feature/web-ui-rewrite]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -129,6 +129,37 @@ jobs:
               console.log(`Created issue: ${title}`);
             }
 
+  frontend-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: components/elero_web/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm install
+      - run: npm run build
+      - name: Verify elero_web_ui.h was generated
+        run: |
+          if [ ! -f ../elero_web_ui.h ]; then
+            echo "::error::elero_web_ui.h was not generated"
+            exit 1
+          fi
+          SIZE=$(stat -c%s ../elero_web_ui.h)
+          echo "Generated elero_web_ui.h: ${SIZE} bytes"
+          if [ "$SIZE" -lt 1000 ]; then
+            echo "::error::elero_web_ui.h is suspiciously small (${SIZE} bytes)"
+            exit 1
+          fi
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: elero-web-ui
+          path: components/elero_web/elero_web_ui.h
+          retention-days: 14
+
   unit-tests:
     runs-on: ubuntu-latest
     steps:
@@ -153,13 +184,14 @@ jobs:
 
   ci-ok:
     if: always()
-    needs: [lint, esphome-compile, unit-tests, python-tests]
+    needs: [lint, esphome-compile, frontend-build, unit-tests, python-tests]
     runs-on: ubuntu-latest
     steps:
       - name: Verify all jobs passed
         run: |
           if [[ "${{ needs.lint.result }}" != "success" ]] ||
              [[ "${{ needs.esphome-compile.result }}" != "success" ]] ||
+             [[ "${{ needs.frontend-build.result }}" != "success" ]] ||
              [[ "${{ needs.unit-tests.result }}" != "success" ]] ||
              [[ "${{ needs.python-tests.result }}" != "success" ]]; then
             echo "::error::One or more CI jobs failed"

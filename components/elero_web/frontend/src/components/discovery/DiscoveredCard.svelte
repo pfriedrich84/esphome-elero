@@ -1,6 +1,6 @@
 <script>
   import { Badge } from 'flowbite-svelte'
-  import { startAdopt, showYamlBlind } from '../../lib/stores.svelte.js'
+  import { s, startAdopt, showYamlBlind } from '../../lib/stores.svelte.js'
   import { stateLabel, stateColor, relTime } from '../../lib/utils.js'
 
   let { blind, isKnown = false } = $props()
@@ -24,7 +24,7 @@
     {/if}
     <span>{blind.rssi.toFixed(1)} dBm</span>
     <span>{blind.times_seen}x seen</span>
-    <span>{relTime(blind.last_seen_ms)}</span>
+    <span>{relTime(blind.last_seen_ms, s.uptimeMs)}</span>
   </div>
   {#if !isKnown}
     <div class="flex gap-2 mt-3">
