@@ -1,4 +1,5 @@
-@import "tailwindcss" source("../{src,index.html}");
+@import "tailwindcss";
 @plugin 'flowbite/plugin';
 @custom-variant dark (&:where(.dark, .dark *));
+@source "..";
 @source "../node_modules/flowbite-svelte/dist";
