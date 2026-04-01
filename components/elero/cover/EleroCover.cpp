@@ -372,14 +372,23 @@ void EleroCover::control(const cover::CoverCall &call) {
       ESP_LOGW(TAG, "Blind 0x%06x position was NAN, reset to 0.5",
                this->command_.blind_addr);
     }
-    // Dead-zone: if already within 1% of target (and not requesting fully
-    // open/closed), skip movement.  Without this, requesting the exact
-    // current position would incorrectly start closing because
-    // (pos > this->position) is false when they're equal.
-    if (pos != COVER_OPEN && pos != COVER_CLOSED &&
-        (this->open_duration_ > 0) && (this->close_duration_ > 0) &&
-        std::abs(pos - cur) < 0.01f) {
-      // Already at target — no movement needed
+    // Short-circuit: already at fully open/closed — skip movement entirely.
+    // Without this, commanding 100% when already at 100% sends a redundant
+    // RF command and enters OPENING state with no auto-stop (is_at_target
+    // returns false for endpoint targets), spamming logs every second until
+    // the blind's RF response arrives (which may never come).
+    if (pos == COVER_OPEN && cur >= (1.0f - 0.01f) &&
+        this->current_operation == COVER_OPERATION_IDLE &&
+        (this->open_duration_ > 0) && (this->close_duration_ > 0)) {
+      // Already at open — no movement needed
+    } else if (pos == COVER_CLOSED && cur <= (0.0f + 0.01f) &&
+               this->current_operation == COVER_OPERATION_IDLE &&
+               (this->open_duration_ > 0) && (this->close_duration_ > 0)) {
+      // Already at closed — no movement needed
+    } else if (pos != COVER_OPEN && pos != COVER_CLOSED &&
+               (this->open_duration_ > 0) && (this->close_duration_ > 0) &&
+               std::abs(pos - cur) < 0.01f) {
+      // Already at intermediate target — no movement needed
     } else if((pos > cur) || (pos == COVER_OPEN)) {
       this->start_movement(COVER_OPERATION_OPENING);
     } else {
