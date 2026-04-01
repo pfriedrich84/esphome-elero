@@ -1,68 +1,61 @@
 import { api } from './api.js'
 
-// ── Navigation ───────────────────────────────────────────────────────────────
-export let tab = $state('devices')
+/** Single reactive state object — Svelte 5 requires $state in an object for cross-module mutation */
+export const s = $state({
+  // Navigation
+  tab: 'devices',
+  // Device info
+  deviceName: '',
+  uptimeMs: 0,
+  // Devices
+  covers: [],
+  lights: [],
+  settingsOpen: null,
+  // Discovery
+  scanning: false,
+  allDiscovered: [],
+  // Adopt modal
+  adoptTarget: null,
+  adoptName: '',
+  adoptType: 'cover',
+  // YAML modal
+  yamlContent: null,
+  // Log
+  logCapture: false,
+  logLevel: 3,
+  logAutoScroll: true,
+  logEntries: [],
+  logLastTs: 0,
+  // Config
+  freq: { freq2: '', freq1: '', freq0: '' },
+  freqStatus: '',
+  dumpActive: false,
+  dumpPackets: [],
+  // Toast
+  toast: { show: false, error: false, msg: '' },
+})
 
-// ── Device info ──────────────────────────────────────────────────────────────
-export let deviceName = $state('')
-export let uptimeMs = $state(0)
-
-// ── Devices ──────────────────────────────────────────────────────────────────
-export let covers = $state([])
-export let lights = $state([])
-export let settingsOpen = $state(null)
-
-// ── Discovery ────────────────────────────────────────────────────────────────
-export let scanning = $state(false)
-export let allDiscovered = $state([])
-
+// ── Derived helpers ──────────────────────────────────────────────────────────
 export function getDiscoveredNew() {
-  return allDiscovered.filter(b => !b.already_configured && !b.already_adopted)
+  return s.allDiscovered.filter(b => !b.already_configured && !b.already_adopted)
 }
 export function getDiscoveredKnown() {
-  return allDiscovered.filter(b => b.already_configured || b.already_adopted)
+  return s.allDiscovered.filter(b => b.already_configured || b.already_adopted)
 }
-
-// ── Adopt modal ──────────────────────────────────────────────────────────────
-export let adoptTarget = $state(null)
-export let adoptName = $state('')
-export let adoptType = $state('cover')
-
-// ── YAML modal ───────────────────────────────────────────────────────────────
-export let yamlContent = $state(null)
-
-// ── Log ──────────────────────────────────────────────────────────────────────
-export let logCapture = $state(false)
-export let logLevel = $state(3)
-export let logAutoScroll = $state(true)
-export let logEntries = $state([])
-export let logLastTs = $state(0)
-
 export function getFilteredLog() {
-  return logEntries.filter(e => e.level <= logLevel)
+  return s.logEntries.filter(e => e.level <= s.logLevel)
 }
-
-// ── Config ───────────────────────────────────────────────────────────────────
-export let freq = $state({ freq2: '', freq1: '', freq0: '' })
-export let freqStatus = $state('')
-export let dumpActive = $state(false)
-export let dumpPackets = $state([])
 
 // ── Toast ────────────────────────────────────────────────────────────────────
-export let toast = $state({ show: false, error: false, msg: '' })
 let toastTimer = null
-
 export function showToast(msg, isError = false) {
   if (toastTimer) clearTimeout(toastTimer)
-  toast.show = true
-  toast.error = isError
-  toast.msg = msg
-  toastTimer = setTimeout(() => { toast.show = false }, 3500)
+  s.toast = { show: true, error: isError, msg }
+  toastTimer = setTimeout(() => { s.toast.show = false }, 3500)
 }
 
 // ── Polling ──────────────────────────────────────────────────────────────────
 let polling = false
-let pollTimer = null
 
 export async function init() {
   await refreshInfo()
@@ -72,7 +65,7 @@ export async function init() {
 }
 
 function schedulePoll() {
-  pollTimer = setTimeout(async () => {
+  setTimeout(async () => {
     if (polling) { schedulePoll(); return }
     polling = true
     try { await refreshStatus() } catch {}
@@ -84,20 +77,20 @@ function schedulePoll() {
 export async function refreshInfo() {
   try {
     const d = await api('GET', '/elero/api/info')
-    deviceName = d.device_name || ''
-    uptimeMs = d.uptime_ms || 0
-    freq.freq2 = d.freq2 || freq.freq2
-    freq.freq1 = d.freq1 || freq.freq1
-    freq.freq0 = d.freq0 || freq.freq0
+    s.deviceName = d.device_name || ''
+    s.uptimeMs = d.uptime_ms || 0
+    s.freq.freq2 = d.freq2 || s.freq.freq2
+    s.freq.freq1 = d.freq1 || s.freq.freq1
+    s.freq.freq0 = d.freq0 || s.freq.freq0
   } catch {}
 }
 
 export async function refreshStatus() {
-  const params = { tab }
-  if (tab === 'log' && logLastTs) params.since = logLastTs
+  const params = { tab: s.tab }
+  if (s.tab === 'log' && s.logLastTs) params.since = s.logLastTs
   const d = await api('GET', '/elero/api/status', params)
 
-  covers = (d.covers || []).map(c => ({
+  s.covers = (d.covers || []).map(c => ({
     ...c,
     _edit: {
       open_duration_ms:  c.open_duration_ms,
@@ -105,32 +98,32 @@ export async function refreshStatus() {
       poll_interval_ms:  c.poll_interval_ms,
     }
   }))
-  lights = (d.lights || []).map(l => ({
+  s.lights = (d.lights || []).map(l => ({
     ...l,
     _edit: { dim_duration_ms: l.dim_duration_ms }
   }))
-  uptimeMs += 3000
+  s.uptimeMs += 3000
 
   if (d.discovered !== undefined) {
-    scanning = d.scanning
-    allDiscovered = d.discovered || []
+    s.scanning = d.scanning
+    s.allDiscovered = d.discovered || []
   }
   if (d.log_entries !== undefined) {
-    logCapture = d.capture_active
+    s.logCapture = d.capture_active
     if (d.log_entries.length > 0) {
-      const ne = d.log_entries.map((e, i) => ({ ...e, idx: logEntries.length + i }))
-      logEntries = [...logEntries, ...ne]
-      if (logEntries.length > 500) logEntries = logEntries.slice(logEntries.length - 500)
-      logLastTs = ne[ne.length - 1].t
+      const ne = d.log_entries.map((e, i) => ({ ...e, idx: s.logEntries.length + i }))
+      s.logEntries = [...s.logEntries, ...ne]
+      if (s.logEntries.length > 500) s.logEntries = s.logEntries.slice(s.logEntries.length - 500)
+      s.logLastTs = ne[ne.length - 1].t
     }
   }
   if (d.packets !== undefined) {
-    dumpActive = d.dump_active
-    dumpPackets = d.packets || []
+    s.dumpActive = d.dump_active
+    s.dumpPackets = d.packets || []
   }
 }
 
-// ── Cover commands ───────────────────────────────────────────────────────────
+// ── Cover/Light commands ─────────────────────────────────────────────────────
 export async function coverCmd(c, cmd) {
   try {
     await api('POST', `/elero/api/covers/${c.blind_address}/command`, { cmd })
@@ -153,7 +146,7 @@ export async function saveSettings(c) {
       poll_interval:  c._edit.poll_interval_ms,
     })
     showToast(`${c.name}: settings saved`)
-    settingsOpen = null
+    s.settingsOpen = null
   } catch (e) { showToast(`Save failed: ${e.message}`, true) }
 }
 
@@ -161,7 +154,7 @@ export async function saveSettings(c) {
 export async function startScan() {
   try {
     await api('POST', '/elero/api/scan/start')
-    scanning = true
+    s.scanning = true
     showToast('Scan started')
   } catch (e) { showToast(`Scan start failed: ${e.message}`, true) }
 }
@@ -169,32 +162,32 @@ export async function startScan() {
 export async function stopScan() {
   try {
     await api('POST', '/elero/api/scan/stop')
-    scanning = false
+    s.scanning = false
     showToast('Scan stopped')
   } catch (e) { showToast(`Scan stop failed: ${e.message}`, true) }
 }
 
 export function startAdopt(b) {
-  adoptTarget = b
-  adoptName = ''
-  adoptType = (b.last_state === 'on' || b.last_state === 'off') ? 'light' : 'cover'
+  s.adoptTarget = b
+  s.adoptName = ''
+  s.adoptType = (b.last_state === 'on' || b.last_state === 'off') ? 'light' : 'cover'
 }
 
 export async function confirmAdopt() {
-  if (!adoptTarget) return
+  if (!s.adoptTarget) return
   try {
-    await api('POST', `/elero/api/discovered/${adoptTarget.blind_address}/adopt`,
-              { name: adoptName || adoptTarget.blind_address, type: adoptType })
-    showToast(`Adopted as "${adoptName || adoptTarget.blind_address}"`)
-    adoptTarget = null
-    tab = 'devices'
+    await api('POST', `/elero/api/discovered/${s.adoptTarget.blind_address}/adopt`,
+              { name: s.adoptName || s.adoptTarget.blind_address, type: s.adoptType })
+    showToast(`Adopted as "${s.adoptName || s.adoptTarget.blind_address}"`)
+    s.adoptTarget = null
+    s.tab = 'devices'
   } catch (e) { showToast(`Adopt failed: ${e.message}`, true) }
 }
 
 export function showYamlBlind(b) {
   const isLight = b.last_state === 'on' || b.last_state === 'off'
   if (isLight) {
-    yamlContent =
+    s.yamlContent =
       `light:\n` +
       `  - platform: elero\n` +
       `    blind_address: ${b.blind_address}\n` +
@@ -208,7 +201,7 @@ export function showYamlBlind(b) {
       `    pck_inf1: ${b.pck_inf1}\n` +
       `    pck_inf2: ${b.pck_inf2}\n`
   } else {
-    yamlContent =
+    s.yamlContent =
       `cover:\n` +
       `  - platform: elero\n` +
       `    blind_address: ${b.blind_address}\n` +
@@ -237,7 +230,7 @@ export async function downloadYaml() {
 }
 
 export function copyYaml() {
-  navigator.clipboard?.writeText(yamlContent)
+  navigator.clipboard?.writeText(s.yamlContent)
     .then(() => showToast('Copied!'))
     .catch(() => showToast('Copy failed', true))
 }
@@ -246,7 +239,7 @@ export function copyYaml() {
 export async function startCapture() {
   try {
     await api('POST', '/elero/api/logs/capture/start')
-    logCapture = true
+    s.logCapture = true
     showToast('Log capture started')
   } catch (e) { showToast(`Failed: ${e.message}`, true) }
 }
@@ -254,7 +247,7 @@ export async function startCapture() {
 export async function stopCapture() {
   try {
     await api('POST', '/elero/api/logs/capture/stop')
-    logCapture = false
+    s.logCapture = false
     showToast('Log capture stopped')
   } catch (e) { showToast(`Failed: ${e.message}`, true) }
 }
@@ -262,8 +255,8 @@ export async function stopCapture() {
 export async function clearLog() {
   try {
     await api('POST', '/elero/api/logs/clear')
-    logEntries = []
-    logLastTs = 0
+    s.logEntries = []
+    s.logLastTs = 0
     showToast('Log cleared')
   } catch (e) { showToast(`Failed: ${e.message}`, true) }
 }
@@ -272,37 +265,37 @@ export async function clearLog() {
 export async function loadFrequency() {
   try {
     const d = await api('GET', '/elero/api/frequency')
-    freq.freq2 = d.freq2
-    freq.freq1 = d.freq1
-    freq.freq0 = d.freq0
+    s.freq.freq2 = d.freq2
+    s.freq.freq1 = d.freq1
+    s.freq.freq0 = d.freq0
   } catch {}
 }
 
 export function applyPreset(v) {
   if (!v) return
   const [f2, f1, f0] = v.split(',')
-  freq.freq2 = '0x' + f2
-  freq.freq1 = '0x' + f1
-  freq.freq0 = '0x' + f0
+  s.freq.freq2 = '0x' + f2
+  s.freq.freq1 = '0x' + f1
+  s.freq.freq0 = '0x' + f0
 }
 
 export async function setFrequency() {
-  freqStatus = 'Applying...'
+  s.freqStatus = 'Applying...'
   try {
-    const d = await api('POST', '/elero/api/frequency/set', { freq2: freq.freq2, freq1: freq.freq1, freq0: freq.freq0 })
-    freq.freq2 = d.freq2
-    freq.freq1 = d.freq1
-    freq.freq0 = d.freq0
-    freqStatus = ''
+    const d = await api('POST', '/elero/api/frequency/set', { freq2: s.freq.freq2, freq1: s.freq.freq1, freq0: s.freq.freq0 })
+    s.freq.freq2 = d.freq2
+    s.freq.freq1 = d.freq1
+    s.freq.freq0 = d.freq0
+    s.freqStatus = ''
     showToast(`Frequency set: ${d.freq2} ${d.freq1} ${d.freq0}`)
-  } catch (e) { freqStatus = ''; showToast(`Failed: ${e.message}`, true) }
+  } catch (e) { s.freqStatus = ''; showToast(`Failed: ${e.message}`, true) }
 }
 
 // ── Packet dump ──────────────────────────────────────────────────────────────
 export async function startDump() {
   try {
     await api('POST', '/elero/api/dump/start')
-    dumpActive = true
+    s.dumpActive = true
     showToast('Packet dump started')
   } catch (e) { showToast(`Failed: ${e.message}`, true) }
 }
@@ -310,7 +303,7 @@ export async function startDump() {
 export async function stopDump() {
   try {
     await api('POST', '/elero/api/dump/stop')
-    dumpActive = false
+    s.dumpActive = false
     showToast('Packet dump stopped')
   } catch (e) { showToast(`Failed: ${e.message}`, true) }
 }
@@ -318,7 +311,7 @@ export async function stopDump() {
 export async function clearDump() {
   try {
     await api('POST', '/elero/api/packets/clear')
-    dumpPackets = []
+    s.dumpPackets = []
     showToast('Dump cleared')
   } catch (e) { showToast(`Failed: ${e.message}`, true) }
 }

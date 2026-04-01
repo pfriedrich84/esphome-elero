@@ -1,7 +1,7 @@
 <script>
-  import { Button, Progressbar, Badge } from 'flowbite-svelte'
+  import { Badge } from 'flowbite-svelte'
   import { ChevronUpSolid, ChevronDownSolid, StopSolid, AdjustmentsHorizontalSolid } from 'flowbite-svelte-icons'
-  import { coverCmd, saveSettings, settingsOpen } from '../../lib/stores.svelte.js'
+  import { s, coverCmd, saveSettings } from '../../lib/stores.svelte.js'
   import { stateLabel, stateColor, relTime, rssiIcon } from '../../lib/utils.js'
   import SettingsPanel from './SettingsPanel.svelte'
 
@@ -9,29 +9,22 @@
 
   let rssi = $derived(rssiIcon(cover.rssi))
   let posPercent = $derived(cover.position !== null ? Math.round(cover.position * 100) : null)
-  let isExpanded = $derived(settingsOpen === cover.blind_address)
+  let isExpanded = $derived(s.settingsOpen === cover.blind_address)
 
   function toggleSettings() {
-    settingsOpen = isExpanded ? null : cover.blind_address
+    s.settingsOpen = isExpanded ? null : cover.blind_address
   }
 </script>
 
 <div class="bg-white border border-gray-200 rounded-lg shadow-sm dark:bg-gray-800 dark:border-gray-700">
-  <!-- Header -->
   <div class="p-4 pb-3">
     <div class="flex items-start justify-between">
       <div class="min-w-0">
         <h3 class="text-sm font-semibold text-gray-900 dark:text-white truncate">{cover.name}</h3>
         <div class="flex flex-wrap items-center gap-x-2 gap-y-1 mt-1 text-xs text-gray-500 dark:text-gray-400">
           <span class="font-mono">{cover.blind_address}</span>
-          {#if cover.channel}
-            <span>CH {cover.channel}</span>
-          {/if}
-          {#if cover.rssi}
-            <span title="{rssi.label}">
-              {'|'.repeat(rssi.bars)}{'|'.repeat(3 - rssi.bars).replace(/\|/g, ' ')} {rssi.label}
-            </span>
-          {/if}
+          {#if cover.channel}<span>CH {cover.channel}</span>{/if}
+          {#if cover.rssi}<span title="{rssi.label}">{rssi.label}</span>{/if}
         </div>
       </div>
       <div class="flex flex-col items-end gap-1">
@@ -42,7 +35,6 @@
       </div>
     </div>
 
-    <!-- Position bar -->
     {#if posPercent !== null && cover.open_duration_ms > 0}
       <div class="mt-3">
         <div class="flex justify-between items-center mb-1">
@@ -55,11 +47,9 @@
       </div>
     {/if}
 
-    <!-- Last seen -->
     <p class="text-[11px] text-gray-400 dark:text-gray-500 mt-2">Last seen: {relTime(cover.last_seen_ms)}</p>
   </div>
 
-  <!-- Control buttons -->
   <div class="flex items-center gap-2 px-4 pb-3">
     <button onclick={() => coverCmd(cover, 'open')}
       class="flex-1 inline-flex items-center justify-center gap-1 px-3 py-2 text-xs font-medium text-green-700 bg-green-50 border border-green-200 rounded-lg hover:bg-green-100 dark:bg-green-900/30 dark:text-green-400 dark:border-green-800 dark:hover:bg-green-900/50 transition-colors">
@@ -86,7 +76,6 @@
     </button>
   </div>
 
-  <!-- Settings panel -->
   {#if isExpanded}
     <SettingsPanel {cover} />
   {/if}
