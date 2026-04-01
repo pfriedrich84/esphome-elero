@@ -97,6 +97,16 @@ jobs:
 
           cat changelog.md
 
+      - name: Select release notes
+        run: |
+          if [ -f RELEASE_NOTES.md ]; then
+            echo "Using curated RELEASE_NOTES.md"
+            cp RELEASE_NOTES.md notes.md
+          else
+            echo "Using auto-generated changelog"
+            cp changelog.md notes.md
+          fi
+
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -106,5 +116,5 @@ jobs:
           git push origin "$TAG"
           gh release create "$TAG" \
             --title "$TAG" \
-            --notes-file changelog.md \
+            --notes-file notes.md \
             --latest
