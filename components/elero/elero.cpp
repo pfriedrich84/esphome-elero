@@ -1,4 +1,5 @@
 #include "elero.h"
+#include "elero_dispatch_logic.h"
 #include "esphome/core/log.h"
 #include "esphome/core/helpers.h"
 #ifdef USE_LOGGER
@@ -152,7 +153,8 @@ void dispatch_commands(Elero *parent, std::queue<uint8_t> &queue,
   if (last_queue_drain_ms != nullptr) {
     if (queue.empty()) {
       *last_queue_drain_ms = now;
-    } else if ((now - *last_queue_drain_ms) > ELERO_COMMAND_QUEUE_MAX_AGE_MS) {
+    } else if (dispatch_logic::should_clear_stale_queue(now, *last_queue_drain_ms,
+                                                         ELERO_COMMAND_QUEUE_MAX_AGE_MS)) {
       ESP_LOGW(tag, "Queue stale for 0x%06x (%lums without drain), clearing %d commands",
                blind_addr, (unsigned long)(now - *last_queue_drain_ms), (int)queue.size());
       while (!queue.empty()) queue.pop();
@@ -168,24 +170,16 @@ void dispatch_commands(Elero *parent, std::queue<uint8_t> &queue,
   // no longer blocked — only the cover that triggered auto-stop defers.
   // CHECK (status poll) is exempt — it's the verify poll itself and must go through.
   if (stop_urgent_self && !queue.empty()) {
-    uint8_t front_cmd = queue.front();
-    if (front_cmd != ELERO_COMMAND_COVER_STOP && front_cmd != ELERO_COMMAND_COVER_CHECK) {
+    if (dispatch_logic::should_defer_for_stop(true, queue.front(),
+                                              ELERO_COMMAND_COVER_STOP, ELERO_COMMAND_COVER_CHECK)) {
       return;  // defer until this cover's stop verification completes
     }
   }
 
-  // Exponential backoff on retries: normal delay is send_delay (1ms),
-  // but after failures we wait 10/20/40ms to break the thundering herd
-  // when multiple covers retry simultaneously.
-  uint32_t delay = parent->get_send_delay();
-  if (send_retries > 0) {
-    uint8_t shift = (send_retries > 3) ? 3 : send_retries;
-    delay += (10u << shift);  // +20ms, +40ms, +80ms
-  }
+  uint32_t delay = dispatch_logic::calculate_dispatch_delay(parent->get_send_delay(), send_retries);
 
-  // Stop commands bypass backoff entirely — they are time-critical
   bool is_stop = (!queue.empty() && queue.front() == ELERO_COMMAND_COVER_STOP);
-  if (is_stop || (now - last_command) > delay) {
+  if (dispatch_logic::is_dispatch_ready(is_stop, now, last_command, delay)) {
     if (!queue.empty()) {
       cmd.payload[4] = queue.front();
       auto result = parent->send_command(&cmd);
@@ -212,7 +206,7 @@ void dispatch_commands(Elero *parent, std::queue<uint8_t> &queue,
         send_retries++;
         ESP_LOGD(tag, "Retry #%d for 0x%06x (backoff %lums)",
                  send_retries, blind_addr, (unsigned long)delay);
-        if (send_retries > ELERO_SEND_RETRIES) {
+        if (dispatch_logic::should_drop_after_retries(send_retries, ELERO_SEND_RETRIES)) {
           ESP_LOGE(tag, "Hit maximum retries for 0x%06x, giving up.", blind_addr);
           parent->increment_tx_drop_count();
           send_retries = 0;
