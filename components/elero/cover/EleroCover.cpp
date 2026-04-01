@@ -154,6 +154,18 @@ void EleroCover::loop() {
       this->last_publish_ = now;
     }
 
+    // Endpoint arrival: position dead-reckoned to 0.0 or 1.0 (clamped).
+    // The blind's own end-stop handles the physical stop -- no STOP command
+    // needed.  Just transition to IDLE so we stop publishing OPENING/CLOSING
+    // at the endpoint every second.  The post_movement_poll_at_ timer
+    // (already scheduled by start_movement) confirms final state via RF.
+    if ((this->current_operation == COVER_OPERATION_CLOSING && this->position <= 0.0f) ||
+        (this->current_operation == COVER_OPERATION_OPENING && this->position >= 1.0f)) {
+      this->current_operation = COVER_OPERATION_IDLE;
+      this->publish_state(false);
+      this->last_publish_ = now;
+    }
+
     // Publish position every second
     if(now - this->last_publish_ > 1000) {
       this->publish_state(false);
