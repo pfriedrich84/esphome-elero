@@ -1,4 +1,5 @@
 #include "EleroLight.h"
+#include "../elero_light_logic.h"
 #include "esphome/core/log.h"
 
 namespace esphome {
@@ -205,9 +206,9 @@ void EleroLight::recompute_brightness() {
     return;
   }
 
-  float dir = this->dim_up_ ? 1.0f : -1.0f;
-  this->brightness_ += dir * (float)elapsed / (float)this->dim_duration_;
-  this->brightness_ = clamp(this->brightness_, 0.0f, 1.0f);
+  this->brightness_ = light_logic::recompute_brightness(this->brightness_, this->dim_up_,
+                                                        this->dim_duration_, elapsed,
+                                                        ELERO_TIMEOUT_MOVEMENT);
   this->last_recompute_time_ = now;
 }
 
