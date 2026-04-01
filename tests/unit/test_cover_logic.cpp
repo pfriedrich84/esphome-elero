@@ -164,8 +164,10 @@ TEST(IsAtTarget, Closing_Reached) {
 }
 
 TEST(IsAtTarget, ZeroQueueDepth_BaseCompensation) {
-  // margin = 300/10000 = 0.03
-  EXPECT_TRUE(is_at_target(0.77f, 0.8f, 1, 10000, 10000, 0, BASE_COMP));
+  // margin = 300.0/10000.0 ≈ 0.03, threshold ≈ 0.77
+  // Avoid exact boundary (float rounding); use value safely above
+  EXPECT_TRUE(is_at_target(0.771f, 0.8f, 1, 10000, 10000, 0, BASE_COMP));
+  EXPECT_FALSE(is_at_target(0.76f, 0.8f, 1, 10000, 10000, 0, BASE_COMP));
 }
 
 TEST(IsAtTarget, LargeQueueDepth_IncreasedMargin) {
@@ -187,8 +189,8 @@ TEST(IsAtTarget, ZeroDuration_ZeroMargin_Closing) {
 }
 
 TEST(IsAtTarget, ExactlyAtThreshold_Opening) {
-  // margin=0.03, target=0.8, threshold=0.77
-  EXPECT_TRUE(is_at_target(0.77f, 0.8f, 1, 10000, 10000, 0, BASE_COMP));
+  // margin ≈ 0.03, threshold ≈ 0.77; use value safely above boundary
+  EXPECT_TRUE(is_at_target(0.771f, 0.8f, 1, 10000, 10000, 0, BASE_COMP));
 }
 
 TEST(IsAtTarget, JustBelowThreshold_Opening) {

@@ -102,12 +102,12 @@ void EleroWebServer::dump_config() {
 
 bool EleroWebServer::canHandle(AsyncWebServerRequest *request) const {
   if (!this->enabled_.load(std::memory_order_acquire)) return false;
-  const std::string &url = request->url_to();
+  const std::string &url = request->url();
   return url == "/" || (url.size() >= 6 && url.compare(0, 6, "/elero") == 0);
 }
 
 void EleroWebServer::handleRequest(AsyncWebServerRequest *request) {
-  const std::string url = request->url_to();
+  const std::string url = request->url();
   const auto method = request->method();
 
   if (method == HTTP_OPTIONS) { handle_options(request); return; }
