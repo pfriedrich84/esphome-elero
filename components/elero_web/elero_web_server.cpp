@@ -3,6 +3,7 @@
 #include "elero_web_utils.h"
 #include "esphome/core/log.h"
 #include "esphome/core/application.h"
+#include "esphome/core/version.h"
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
@@ -102,12 +103,22 @@ void EleroWebServer::dump_config() {
 
 bool EleroWebServer::canHandle(AsyncWebServerRequest *request) const {
   if (!this->enabled_.load(std::memory_order_acquire)) return false;
-  const std::string &url = request->url();
+#if ESPHOME_VERSION_CODE >= VERSION_CODE(2026, 3, 0)
+  char url_buf[AsyncWebServerRequest::URL_BUF_SIZE];
+  const std::string url(request->url_to(url_buf));
+#else
+  const std::string url = request->url();
+#endif
   return url == "/" || (url.size() >= 6 && url.compare(0, 6, "/elero") == 0);
 }
 
 void EleroWebServer::handleRequest(AsyncWebServerRequest *request) {
+#if ESPHOME_VERSION_CODE >= VERSION_CODE(2026, 3, 0)
+  char url_buf[AsyncWebServerRequest::URL_BUF_SIZE];
+  const std::string url(request->url_to(url_buf));
+#else
   const std::string url = request->url();
+#endif
   const auto method = request->method();
 
   if (method == HTTP_OPTIONS) { handle_options(request); return; }
