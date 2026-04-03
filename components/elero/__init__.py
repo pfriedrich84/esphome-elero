@@ -93,7 +93,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_FREQ1, default=0x71): cv.hex_int_range(min=0x0, max=0xFF),
             cv.Optional(CONF_FREQ2, default=0x21): cv.hex_int_range(min=0x0, max=0xFF),
             cv.Optional(CONF_SEND_REPEATS, default=1): cv.int_range(min=1, max=20),
-            cv.Optional(CONF_SEND_DELAY, default="20ms"): cv.positive_time_period_milliseconds,
+            cv.Optional(CONF_SEND_DELAY, default="10ms"): cv.positive_time_period_milliseconds,
             cv.Optional(CONF_AUTO_SENSORS, default=True): cv.boolean,
             cv.Optional(CONF_FREQUENCY_SENSOR): _FREQUENCY_SENSOR_SCHEMA,
             cv.Optional(CONF_RX_COUNT_SENSOR): _RX_COUNT_SENSOR_SCHEMA,
@@ -202,7 +202,7 @@ async def to_code(config):
         "RADIOLIB_EXCLUDE_RFM2X",
         "RADIOLIB_EXCLUDE_SX127X",
         "RADIOLIB_EXCLUDE_SX126X",
-        "RADIOLIB_EXCLUDE_STM32WLX",
+        # STM32WLX is NOT listed here — RadioLib auto-excludes it on non-STM32 platforms
         "RADIOLIB_EXCLUDE_SX128X",
         "RADIOLIB_EXCLUDE_LR11X0",
         # Protocol decoders (none used by this project)

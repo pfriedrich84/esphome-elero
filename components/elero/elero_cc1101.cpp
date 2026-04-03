@@ -12,7 +12,7 @@ static const char *TAG = "elero";
 static const uint8_t SPI_SETTLE_US = 5;
 
 static const uint32_t TX_STATE_TIMEOUT_MS = 50;
-static const uint32_t TX_COOLDOWN_MS = 3;
+static const uint32_t TX_COOLDOWN_MS = 1;  // CC1101 PLL settles in ~75µs; 1ms is ample margin
 static const uint32_t RADIO_WATCHDOG_MS = 5000;
 
 static const char *marcstate_to_string(uint8_t marc) {
@@ -52,9 +52,15 @@ void Elero::process_rx() {
     return;
   this->rx_ready_.store(false, std::memory_order_release);
 
-  // Drain up to ELERO_MAX_RX_PER_LOOP packets per call to prevent infinite
-  // loops if noise keeps triggering the interrupt.
-  for (uint8_t iter = 0; iter < ELERO_MAX_RX_PER_LOOP; iter++) {
+  // When TX commands are pending, limit RX drain to 1 packet per call so
+  // the next radio_task_loop_() iteration can dequeue TX first (TX priority).
+  // When TX idle, drain up to ELERO_MAX_RX_PER_LOOP to clear the FIFO fast.
+  uint8_t max_drain = ELERO_MAX_RX_PER_LOOP;
+  if ((this->tx_priority_queue_ && uxQueueMessagesWaiting(this->tx_priority_queue_) > 0) ||
+      (this->tx_queue_ && uxQueueMessagesWaiting(this->tx_queue_) > 0)) {
+    max_drain = 1;
+  }
+  for (uint8_t iter = 0; iter < max_drain; iter++) {
     uint8_t len = this->read_status(CC1101_RXBYTES);
 
     if (len & 0x80) {  // overflow bit set — FIFO data unreliable
@@ -173,7 +179,9 @@ void Elero::advance_tx() {
         } else if ((rxbytes & 0x7F) > 0) {
           this->rx_ready_.store(true, std::memory_order_release);
         }
-        this->process_rx();
+        // Don't call process_rx() here — let the next radio_task_loop_()
+        // iteration check the TX queue first (step 1) before processing
+        // RX (step 2).  This ensures TX always has priority after cooldown.
       }
       break;
     }
