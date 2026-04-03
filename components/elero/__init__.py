@@ -202,7 +202,7 @@ async def to_code(config):
         "RADIOLIB_EXCLUDE_RFM2X",
         "RADIOLIB_EXCLUDE_SX127X",
         "RADIOLIB_EXCLUDE_SX126X",
-        "RADIOLIB_EXCLUDE_STM32WLX",
+        # STM32WLX is NOT listed here — RadioLib auto-excludes it on non-STM32 platforms
         "RADIOLIB_EXCLUDE_SX128X",
         "RADIOLIB_EXCLUDE_LR11X0",
         # Protocol decoders (none used by this project)
