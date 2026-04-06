@@ -35,6 +35,15 @@ cover:
     open_duration: 25s
     close_duration: 22s
     poll_interval: 5min
+  - platform: elero
+    id: cover_wohnzimmer
+    blind_address: 0xb72c4a
+    channel: 4
+    remote_address: 0xf0d008
+    name: Wohnzimmer
+    open_duration: 30s
+    close_duration: 27s
+    poll_interval: 5min
 
 light:
   - platform: elero
@@ -222,6 +231,12 @@ switch:
     name: "Elero Web UI"
     id: elero_web_switch
     restore_mode: RESTORE_DEFAULT_ON
+
+elero_group:
+  - name: "Alle Jalousien"
+    members:
+      - cover_schlafzimmer
+      - cover_wohnzimmer
 
 logger:
 
