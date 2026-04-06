@@ -27,6 +27,7 @@ elero:
 
 cover:
   - platform: elero
+    id: cover_schlafzimmer
     blind_address: 0xa831e5
     channel: 4
     remote_address: 0xf0d008
@@ -206,6 +207,10 @@ button:
   - platform: elero
     name: "Elero Stop Scan"
     scan_start: false
+  - platform: elero
+    name: "Schlafzimmer Zwischenposition"
+    cover_id: cover_schlafzimmer
+    command_byte: 0x44
 
 web_server_base:
 

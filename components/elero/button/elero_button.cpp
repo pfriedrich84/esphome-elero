@@ -8,7 +8,10 @@ static const char *const TAG = "elero.button";
 
 void EleroScanButton::dump_config() {
   LOG_BUTTON("", "Elero Scan Button", this);
-  if (this->light_ != nullptr) {
+  if (this->cover_ != nullptr) {
+    ESP_LOGCONFIG(TAG, "  Action: cover_command 0x%02x -> cover 0x%06x",
+                  this->command_byte_, this->cover_->get_blind_address());
+  } else if (this->light_ != nullptr) {
     ESP_LOGCONFIG(TAG, "  Action: light_command 0x%02x -> light 0x%06x",
                   this->command_byte_, this->light_->get_blind_address());
   } else {
@@ -17,6 +20,12 @@ void EleroScanButton::dump_config() {
 }
 
 void EleroScanButton::press_action() {
+  if (this->cover_ != nullptr) {
+    ESP_LOGD(TAG, "Sending command 0x%02x to cover 0x%06x",
+             this->command_byte_, this->cover_->get_blind_address());
+    this->cover_->enqueue_command(this->command_byte_);
+    return;
+  }
   if (this->light_ != nullptr) {
     ESP_LOGD(TAG, "Sending command 0x%02x to light 0x%06x",
              this->command_byte_, this->light_->get_blind_address());
