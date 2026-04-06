@@ -97,7 +97,7 @@ void EleroGroupCover::control(const cover::CoverCall &call) {
 
 void EleroGroupCover::send_group_command_(uint8_t cmd_byte) {
   if (this->native_group_ && this->parent_ != nullptr) {
-    // Native multi-dest: single RF packet to all members
+    // Native multi-dest: single RF packet to all members (same channel/remote)
     t_elero_command cmd{};
     this->build_group_command_(cmd, cmd_byte);
     this->parent_->send_command(&cmd);
@@ -107,12 +107,21 @@ void EleroGroupCover::send_group_command_(uint8_t cmd_byte) {
     else
       this->group_counter_++;
     ESP_LOGD(TAG, "Sent native group command 0x%02x to %d dests", cmd_byte, (int) this->members_.size());
+  } else if (this->parent_ != nullptr) {
+    // Direct TX: build each member's command and enqueue directly to the hub's
+    // TX queue, bypassing per-cover command queues and dispatch_commands() delays.
+    // This fills the FreeRTOS TX queue in one burst — the radio task sends them
+    // back-to-back with only 1ms cooldown between each (~5ms per blind total).
+    for (auto *member : this->members_) {
+      t_elero_command cmd = member->build_tx_command(cmd_byte);
+      this->parent_->send_command(&cmd);
+    }
+    ESP_LOGD(TAG, "Sent direct burst 0x%02x to %d members", cmd_byte, (int) this->members_.size());
   } else {
-    // Fallback: sequential individual commands
+    // Last resort fallback: use per-cover command queues
     for (auto *member : this->members_) {
       member->enqueue_command(cmd_byte);
     }
-    ESP_LOGD(TAG, "Sent sequential command 0x%02x to %d members", cmd_byte, (int) this->members_.size());
   }
 }
 

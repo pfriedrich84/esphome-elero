@@ -346,6 +346,9 @@ class EleroBlindBase {
   virtual uint8_t get_pck_inf1() const = 0;
   virtual uint8_t get_payload_1() const = 0;
   virtual uint8_t get_payload_2() const = 0;
+  /// Build a ready-to-send t_elero_command with the given command byte,
+  /// using this blind's current RF params and counter.  Increments the counter.
+  virtual t_elero_command build_tx_command(uint8_t cmd_byte) = 0;
   /// Called by the hub when a remote command packet (0x6a/0x69) targets this
   /// blind, so it can poll the blind immediately instead of waiting for the
   /// normal poll interval.  Default no-op; concrete classes override.
