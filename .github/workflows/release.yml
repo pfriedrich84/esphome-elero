@@ -2,7 +2,7 @@ name: Release
 
 on:
   schedule:
-    - cron: "0 6 * * *"   # daily at 06:00 UTC
+    - cron: "0 6 * * 6"   # every Saturday at 06:00 UTC
   workflow_dispatch:       # allow manual trigger
 
 permissions:
