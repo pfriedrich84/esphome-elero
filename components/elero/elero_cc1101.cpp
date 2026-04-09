@@ -364,6 +364,77 @@ void Elero::reset() {
   this->disable();
 }
 
+// ---------------------------------------------------------------------------
+// verify_spi_write_ — complementary pattern write-readback test (0xAA/0x55)
+// Detects stuck MOSI bits before init() writes all CC1101 registers.
+// ---------------------------------------------------------------------------
+bool Elero::verify_spi_write_() {
+  bool ok = true;
+  const uint8_t patterns[] = {0xAA, 0x55};  // complementary: every bit toggles
+
+  for (uint8_t pattern : patterns) {
+    this->write_reg(CC1101_FSCTRL1, pattern);
+    uint8_t readback = this->read_reg(CC1101_FSCTRL1);
+    if (readback != pattern) {
+      ESP_LOGD(TAG, "SPI verify: wrote 0x%02x to FSCTRL1, read back 0x%02x — MISMATCH (stuck bits: 0x%02x)",
+               pattern, readback, static_cast<uint8_t>(pattern ^ readback));
+      ok = false;
+    } else {
+      ESP_LOGD(TAG, "SPI verify: wrote 0x%02x to FSCTRL1, read back 0x%02x — OK", pattern, readback);
+    }
+  }
+
+  // Restore register to clean state for subsequent init
+  this->write_reg(CC1101_FSCTRL1, 0x00);
+  return ok;
+}
+
+// ---------------------------------------------------------------------------
+// diagnose_spi_failure_ — actionable error messages for common SPI wiring
+// problems. Called when init() has failed after all retries.
+// ---------------------------------------------------------------------------
+void Elero::diagnose_spi_failure_() {
+  uint8_t partnum = this->read_status(CC1101_PARTNUM);
+  uint8_t version = this->read_status(CC1101_VERSION);
+  ESP_LOGE(TAG, "CC1101 SPI diagnostic: PARTNUM=0x%02x (expect 0x00), VERSION=0x%02x (expect 0x14)", partnum, version);
+
+  // Write-readback tests on a writable register
+  uint8_t all_readback_or = 0x00;
+  uint8_t all_readback_and = 0xFF;
+  const uint8_t test_vals[] = {0xAA, 0x55, 0x0F, 0x00};
+  for (uint8_t tv : test_vals) {
+    this->write_reg(CC1101_FSCTRL1, tv);
+    uint8_t rb = this->read_reg(CC1101_FSCTRL1);
+    ESP_LOGE(TAG, "  SPI write/read test: wrote 0x%02x, read 0x%02x %s", tv, rb, (tv == rb) ? "OK" : "MISMATCH");
+    all_readback_or |= rb;
+    all_readback_and &= rb;
+  }
+
+  ESP_LOGE(TAG, "CC1101 SPI communication is broken — the radio is non-functional.");
+
+  if (partnum == 0x00 && version == 0x00 && all_readback_or == 0x00) {
+    // Every read returns 0x00 — MISO line is stuck low
+    ESP_LOGE(TAG, "  SPI returns all zeros — MISO is stuck LOW.");
+    ESP_LOGE(TAG, "  Check: MISO wiring, CS not reaching the CC1101, or chip held in reset.");
+  } else if (partnum == 0xFF && version == 0xFF && all_readback_and == 0xFF) {
+    // Every read returns 0xFF — MISO line is stuck high (chip not powered)
+    ESP_LOGE(TAG, "  SPI returns all ones — MISO is stuck HIGH.");
+    ESP_LOGE(TAG, "  Check: CC1101 VCC/GND power connections and that the module is seated properly.");
+  } else if (partnum == 0x00 && version == 0x14) {
+    // Chip ID is correct but register writes fail — MOSI issue
+    ESP_LOGE(TAG, "  CC1101 chip IS detected (PARTNUM/VERSION correct) but register writes fail.");
+    ESP_LOGE(TAG, "  Check: MOSI wiring or SPI bus conflict with another device on the same bus.");
+  } else {
+    ESP_LOGE(TAG, "  Unexpected chip ID — verify the radio module is a CC1101 on this SPI bus.");
+  }
+
+  ESP_LOGE(TAG, "  Verify SPI wiring: CLK, MOSI, MISO, CS must match your board schematic.");
+  ESP_LOGE(TAG, "  Avoid ESP32 strapping pins (GPIO0, GPIO2, GPIO5, GPIO12, GPIO15) for SPI signals.");
+
+  this->spi_failed_.store(true, std::memory_order_release);
+  this->mark_failed(LOG_STR("CC1101 SPI communication broken — check pin assignments"));
+}
+
 bool Elero::init() {
   const uint8_t max_spi_retries = 5;
   bool spi_ok = false;
