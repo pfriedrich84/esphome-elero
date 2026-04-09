@@ -40,6 +40,14 @@ enum class TxState : uint8_t {
   COOLDOWN,       ///< Brief pause before resuming RX
 };
 
+/// Explicit radio mode tracking for half-duplex CC1101.
+/// Set to TX before STX strobe, back to RX when returning to receive mode.
+/// Used to route ISR signals and guard process_rx().
+enum class RadioMode : uint8_t {
+  RX,  ///< Radio is in receive mode (or idle/transitioning to RX)
+  TX,  ///< Radio is actively transmitting
+};
+
 /// Result of send_command() — lets callers distinguish transient queue-full
 /// from permanent SPI failure without a racy side-channel flag.
 enum class SendResult : uint8_t {
@@ -623,10 +631,17 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void mark_last_raw_packet_(bool valid, const char *reason);
   void check_radio_state_();
 
-  // RX interrupt flag: set by ISR when GDO0 fires (packet received).
-  // Stale flags during TX are harmlessly ignored (process_rx() only runs
-  // when tx_state_ == IDLE).
-  std::atomic<bool> rx_ready_{false};
+  // Interrupt flags: separate atomics for RX and TX events.
+  // ISR routes based on radio_mode_ to avoid losing an RX interrupt
+  // that arrives just as we clear flags for TX preparation.
+  std::atomic<bool> rx_ready_{false};   // set by ISR when GDO0 fires in RX mode
+  std::atomic<bool> tx_done_{false};    // set by ISR when GDO0 fires in TX mode
+
+  // Half-duplex radio mode — atomic because ISR may run on a different core
+  // than the radio task (ESP-IDF routes GPIO ISRs to the core that called
+  // gpio_install_isr_service()).  Uses relaxed ordering since correctness
+  // does not depend on ordering relative to other variables.
+  std::atomic<uint8_t> radio_mode_{static_cast<uint8_t>(RadioMode::RX)};
 
   // TX state machine — no longer read by ISR, but kept atomic for
   // consistency with is_tx_idle() which may be called from other contexts.
@@ -692,8 +707,15 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
 
   // SPI health tracking: detect persistent SPI failures (e.g. strapping pin issues)
   std::atomic<bool> spi_failed_{false};  // set when SPI is permanently broken
-  uint8_t consecutive_watchdog_failures_{0};  // consecutive check_radio_state_ failures
   uint8_t send_cmd_reinit_failures_{0};  // consecutive send_command() reinit failures
+
+  // Escalating recovery: windowed failure counting within 60s windows.
+  // Level 1: flush FIFO (up to 3 per window before escalating)
+  // Level 2: full chip reset (up to 3 per window before escalating)
+  // Level 3: mark radio as permanently failed
+  uint8_t watchdog_flush_count_{0};      // L1 flushes in current window
+  uint8_t watchdog_reset_count_{0};      // L2 resets in current window
+  uint32_t watchdog_window_start_ms_{0}; // start of current 60s escalation window
 
   // RX overflow recovery: rate-limit flush attempts and escalate to full reinit
   uint32_t last_rx_overflow_ms_{0};

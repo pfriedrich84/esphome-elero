@@ -205,11 +205,11 @@ TX initiation in `send_command_internal_()` (Core 0):
 3. Load TX FIFO via burst write
 4. Issue `STX` strobe → state transitions to `TRANSMITTING`
 
-TX completion is detected by polling MARCSTATE — when it leaves TX, the CC1101 has auto-transitioned to RX via MCSM1 TXOFF_MODE.
+TX completion is detected via the `tx_done_` ISR flag (fast path) or by polling MARCSTATE (fallback) — when it leaves TX, the CC1101 has auto-transitioned to RX via MCSM1 TXOFF_MODE.
 
 ### Interrupt handling
 
-A single `std::atomic<bool>` flag `rx_ready_` is set by the GDO0 ISR when a packet is received. All atomic operations use `std::memory_order_acquire` for loads and `std::memory_order_release` for stores to ensure correct multi-core ESP32 synchronization. The ISR always sets `rx_ready_`, but `process_rx()` only runs when TX is idle, so stale flags during TX are harmlessly ignored.
+Two separate `std::atomic<bool>` flags handle GDO0 ISR signals: `rx_ready_` (set when GDO0 fires in RX mode) and `tx_done_` (set when GDO0 fires in TX mode). The ISR reads `radio_mode_` to route the signal to the correct flag, preventing the race where clearing `rx_ready_` before TX preparation loses a concurrent RX interrupt. A `std::atomic<uint8_t> radio_mode_` enum (`RX` or `TX`) tracks the half-duplex radio state — it uses relaxed memory ordering since the ISR may run on a different core than the radio task (ESP-IDF routes GPIO ISRs to the core that installed the service). All other atomic operations use `std::memory_order_acquire` for loads and `std::memory_order_release` for stores to ensure correct multi-core ESP32 synchronization.
 
 ### Radio health and FIFO recovery
 
@@ -218,14 +218,14 @@ The CC1101 can enter unrecoverable states (RXFIFO_OVERFLOW, stuck IDLE) during T
 - **FIFO flush before TX** — `send_command()` uses `standby()` to enter IDLE, then flushes both TX and RX FIFOs. The RX flush discards any partial packet data from the reception that SIDLE interrupted.
 - **No SFTX after TX completion** — The CC1101 auto-transitions to RX via MCSM1 TXOFF_MODE after TX. Issuing SFTX in this state is invalid per the CC1101 datasheet (only valid in IDLE or TXFIFO_UNDERFLOW) and can corrupt radio state.
 - **Post-TX FIFO health check** — After COOLDOWN, before resuming normal RX, the code reads RXBYTES to detect overflow or pending data that arrived during TX.
-- **Radio watchdog** (`check_radio_state_()`, every 5 s) — Reads CC1101 MARCSTATE register and recovers from: RXFIFO_OVERFLOW (flush + restart RX), stuck IDLE (restart RX), or any other unexpected state (full radio reinit). Only runs when TX is idle.
-- **TX cooldown** — 10 ms settling time after TX before resuming RX, allowing the CC1101 PLL to stabilize.
+- **Escalating radio watchdog** (`check_radio_state_()`, every 5 s) — Reads CC1101 MARCSTATE and applies 3-level recovery within a 60-second window: L1 = flush FIFO (up to 3×), L2 = full chip reset (up to 3×), L3 = mark permanently failed. Stuck IDLE is handled separately with a simple SRX restart. Only runs when TX is idle.
+- **TX cooldown** — 1 ms settling time after TX before resuming RX (CC1101 PLL settles in ~75µs).
 - **Minimum packet validation** — Packets shorter than `ELERO_MIN_PACKET_SIZE` (17 bytes) are rejected as non-Elero RF noise.
 
 ### Data flow
 
 1. `Elero::setup()` (Core 1) configures CC1101 via RadioLib's `begin()` and direct register writes, attaches GDO0 interrupt, creates FreeRTOS queues, then spawns the radio task on Core 0.
-2. When the CC1101 signals a received packet (GDO0 interrupt), the ISR sets `rx_ready_`.
+2. When the CC1101 signals a received packet (GDO0 interrupt), the ISR routes to `rx_ready_` (RX mode) or `tx_done_` (TX mode) based on `radio_mode_`.
 3. The radio task (Core 0) calls `process_rx()` when TX is idle — reads FIFO, decodes, decrypts, builds an `RxResult`, and pushes it to `rx_queue_`.
 4. `Elero::loop()` (Core 1) drains `rx_queue_` via `dispatch_rx_result_()` — routes decoded packets to covers/lights/sensors/discovery/runtime blinds.
 5. `EleroCover::loop()` / `EleroLight::loop()` (Core 1) handle polling timers and drain command queues by calling `parent_->send_command()` (normal) or `parent_->send_command_priority()` (stop commands), which enqueues a `RadioMessage` to `tx_queue_` or `tx_priority_queue_`.
@@ -315,12 +315,16 @@ Key constants (defined in `elero.h` unless noted):
 | `ELERO_MSG_LENGTH` | 0x1d (29) | Fixed message length for TX |
 | `ELERO_CRYPTO_MULT` | 0x708f | Encryption multiplier for counter-based code |
 | `TX_STATE_TIMEOUT_MS` | 50 ms | Per-state watchdog timeout for TX state machine — defined in `elero.cpp` |
-| `TX_COOLDOWN_MS` | 10 ms | Post-TX settle time before resuming RX — defined in `elero.cpp` |
-| `RADIO_WATCHDOG_MS` | 5 000 ms | Periodic radio health check interval — defined in `elero.cpp` |
+| `TX_COOLDOWN_MS` | 1 ms | Post-TX settle time before resuming RX — defined in `elero_cc1101.cpp` |
+| `RADIO_WATCHDOG_MS` | 5 000 ms | Periodic radio health check interval — defined in `elero_cc1101.cpp` |
+| `WATCHDOG_ESCALATION_WINDOW_MS` | 60 000 ms | Escalating recovery window — defined in `elero_cc1101.cpp` |
+| `WATCHDOG_MAX_FLUSHES_PER_WINDOW` | 3 | L1 flush attempts before escalating to reset — defined in `elero_cc1101.cpp` |
+| `WATCHDOG_MAX_RESETS_PER_WINDOW` | 3 | L2 reset attempts before marking failed — defined in `elero_cc1101.cpp` |
 
 State constants (`ELERO_STATE_*`): `UNKNOWN`, `TOP`, `BOTTOM`, `INTERMEDIATE`, `TILT`, `BLOCKING`, `OVERHEATED`, `TIMEOUT`, `START_MOVING_UP`, `START_MOVING_DOWN`, `MOVING_UP`, `MOVING_DOWN`, `STOPPED`, `TOP_TILT`, `BOTTOM_TILT`, `OFF` (0x0f, same as `BOTTOM_TILT`), `ON` (0x10)
 
 Key enums:
+- `RadioMode` — half-duplex radio mode (`RX`, `TX`) — tracked on Core 0 only, used by ISR to route GDO0 signals
 - `TxState` — TX state machine states (`IDLE`, `TRANSMITTING`, `COOLDOWN`)
 - `SendResult` — return type of `send_command()` (`OK`, `QUEUE_FULL`, `FAILED`) — lets callers distinguish transient queue-full from permanent SPI failure
 - `DeviceType` — device classification (`COVER = 0`, `LIGHT = 1`)
@@ -337,6 +341,8 @@ Thread-safety:
 - `packet_dump_mutex_` (`std::mutex`) protects `raw_packets_` (radio task vs web handler access)
 - `log_mutex_` (`std::mutex`) protects all log buffer access (`append_log`, `get_log_entries_copy`, `clear_log_entries`)
 - `scan_mode_`, `packet_dump_mode_`, `spi_failed_` are `std::atomic<bool>`
+- `rx_ready_`, `tx_done_` are `std::atomic<bool>` — ISR-set flags routed by `radio_mode_`
+- `radio_mode_` is `std::atomic<uint8_t>` with relaxed ordering — ISR may run on a different core than the radio task
 - `rx_count_`, `tx_count_`, `watchdog_recovery_count_`, `tx_drop_count_` are `std::atomic<uint32_t>`
 - `stop_urgent_count_` is `std::atomic<uint8_t>` (multi-cover auto-stop coordination)
 - `task_shutdown_`, `radio_fatal_error_` are `std::atomic<bool>` for radio task lifecycle
