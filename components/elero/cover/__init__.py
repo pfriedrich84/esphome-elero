@@ -39,6 +39,7 @@ CONF_AUTO_SENSORS = "auto_sensors"
 CONF_RSSI_SENSOR = "rssi_sensor"
 CONF_STATUS_SENSOR = "status_sensor"
 CONF_REFRESH_BUTTON = "refresh_button"
+CONF_ASSUMED_STATE = "assumed_state"
 
 EleroCover = elero_ns.class_("EleroCover", cover.Cover, cg.Component)
 EleroRefreshButton = elero_ns.class_("EleroRefreshButton", esphome_button.Button, cg.Component)
