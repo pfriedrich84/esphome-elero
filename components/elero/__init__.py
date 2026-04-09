@@ -180,11 +180,11 @@ async def to_code(config):
         cg.add(var.set_watchdog_recovery_sensor(wd_sens))
 
     # Add RadioLib as PlatformIO library dependency.
-    # RadioLib's Module.h includes <SPI.h> when RADIOLIB_BUILD_ARDUINO is defined
-    # (i.e., when the ARDUINO macro is >= 100). The Arduino SPI library is a
-    # built-in framework library, but ESPHome sets lib_ldf_mode=off which prevents
-    # PlatformIO from auto-discovering it. Adding "SPI" explicitly ensures the
-    # Arduino SPI include path is available when compiling RadioLib.
+    # RadioLib's Module.h includes <SPI.h> when RADIOLIB_BUILD_ARDUINO is defined.
+    # ESPHome sets lib_ldf_mode=off, so PlatformIO won't auto-discover the built-in
+    # Arduino SPI library. Adding "SPI" explicitly ensures the include path is
+    # available. The "Could not find the package" warning is cosmetic — PlatformIO's
+    # registry lookup fails, but the built-in framework library is still resolved.
     cg.add_library("jgromes/RadioLib", "7.1.2")
     cg.add_library("SPI", None)
 

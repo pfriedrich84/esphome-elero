@@ -66,6 +66,17 @@ class EleroCover : public cover::Cover, public Component, public EleroBlindBase 
   uint8_t get_command_stop() const override { return this->command_stop_; }
   uint8_t get_command_check() const override { return this->command_check_; }
   uint8_t get_command_tilt() const override { return this->command_tilt_; }
+  uint8_t get_hop() const override { return this->command_.hop; }
+  uint8_t get_pck_inf0() const override { return this->command_.pck_inf[0]; }
+  uint8_t get_pck_inf1() const override { return this->command_.pck_inf[1]; }
+  uint8_t get_payload_1() const override { return this->command_.payload[0]; }
+  uint8_t get_payload_2() const override { return this->command_.payload[1]; }
+  t_elero_command build_tx_command(uint8_t cmd_byte) override {
+    t_elero_command cmd = this->command_;
+    cmd.payload[4] = cmd_byte;
+    this->increase_counter();
+    return cmd;
+  }
   void enqueue_command(uint8_t cmd_byte) override {
     if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE) {
       this->commands_to_send_.push(cmd_byte);

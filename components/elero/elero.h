@@ -122,11 +122,11 @@ static const uint8_t  ELERO_MAX_RX_PER_LOOP = 8;           // max packets draine
 static const uint32_t ELERO_POLL_STAGGER_MS = 5000;         // stagger offset between cover poll timers
 
 // RF protocol encoding/encryption constants (Elero protocol)
-static const uint8_t ELERO_MSG_LENGTH = 0x1d;             // Fixed message length for TX
+static const uint8_t ELERO_MSG_LENGTH = 0x1d;             // Default message length for TX (single destination)
 static const uint16_t ELERO_CRYPTO_MULT = 0x708f;         // Encryption multiplier for counter-based code
 static const uint16_t ELERO_CRYPTO_MASK = 0xffff;         // Mask for 16-bit encryption code
 static const uint8_t ELERO_SYS_ADDR = 0x01;               // System address in protocol
-static const uint8_t ELERO_DEST_COUNT = 0x01;             // Destination count in command
+static const uint8_t ELERO_MAX_DESTS = 10;                // Maximum destination addresses per TX packet
 
 // RSSI (CC1101 transceiver) constants: RSSI is in dBm, raw value is two's complement encoded
 static const uint8_t ELERO_RSSI_SIGN_BIT = 127;           // Sign bit threshold (values > 127 are negative)
@@ -141,6 +141,11 @@ typedef struct {
   uint8_t pck_inf[2];
   uint8_t hop;
   uint8_t payload[10];
+  // Multi-destination support: num_dests > 1 sends a single RF packet to multiple blinds.
+  // All destinations share the same remote_addr, channel, pck_inf, and hop.
+  // When num_dests == 1, dest_addrs[0] is auto-filled from blind_addr for backward compat.
+  uint8_t num_dests{1};
+  uint32_t dest_addrs[ELERO_MAX_DESTS]{};
 } t_elero_command;
 
 struct RawPacket {
@@ -335,6 +340,15 @@ class EleroBlindBase {
   virtual uint8_t get_command_check() const = 0;
   virtual uint8_t get_command_tilt() const = 0;
   virtual void enqueue_command(uint8_t cmd_byte) = 0;
+  // RF params for group command building
+  virtual uint8_t get_hop() const = 0;
+  virtual uint8_t get_pck_inf0() const = 0;
+  virtual uint8_t get_pck_inf1() const = 0;
+  virtual uint8_t get_payload_1() const = 0;
+  virtual uint8_t get_payload_2() const = 0;
+  /// Build a ready-to-send t_elero_command with the given command byte,
+  /// using this blind's current RF params and counter.  Increments the counter.
+  virtual t_elero_command build_tx_command(uint8_t cmd_byte) = 0;
   /// Called by the hub when a remote command packet (0x6a/0x69) targets this
   /// blind, so it can poll the blind immediately instead of waiting for the
   /// normal poll interval.  Default no-op; concrete classes override.

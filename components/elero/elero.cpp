@@ -558,6 +558,12 @@ SendResult Elero::send_command(t_elero_command *cmd) {
   if (!this->tx_queue_)
     return SendResult::FAILED;
 
+  // Backward compat: single-dest callers only set blind_addr, not dest_addrs[]
+  if (cmd->num_dests <= 1 && cmd->dest_addrs[0] == 0) {
+    cmd->num_dests = 1;
+    cmd->dest_addrs[0] = cmd->blind_addr;
+  }
+
   RadioMessage msg{};
   msg.type = RadioControlType::TX_COMMAND;
   msg.tx.cmd = *cmd;
@@ -577,6 +583,12 @@ bool Elero::send_command_priority(t_elero_command *cmd) {
     return false;
   if (!this->tx_priority_queue_)
     return false;
+
+  // Backward compat: single-dest callers only set blind_addr, not dest_addrs[]
+  if (cmd->num_dests <= 1 && cmd->dest_addrs[0] == 0) {
+    cmd->num_dests = 1;
+    cmd->dest_addrs[0] = cmd->blind_addr;
+  }
 
   RadioMessage msg{};
   msg.type = RadioControlType::TX_COMMAND;

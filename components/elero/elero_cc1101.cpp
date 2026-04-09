@@ -513,8 +513,16 @@ bool Elero::send_command_internal_(t_elero_command *cmd) {
   // dequeuing a TX_COMMAND, so no idle check needed here.
 
   ESP_LOGVV(TAG, "send_command called");
+  uint8_t num_dests = cmd->num_dests;
+  if (num_dests == 0 || num_dests > ELERO_MAX_DESTS) {
+    ESP_LOGW(TAG, "Invalid num_dests=%d, clamping to 1", num_dests);
+    num_dests = 1;
+  }
+  // Dynamic packet length: header(16) + num_dests*3 + payload(10)
+  uint8_t msg_len = 16 + num_dests * 3 + 10;
+
   uint16_t code = (0x00 - (cmd->counter * ELERO_CRYPTO_MULT)) & ELERO_CRYPTO_MASK;
-  this->msg_tx_[0] = ELERO_MSG_LENGTH;
+  this->msg_tx_[0] = msg_len;
   this->msg_tx_[1] = cmd->counter;
   this->msg_tx_[2] = cmd->pck_inf[0];
   this->msg_tx_[3] = cmd->pck_inf[1];
@@ -523,30 +531,42 @@ bool Elero::send_command_internal_(t_elero_command *cmd) {
   this->msg_tx_[6] = cmd->channel;
   this->msg_tx_[7] = ((cmd->remote_addr >> 16) & 0xff);
   this->msg_tx_[8] = ((cmd->remote_addr >> 8) & 0xff);
-  this->msg_tx_[9] =((cmd->remote_addr) & 0xff);
+  this->msg_tx_[9] = ((cmd->remote_addr) & 0xff);
   this->msg_tx_[10] = ((cmd->remote_addr >> 16) & 0xff);
   this->msg_tx_[11] = ((cmd->remote_addr >> 8) & 0xff);
-  this->msg_tx_[12] =((cmd->remote_addr) & 0xff);
+  this->msg_tx_[12] = ((cmd->remote_addr) & 0xff);
   this->msg_tx_[13] = ((cmd->remote_addr >> 16) & 0xff);
   this->msg_tx_[14] = ((cmd->remote_addr >> 8) & 0xff);
-  this->msg_tx_[15] =((cmd->remote_addr) & 0xff);
-  this->msg_tx_[16] = ELERO_DEST_COUNT;
-  this->msg_tx_[17] = ((cmd->blind_addr >> 16) & 0xff);
-  this->msg_tx_[18] = ((cmd->blind_addr >> 8) & 0xff);
-  this->msg_tx_[19] = ((cmd->blind_addr) & 0xff);
-  for(int i=0; i<10; i++)
-    this->msg_tx_[20 + i] = cmd->payload[i];
-  this->msg_tx_[22] = ((code >> 8) & 0xff);
-  this->msg_tx_[23] = (code & 0xff);
+  this->msg_tx_[15] = ((cmd->remote_addr) & 0xff);
+  this->msg_tx_[16] = num_dests;
+  // Write destination addresses (3 bytes each, big-endian)
+  for (uint8_t i = 0; i < num_dests; i++) {
+    uint32_t dest = cmd->dest_addrs[i];
+    this->msg_tx_[17 + i * 3] = (dest >> 16) & 0xff;
+    this->msg_tx_[18 + i * 3] = (dest >> 8) & 0xff;
+    this->msg_tx_[19 + i * 3] = dest & 0xff;
+  }
+  // Payload starts after destination addresses
+  uint8_t pld_off = 17 + num_dests * 3;
+  for (int i = 0; i < 10; i++)
+    this->msg_tx_[pld_off + i] = cmd->payload[i];
+  // Crypto code overwrites payload[2..3]
+  this->msg_tx_[pld_off + 2] = ((code >> 8) & 0xff);
+  this->msg_tx_[pld_off + 3] = (code & 0xff);
 
-  uint8_t *payload = &this->msg_tx_[22];
+  uint8_t *payload = &this->msg_tx_[pld_off + 2];
   crypto::msg_encode(payload);
 
-  ESP_LOGD(TAG, "send to 0x%06x: cmd=0x%02x ch=%02d cnt=%02d",
-           cmd->blind_addr, cmd->payload[4], cmd->channel, cmd->counter);
+  if (num_dests == 1) {
+    ESP_LOGD(TAG, "send to 0x%06x: cmd=0x%02x ch=%02d cnt=%02d",
+             cmd->dest_addrs[0], cmd->payload[4], cmd->channel, cmd->counter);
+  } else {
+    ESP_LOGD(TAG, "send group (%d dests): cmd=0x%02x ch=%02d cnt=%02d",
+             num_dests, cmd->payload[4], cmd->channel, cmd->counter);
+  }
 #if ESPHOME_LOG_LEVEL >= ESPHOME_LOG_LEVEL_VERBOSE
-  ESP_LOGV(TAG, "  TX raw [%d bytes]: %s", ELERO_MSG_LENGTH + 1,
-           format_hex_pretty(this->msg_tx_, ELERO_MSG_LENGTH + 1).c_str());
+  ESP_LOGV(TAG, "  TX raw [%d bytes]: %s", msg_len + 1,
+           format_hex_pretty(this->msg_tx_, msg_len + 1).c_str());
 #endif
 
   this->radio_->standby();
