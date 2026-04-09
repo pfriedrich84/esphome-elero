@@ -141,6 +141,7 @@ Elero (hub, SPIDevice + Component)
 ├── EleroLightBase (abstract interface for lights)
 │   └── EleroLight (light::LightOutput + Component + EleroLightBase)
 ├── EleroScanButton (button::Button + Component)
+├── EleroRefreshButton (button::Button + Component, auto-created per cover/light)
 ├── sensor::Sensor (RSSI, registered per blind address)
 ├── text_sensor::TextSensor (status, registered per blind address)
 ├── EleroWebServer (Component + AsyncWebHandler, wraps web_server_base)
@@ -380,6 +381,17 @@ Key behaviors:
 - Pressing triggers `start_scan()` or `stop_scan()` on the hub depending on `scan_start_` flag
 - Optional: can be linked to an `EleroLightBase` via `light_id` to send a custom `command_byte` (default `0x44`) to a light on press
 
+### `EleroRefreshButton` (defined in `elero.h` / `elero.cpp`)
+
+**Class:** `EleroRefreshButton : public button::Button, public Component`
+
+Key behaviors:
+- Diagnostic button entity (entity_category: diagnostic, icon: mdi:refresh)
+- Sends a single CHECK command to the associated cover or light, requesting an immediate status update
+- Auto-created by cover/light platforms when `auto_sensors: true` (default)
+- Named `"<entity_name> Refresh"` by default
+- No state machine side effects — purely a status query
+
 ### `components/elero_web/elero_web_server.h` / `elero_web_server.cpp`
 
 **Class:** `EleroWebServer : public Component, public AsyncWebHandler`
@@ -517,17 +529,18 @@ cg.add(var.set_elero_parent(parent))
 | Component | `DEPENDENCIES` | `AUTO_LOAD` |
 |---|---|---|
 | `elero` (hub) | `["spi"]` | `["sensor"]` |
-| `elero` cover | `["elero"]` | `["sensor", "text_sensor"]` |
-| `elero` light | `["elero"]` | `["sensor", "text_sensor"]` |
+| `elero` cover | `["elero"]` | `["sensor", "text_sensor", "button"]` |
+| `elero` light | `["elero"]` | `["sensor", "text_sensor", "button"]` |
 | `elero` button | `["elero"]` | — |
 | `elero` sensor | `["elero"]` | — |
 | `elero` text_sensor | `["elero"]` | — |
+| `elero_group` | `["elero"]` | `["cover"]` |
 | `elero_web` | `["elero"]` | `["web_server_base"]` |
 | `elero_web` switch | `["elero_web"]` | — |
 
 ### Schema validation patterns
 
-- **Auto-sensors:** `_auto_sensor_validator()` injects RSSI and status sensor sub-configs at validation time when `auto_sensors: true` (default). Used by both cover and light platforms. This ensures `cv.declare_id()` is called in the correct ESPHome phase.
+- **Auto-sensors:** `_auto_sensor_validator()` injects RSSI sensor, status text sensor, and refresh button sub-configs at validation time when `auto_sensors: true` (default). Used by both cover and light platforms. This ensures `cv.declare_id()` is called in the correct ESPHome phase.
 - **Duration consistency:** `_validate_duration_consistency()` ensures position tracking has both `open_duration` AND `close_duration` set, or both at zero.
 - **Cross-platform address validation:** The light platform's `FINAL_VALIDATE_SCHEMA` checks for duplicate `blind_address` usage across covers and lights, preventing two entities from sharing the same address.
 - **Poll interval:** The `poll_interval()` function converts the string `"never"` to `uint32_t` max (4 294 967 295 ms).
@@ -579,8 +592,8 @@ Optional parameters (with defaults):
 - `poll_interval` (default `5min`, or `never`) — how often to query blind status
 - `open_duration` / `close_duration` (default `0s`) — enables position tracking (both must be set or both zero)
 - `supports_tilt` (default `false`)
-- `auto_sensors` (default `true`) — auto-generate RSSI and status text sensors for this cover
-- `rssi_sensor` / `status_sensor` — explicit sensor config (overrides auto-generated ones)
+- `auto_sensors` (default `true`) — auto-generate RSSI sensor, status text sensor, and refresh button for this cover
+- `rssi_sensor` / `status_sensor` / `refresh_button` — explicit sensor/button config (overrides auto-generated ones)
 - `payload_1` (default `0x00`), `payload_2` (default `0x04`)
 - `pck_inf1` (default `0x6a`), `pck_inf2` (default `0x00`)
 - `hop` (default `0x0a`)
@@ -595,8 +608,8 @@ Required parameters:
 
 Optional parameters (with defaults):
 - `dim_duration` (default `0s`) — time for dimming from 0% to 100%; `0s` = on/off only, `>0` = brightness control
-- `auto_sensors` (default `true`) — auto-generate RSSI and status text sensors for this light
-- `rssi_sensor` / `status_sensor` — explicit sensor config (overrides auto-generated ones)
+- `auto_sensors` (default `true`) — auto-generate RSSI sensor, status text sensor, and refresh button for this light
+- `rssi_sensor` / `status_sensor` / `refresh_button` — explicit sensor/button config (overrides auto-generated ones)
 - `payload_1` (default `0x00`), `payload_2` (default `0x04`)
 - `pck_inf1` (default `0x6a`), `pck_inf2` (default `0x00`)
 - `hop` (default `0x0a`)
@@ -634,6 +647,22 @@ button:
     light_id: my_light         # Reference to an EleroLight
     command_byte: 0x44         # RF command byte to send (default 0x44)
 ```
+
+### Group Cover (`elero_group`)
+
+```yaml
+elero_group:
+  - name: "All Blinds"
+    assumed_state: true    # Optional: true = buttons always enabled (default true)
+    members:
+      - cover_bedroom
+      - cover_living_room
+```
+
+Optional parameters:
+- `assumed_state` (default `true`) — when true, open/close buttons are always enabled in HA (no position feedback from group)
+
+Requires at least 2 and at most 10 member covers. When all members share the same `remote_address` and `channel`, a single native multi-destination RF packet is sent (more efficient). Otherwise, falls back to sequential individual commands.
 
 ### Web UI (`elero_web`)
 
