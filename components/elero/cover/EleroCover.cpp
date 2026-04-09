@@ -23,6 +23,7 @@ void EleroCover::dump_config() {
     ESP_LOGCONFIG(TAG, "  Close Duration: %dms", this->close_duration_);
   ESP_LOGCONFIG(TAG, "  Poll Interval: %dms", this->poll_intvl_);
   ESP_LOGCONFIG(TAG, "  Supports Tilt: %s", YESNO(this->supports_tilt_));
+  ESP_LOGCONFIG(TAG, "  Assumed State: %s", YESNO(this->assumed_state_));
 }
 
 void EleroCover::setup() {
@@ -210,7 +211,7 @@ cover::CoverTraits EleroCover::get_traits() {
   else
     traits.set_supports_position(false);
   traits.set_supports_toggle(true);
-  traits.set_is_assumed_state(true);
+  traits.set_is_assumed_state(this->assumed_state_);
   traits.set_supports_tilt(this->supports_tilt_);
   return traits;
 }

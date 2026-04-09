@@ -36,6 +36,7 @@ CONF_SUPPORTS_TILT = "supports_tilt"
 CONF_AUTO_SENSORS = "auto_sensors"
 CONF_RSSI_SENSOR = "rssi_sensor"
 CONF_STATUS_SENSOR = "status_sensor"
+CONF_ASSUMED_STATE = "assumed_state"
 
 EleroCover = elero_ns.class_("EleroCover", cover.Cover, cg.Component)
 
@@ -122,6 +123,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_COMMAND_CHECK, default=0x00): cv.hex_int_range(min=0x0, max=0xFF),
             cv.Optional(CONF_COMMAND_TILT, default=0x24): cv.hex_int_range(min=0x0, max=0xFF),
             cv.Optional(CONF_SUPPORTS_TILT, default=False): cv.boolean,
+            cv.Optional(CONF_ASSUMED_STATE, default=True): cv.boolean,
             cv.Optional(CONF_AUTO_SENSORS, default=True): cv.boolean,
             cv.Optional(CONF_RSSI_SENSOR): _RSSI_SENSOR_SCHEMA,
             cv.Optional(CONF_STATUS_SENSOR): _STATUS_SENSOR_SCHEMA,
@@ -185,6 +187,7 @@ async def to_code(config):
     cg.add(var.set_command_tilt(config[CONF_COMMAND_TILT]))
     cg.add(var.set_poll_interval(config[CONF_POLL_INTERVAL]))
     cg.add(var.set_supports_tilt(config[CONF_SUPPORTS_TILT]))
+    cg.add(var.set_assumed_state(config[CONF_ASSUMED_STATE]))
 
     addr = config[CONF_BLIND_ADDRESS]
 

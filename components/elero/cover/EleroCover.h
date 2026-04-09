@@ -38,6 +38,7 @@ class EleroCover : public cover::Cover, public Component, public EleroBlindBase 
   void set_poll_interval(uint32_t intvl) { this->poll_intvl_ = intvl; }
   uint32_t get_blind_address() override { return this->command_.blind_addr; }
   void set_supports_tilt(bool tilt) { this->supports_tilt_ = tilt; }
+  void set_assumed_state(bool assumed) { this->assumed_state_ = assumed; }
   void set_rx_state(uint8_t state) override;
   void notify_rx_meta(uint32_t ms, float rssi) override {
     this->last_seen_ms_ = ms;
@@ -127,6 +128,7 @@ class EleroCover : public cover::Cover, public Component, public EleroBlindBase 
   uint32_t post_movement_poll_at_{0};
   float target_position_{0};
   bool supports_tilt_{false};
+  bool assumed_state_{true};
   uint32_t last_seen_ms_{0};
   float last_rssi_{0.0f};
   uint8_t last_state_raw_{ELERO_STATE_UNKNOWN};
