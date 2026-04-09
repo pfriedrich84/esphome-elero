@@ -317,10 +317,14 @@ void Elero::loop() {
 }
 
 void IRAM_ATTR Elero::interrupt(Elero *arg) {
-  // GDO0 (IOCFG0=0x06) fires on sync-word/end-of-packet.  We always set
-  // rx_ready_ — stale flags during TX are harmlessly ignored because
-  // process_rx() only runs when tx_state_ == IDLE.
-  arg->rx_ready_.store(true, std::memory_order_release);
+  // GDO0 (IOCFG0=0x06) fires on sync-word/end-of-packet.
+  // Route based on radio_mode_ to avoid losing an RX interrupt
+  // that fires just as we prepare for TX.
+  if (arg->radio_mode_.load(std::memory_order_relaxed) == static_cast<uint8_t>(RadioMode::TX)) {
+    arg->tx_done_.store(true, std::memory_order_release);
+  } else {
+    arg->rx_ready_.store(true, std::memory_order_release);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -375,7 +379,9 @@ void Elero::radio_task_loop_() {
       case RadioControlType::REINIT_FREQ: {
         bool ok = false;
         if (this->is_tx_idle()) {
+          this->radio_mode_.store(static_cast<uint8_t>(RadioMode::RX), std::memory_order_relaxed);
           this->rx_ready_.store(false, std::memory_order_release);
+          this->tx_done_.store(false, std::memory_order_release);
           this->tx_state_.store(TxState::IDLE, std::memory_order_release);
           this->freq2_ = msg.freq.freq2;
           this->freq1_ = msg.freq.freq1;
@@ -410,9 +416,10 @@ void Elero::radio_task_loop_() {
     }
   }
 
-  // 2. Process RX if ISR flag set and TX idle/cooldown
+  // 2. Process RX if ISR flag set and radio is in RX mode
+  //    (process_rx() also checks radio_mode_ internally for safety)
   TxState cur_tx = this->tx_state_.load(std::memory_order_acquire);
-  if (cur_tx == TxState::IDLE || cur_tx == TxState::COOLDOWN) {
+  if (cur_tx == TxState::IDLE) {
     this->process_rx();
   }
 

@@ -14,6 +14,9 @@ static const uint8_t SPI_SETTLE_US = 5;
 static const uint32_t TX_STATE_TIMEOUT_MS = 50;
 static const uint32_t TX_COOLDOWN_MS = 1;  // CC1101 PLL settles in ~75µs; 1ms is ample margin
 static const uint32_t RADIO_WATCHDOG_MS = 5000;
+static const uint32_t WATCHDOG_ESCALATION_WINDOW_MS = 60000;  // 60s window for escalating recovery
+static const uint8_t WATCHDOG_MAX_FLUSHES_PER_WINDOW = 3;     // L1: flush threshold before escalating to reset
+static const uint8_t WATCHDOG_MAX_RESETS_PER_WINDOW = 3;      // L2: reset threshold before marking failed
 
 static const char *marcstate_to_string(uint8_t marc) {
   switch (marc) {
@@ -48,6 +51,9 @@ static const char *marcstate_to_string(uint8_t marc) {
 // process_rx — drain all available packets from the CC1101 RX FIFO
 // ---------------------------------------------------------------------------
 void Elero::process_rx() {
+  // Guard: only process RX when radio is actually in RX mode
+  if (this->radio_mode_.load(std::memory_order_relaxed) != static_cast<uint8_t>(RadioMode::RX))
+    return;
   if (!this->rx_ready_.load(std::memory_order_acquire))
     return;
   this->rx_ready_.store(false, std::memory_order_release);
@@ -133,7 +139,30 @@ void Elero::advance_tx() {
   switch (this->tx_state_.load(std::memory_order_acquire)) {
 
     case TxState::TRANSMITTING: {
+      // Fast path: ISR signalled TX completion via tx_done_ flag
+      bool isr_done = this->tx_done_.load(std::memory_order_acquire);
       uint8_t marc = this->read_status(CC1101_MARCSTATE) & 0x1F;
+
+      if (isr_done) {
+        this->tx_done_.store(false, std::memory_order_release);
+        // Verify TX FIFO is drained
+        uint8_t bytes = this->read_status(CC1101_TXBYTES) & 0x7F;
+        if (bytes == 0) {
+          this->tx_count_.fetch_add(1, std::memory_order_relaxed);
+          ESP_LOGV(TAG, "TX complete via ISR (marc=%s, %lums)",
+                   marcstate_to_string(marc), (unsigned long) elapsed);
+          this->tx_state_.store(TxState::COOLDOWN, std::memory_order_release);
+          this->tx_state_entered_ms_ = now;
+          this->last_tx_complete_ms_ = now;
+        } else {
+          ESP_LOGW(TAG, "TX ISR fired but %d bytes still in FIFO (marc=%s), aborting",
+                   bytes, marcstate_to_string(marc));
+          this->tx_abort_();
+        }
+        break;
+      }
+
+      // Fallback: poll MARCSTATE for TX completion
       bool tx_in_progress = (marc == CC1101_MARCSTATE_TX) ||
                             (marc == CC1101_MARCSTATE_STARTCAL) ||
                             (marc == CC1101_MARCSTATE_BWBOOST) ||
@@ -171,6 +200,7 @@ void Elero::advance_tx() {
 
     case TxState::COOLDOWN: {
       if (elapsed >= TX_COOLDOWN_MS) {
+        this->radio_mode_.store(static_cast<uint8_t>(RadioMode::RX), std::memory_order_relaxed);
         this->tx_state_.store(TxState::IDLE, std::memory_order_release);
         uint8_t rxbytes = this->read_status(CC1101_RXBYTES);
         if (rxbytes & 0x80) {
@@ -197,6 +227,7 @@ void Elero::advance_tx() {
 // ---------------------------------------------------------------------------
 void Elero::tx_abort_() {
   this->flush_and_rx();
+  this->radio_mode_.store(static_cast<uint8_t>(RadioMode::RX), std::memory_order_relaxed);
   this->tx_state_.store(TxState::IDLE, std::memory_order_release);
 }
 
@@ -238,57 +269,69 @@ void Elero::check_radio_state_() {
 
   uint8_t marc = this->read_status(CC1101_MARCSTATE) & 0x1F;
 
+  // Healthy states — reset escalation window
   if (marc == CC1101_MARCSTATE_RX) {
-    this->consecutive_watchdog_failures_ = 0;
     return;
   }
-
+  // Transient calibration states — let them settle
   if (marc >= CC1101_MARCSTATE_VCOON_MC && marc <= CC1101_MARCSTATE_ENDCAL)
     return;
   if (marc == CC1101_MARCSTATE_RX_END || marc == CC1101_MARCSTATE_RX_RST)
     return;
 
-  if (marc == CC1101_MARCSTATE_RXFIFO_OFLOW) {
-    ESP_LOGW(TAG, "Radio watchdog: RX FIFO overflow, flushing");
-    this->watchdog_recovery_count_.fetch_add(1, std::memory_order_relaxed);
-    this->flush_rx();
-    uint8_t marc_after = this->read_status(CC1101_MARCSTATE) & 0x1F;
-    if (marc_after != CC1101_MARCSTATE_RX) {
-      ESP_LOGW(TAG, "Radio watchdog: flush_rx failed (marc=0x%02x), full reinit", marc_after);
-      this->reset();
-      if (!this->init()) {
-        this->consecutive_watchdog_failures_++;
-      }
-    }
-    return;
+  // --- Something is wrong: escalating recovery ---
+  this->watchdog_recovery_count_.fetch_add(1, std::memory_order_relaxed);
+
+  // Reset escalation window if expired
+  if (now - this->watchdog_window_start_ms_ > WATCHDOG_ESCALATION_WINDOW_MS) {
+    this->watchdog_flush_count_ = 0;
+    this->watchdog_reset_count_ = 0;
+    this->watchdog_window_start_ms_ = now;
   }
 
+  // Stuck IDLE — simple SRX restart (Level 0, doesn't count toward escalation)
   if (marc == CC1101_MARCSTATE_IDLE) {
     ESP_LOGW(TAG, "Radio watchdog: stuck in IDLE, restarting RX");
-    this->watchdog_recovery_count_.fetch_add(1, std::memory_order_relaxed);
-    this->consecutive_watchdog_failures_ = 0;
     this->write_cmd(CC1101_SRX);
     return;
   }
 
-  ESP_LOGW(TAG, "Radio watchdog: unexpected state 0x%02x, full reinit", marc);
-  this->watchdog_recovery_count_.fetch_add(1, std::memory_order_relaxed);
-  this->consecutive_watchdog_failures_++;
-
-  if (this->consecutive_watchdog_failures_ >= 2) {
-    ESP_LOGE(TAG, "Radio watchdog: %d consecutive failures — SPI appears permanently broken.",
-             this->consecutive_watchdog_failures_);
-    ESP_LOGE(TAG, "  If GPIO12 is used for SPI MISO, it may be pulling VDD_SDIO to 1.8V at boot.");
-    ESP_LOGE(TAG, "  Use non-strapping pins for SPI (e.g. CLK=18, MISO=19, MOSI=23).");
-    this->spi_failed_.store(true, std::memory_order_release);
-    this->radio_fatal_error_.store(true, std::memory_order_release);
+  // Level 1: flush FIFO
+  if (this->watchdog_flush_count_ < WATCHDOG_MAX_FLUSHES_PER_WINDOW) {
+    this->watchdog_flush_count_++;
+    if (marc == CC1101_MARCSTATE_RXFIFO_OFLOW) {
+      ESP_LOGW(TAG, "Radio watchdog L1: RX FIFO overflow, flushing (%d/%d in window)",
+               this->watchdog_flush_count_, WATCHDOG_MAX_FLUSHES_PER_WINDOW);
+      this->flush_rx();
+    } else {
+      ESP_LOGW(TAG, "Radio watchdog L1: unexpected state %s (0x%02x), flushing (%d/%d in window)",
+               marcstate_to_string(marc), marc,
+               this->watchdog_flush_count_, WATCHDOG_MAX_FLUSHES_PER_WINDOW);
+      this->flush_and_rx();
+    }
     return;
   }
 
-  this->reset();
-  if (!this->init()) {
-    this->consecutive_watchdog_failures_++;
+  // Level 2: full chip reset
+  if (this->watchdog_reset_count_ < WATCHDOG_MAX_RESETS_PER_WINDOW) {
+    this->watchdog_reset_count_++;
+    ESP_LOGW(TAG, "Radio watchdog L2: %d flushes exhausted, full reset (%d/%d in window)",
+             WATCHDOG_MAX_FLUSHES_PER_WINDOW,
+             this->watchdog_reset_count_, WATCHDOG_MAX_RESETS_PER_WINDOW);
+    this->reset();
+    if (!this->init()) {
+      ESP_LOGW(TAG, "Radio watchdog L2: reinit failed after reset");
+    }
+    return;
   }
+
+  // Level 3: mark permanently failed
+  ESP_LOGE(TAG, "Radio watchdog L3: %d flushes + %d resets exhausted in 60s window — marking failed",
+           WATCHDOG_MAX_FLUSHES_PER_WINDOW, WATCHDOG_MAX_RESETS_PER_WINDOW);
+  ESP_LOGE(TAG, "  If GPIO12 is used for SPI MISO, it may be pulling VDD_SDIO to 1.8V at boot.");
+  ESP_LOGE(TAG, "  Use non-strapping pins for SPI (e.g. CLK=18, MISO=19, MOSI=23).");
+  this->spi_failed_.store(true, std::memory_order_release);
+  this->radio_fatal_error_.store(true, std::memory_order_release);
 }
 
 // ---------------------------------------------------------------------------
@@ -339,6 +382,7 @@ void Elero::flush_and_rx() {
   this->write_cmd(CC1101_SFRX);
   this->write_cmd(CC1101_SFTX);
   this->write_cmd(CC1101_SRX);
+  this->radio_mode_.store(static_cast<uint8_t>(RadioMode::RX), std::memory_order_relaxed);
   this->rx_ready_.store(false, std::memory_order_release);
 }
 
@@ -352,6 +396,7 @@ void Elero::flush_rx() {
   }
   this->write_cmd(CC1101_SFRX);
   this->write_cmd(CC1101_SRX);
+  this->radio_mode_.store(static_cast<uint8_t>(RadioMode::RX), std::memory_order_relaxed);
   this->rx_ready_.store(false, std::memory_order_release);
 }
 
@@ -673,7 +718,12 @@ bool Elero::send_command_internal_(t_elero_command *cmd) {
   this->transfer_byte(CC1101_SFRX);
   this->disable();
   delay_microseconds_safe(SPI_SETTLE_US);
-  this->rx_ready_.store(false, std::memory_order_release);
+
+  // Switch to TX mode BEFORE loading FIFO and strobing STX.
+  // The ISR will route GDO0 signals to tx_done_ while in TX mode,
+  // preserving any rx_ready_ flag that was set before this point.
+  this->radio_mode_.store(static_cast<uint8_t>(RadioMode::TX), std::memory_order_relaxed);
+  this->tx_done_.store(false, std::memory_order_release);
 
   delay_microseconds_safe(20);
   this->write_burst(CC1101_TXFIFO, this->msg_tx_, this->msg_tx_[0] + 1);
