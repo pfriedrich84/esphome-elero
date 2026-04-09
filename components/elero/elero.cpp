@@ -462,37 +462,15 @@ void Elero::setup() {
   this->gdo0_pin_->setup();
   this->gdo0_pin_->attach_interrupt(Elero::interrupt, this, gpio::INTERRUPT_FALLING_EDGE);
   this->reset();
+  if (!this->verify_spi_write_()) {
+    ESP_LOGW(TAG, "SPI write verify failed (stuck MOSI bits detected), continuing with init...");
+  }
   if (!this->init()) {
     ESP_LOGW(TAG, "First init failed, retrying reset+init with extended delay...");
     delay(10);
     this->reset();
     if (!this->init()) {
-      uint8_t partnum = this->read_status(CC1101_PARTNUM);
-      uint8_t version = this->read_status(CC1101_VERSION);
-      ESP_LOGE(TAG, "CC1101 SPI diagnostic: PARTNUM=0x%02x (expect 0x00), VERSION=0x%02x (expect 0x14)", partnum, version);
-
-      const uint8_t test_vals[] = {0xAA, 0x55, 0x0F, 0x00};
-      for (uint8_t tv : test_vals) {
-        this->write_reg(CC1101_FSCTRL1, tv);
-        uint8_t rb = this->read_reg(CC1101_FSCTRL1);
-        ESP_LOGE(TAG, "  SPI write/read test: wrote 0x%02x, read 0x%02x %s", tv, rb, (tv == rb) ? "OK" : "MISMATCH");
-      }
-
-      ESP_LOGE(TAG, "CC1101 SPI communication is broken — the radio is non-functional.");
-      if (partnum == 0x00 && version == 0x14) {
-        ESP_LOGE(TAG, "  CC1101 chip IS detected but register writes fail.");
-        ESP_LOGE(TAG, "  This may indicate MOSI is not connected or the SPI bus has a conflict.");
-      } else if (partnum == 0x00 && version == 0x00) {
-        ESP_LOGE(TAG, "  SPI returns all zeros — MISO may be stuck LOW or CS not reaching the CC1101.");
-      } else if (partnum == 0xFF && version == 0xFF) {
-        ESP_LOGE(TAG, "  SPI returns all ones — MISO may be stuck HIGH or the CC1101 is not powered.");
-      } else {
-        ESP_LOGE(TAG, "  Unexpected chip ID — verify the radio module is a CC1101 on this SPI bus.");
-      }
-      ESP_LOGE(TAG, "  Configured SPI: CS=pin_cc1101_cs, GDO0=pin_cc1101_gdo0");
-      ESP_LOGE(TAG, "  Verify SPI wiring: CLK, MOSI, MISO, CS must match the board schematic.");
-      this->spi_failed_.store(true, std::memory_order_release);
-      this->mark_failed(LOG_STR("CC1101 SPI communication broken — check pin assignments"));
+      this->diagnose_spi_failure_();
       return;
     }
     ESP_LOGI(TAG, "CC1101 init succeeded on second attempt after extended reset delay");

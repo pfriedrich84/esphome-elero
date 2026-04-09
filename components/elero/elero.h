@@ -582,6 +582,8 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void capture_raw_packet_(uint8_t fifo_len);
   void mark_last_raw_packet_(bool valid, const char *reason);
   void check_radio_state_();
+  void diagnose_spi_failure_();
+  bool verify_spi_write_();
 
   // RX interrupt flag: set by ISR when GDO0 fires (packet received).
   // Stale flags during TX are harmlessly ignored (process_rx() only runs
