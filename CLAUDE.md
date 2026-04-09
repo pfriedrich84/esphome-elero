@@ -794,6 +794,24 @@ This ensures compile warnings (like deprecation notices) automatically become tr
 
 **C++ (clang-format / clang-tidy):** Configured in `.clang-format` (Google-based, 120 col, 2-space indent) and `.clang-tidy` (bugprone-\*, performance-\*, naming conventions). Not yet enforced in CI — baseline application pending.
 
+### Branch Protection
+
+The `main` branch is protected via GitHub branch protection rules:
+
+- **Required status check:** `ci-ok` must pass (gates on all CI jobs: lint, compile, frontend-build, unit-tests, python-tests)
+- **Strict mode:** PRs must be up-to-date with `main` before merging
+- **Force pushes:** blocked
+- **Branch deletion:** blocked
+- **PR reviews:** not required (solo maintainer)
+- **Admin bypass:** allowed for emergencies
+
+Protection settings are codified in `.github/scripts/protect-main.sh`. To apply or update rules, run:
+
+```bash
+# Requires gh CLI authenticated as repo admin
+bash .github/scripts/protect-main.sh
+```
+
 ---
 
 ## Testing
