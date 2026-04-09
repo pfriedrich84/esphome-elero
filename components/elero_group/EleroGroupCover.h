@@ -21,6 +21,7 @@ class EleroGroupCover : public cover::Cover, public Component {
   cover::CoverTraits get_traits() override;
 
   void set_elero_parent(Elero *parent) { parent_ = parent; }
+  void set_assumed_state(bool assumed) { assumed_state_ = assumed; }
   void add_member(EleroBlindBase *member) { members_.push_back(member); }
 
  protected:
@@ -39,6 +40,7 @@ class EleroGroupCover : public cover::Cover, public Component {
   uint8_t group_counter_{1};
   uint32_t last_position_update_{0};
   bool native_group_{false};  // cached result of can_use_native_group_()
+  bool assumed_state_{true};
 };
 
 }  // namespace elero

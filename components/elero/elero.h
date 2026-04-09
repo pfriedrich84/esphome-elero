@@ -4,6 +4,9 @@
 #include "esphome/core/helpers.h"
 #include "esphome/core/preferences.h"
 #include "esphome/components/spi/spi.h"
+#ifdef USE_BUTTON
+#include "esphome/components/button/button.h"
+#endif
 #include "cc1101.h"
 #include <RadioLib.h>
 #include <string>
@@ -62,6 +65,11 @@ class Sensor;
 #ifdef USE_TEXT_SENSOR
 namespace text_sensor {
 class TextSensor;
+}
+#endif
+#ifdef USE_BUTTON
+namespace button {
+class Button;
 }
 #endif
 
@@ -357,6 +365,24 @@ class EleroBlindBase {
                                       uint32_t close_dur_ms,
                                       uint32_t poll_intvl_ms) = 0;
 };
+
+#ifdef USE_BUTTON
+/// Diagnostic button that sends a single CHECK command to a cover or light,
+/// requesting an immediate status update from the blind without side effects.
+/// Auto-created by cover/light platforms when auto_sensors is enabled.
+class EleroRefreshButton : public button::Button, public Component {
+ public:
+  void set_blind(EleroBlindBase *blind) { blind_ = blind; }
+  void set_light(EleroLightBase *light) { light_ = light; }
+  void dump_config() override;
+
+ protected:
+  void press_action() override;
+
+  EleroBlindBase *blind_{nullptr};
+  EleroLightBase *light_{nullptr};
+};
+#endif  // USE_BUTTON
 
 /// RadioLib HAL adapter that bridges ESPHome's SPIDevice to RadioLib's Module.
 /// GPIO and interrupt operations are forwarded to ESPHome primitives.

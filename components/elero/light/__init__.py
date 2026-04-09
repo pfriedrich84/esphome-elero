@@ -1,5 +1,6 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
+from esphome.components import button as esphome_button
 from esphome.components import light
 from esphome.components import sensor as esphome_sensor
 from esphome.components import text_sensor as esphome_text_sensor
@@ -8,6 +9,7 @@ from esphome.const import (
     CONF_NAME,
     CONF_OUTPUT_ID,
     DEVICE_CLASS_SIGNAL_STRENGTH,
+    ENTITY_CATEGORY_DIAGNOSTIC,
     STATE_CLASS_MEASUREMENT,
     UNIT_DECIBEL_MILLIWATT,
 )
@@ -15,7 +17,7 @@ from esphome.const import (
 from .. import CONF_ELERO_ID, elero, elero_ns
 
 DEPENDENCIES = ["elero"]
-AUTO_LOAD = ["sensor", "text_sensor"]
+AUTO_LOAD = ["sensor", "text_sensor", "button"]
 
 CONF_BLIND_ADDRESS = "blind_address"
 CONF_REMOTE_ADDRESS = "remote_address"
@@ -34,8 +36,10 @@ CONF_COMMAND_CHECK = "command_check"
 CONF_AUTO_SENSORS = "auto_sensors"
 CONF_RSSI_SENSOR = "rssi_sensor"
 CONF_STATUS_SENSOR = "status_sensor"
+CONF_REFRESH_BUTTON = "refresh_button"
 
 EleroLight = elero_ns.class_("EleroLight", light.LightOutput, cg.Component)
+EleroRefreshButton = elero_ns.class_("EleroRefreshButton", esphome_button.Button, cg.Component)
 
 _RSSI_SENSOR_SCHEMA = esphome_sensor.sensor_schema(
     unit_of_measurement=UNIT_DECIBEL_MILLIWATT,
@@ -44,6 +48,11 @@ _RSSI_SENSOR_SCHEMA = esphome_sensor.sensor_schema(
     state_class=STATE_CLASS_MEASUREMENT,
 )
 _STATUS_SENSOR_SCHEMA = esphome_text_sensor.text_sensor_schema()
+_REFRESH_BUTTON_SCHEMA = esphome_button.button_schema(
+    EleroRefreshButton,
+    entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+    icon="mdi:refresh",
+)
 
 
 def _auto_sensor_validator(config):
@@ -61,6 +70,8 @@ def _auto_sensor_validator(config):
         result[CONF_RSSI_SENSOR] = _RSSI_SENSOR_SCHEMA({CONF_NAME: f"{light_name} RSSI"})
     if CONF_STATUS_SENSOR not in result:
         result[CONF_STATUS_SENSOR] = _STATUS_SENSOR_SCHEMA({CONF_NAME: f"{light_name} Status"})
+    if CONF_REFRESH_BUTTON not in result:
+        result[CONF_REFRESH_BUTTON] = _REFRESH_BUTTON_SCHEMA({CONF_NAME: f"{light_name} Refresh"})
     return result
 
 
@@ -87,6 +98,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_AUTO_SENSORS, default=True): cv.boolean,
             cv.Optional(CONF_RSSI_SENSOR): _RSSI_SENSOR_SCHEMA,
             cv.Optional(CONF_STATUS_SENSOR): _STATUS_SENSOR_SCHEMA,
+            cv.Optional(CONF_REFRESH_BUTTON): _REFRESH_BUTTON_SCHEMA,
         }
     ).extend(cv.COMPONENT_SCHEMA),
     _auto_sensor_validator,
@@ -176,3 +188,9 @@ async def to_code(config):
     if CONF_STATUS_SENSOR in config:
         status_var = await esphome_text_sensor.new_text_sensor(config[CONF_STATUS_SENSOR])
         cg.add(parent.register_text_sensor(addr, status_var))
+
+    # Refresh button — diagnostic button to send CHECK command
+    if CONF_REFRESH_BUTTON in config:
+        btn_var = await esphome_button.new_button(config[CONF_REFRESH_BUTTON])
+        await cg.register_component(btn_var, config[CONF_REFRESH_BUTTON])
+        cg.add(btn_var.set_light(var))

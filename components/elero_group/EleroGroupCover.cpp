@@ -39,7 +39,7 @@ cover::CoverTraits EleroGroupCover::get_traits() {
   traits.set_supports_stop(true);
   traits.set_supports_position(false);  // Group doesn't support intermediate positions
   traits.set_supports_toggle(true);
-  traits.set_is_assumed_state(true);
+  traits.set_is_assumed_state(this->assumed_state_);
   // Support tilt only if ALL members support it
   bool all_tilt = true;
   for (auto *member : this->members_) {

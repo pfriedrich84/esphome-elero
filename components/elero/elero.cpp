@@ -157,6 +157,12 @@ void dispatch_commands(Elero *parent, std::queue<uint8_t> &queue,
                                                          ELERO_COMMAND_QUEUE_MAX_AGE_MS)) {
       ESP_LOGW(tag, "Queue stale for 0x%06x (%lums without drain), clearing %d commands",
                blind_addr, (unsigned long)(now - *last_queue_drain_ms), (int)queue.size());
+      // If a command was partially sent (some repeats transmitted), bump the
+      // counter so the next command doesn't reuse the in-flight counter value.
+      // Blinds may reject duplicate counter values as replays.
+      if (send_packets > 0) {
+        increase_counter_fn(ctx);
+      }
       while (!queue.empty()) queue.pop();
       send_packets = 0;
       send_retries = 0;
@@ -600,6 +606,30 @@ bool Elero::send_command_priority(t_elero_command *cmd) {
   this->tx_drop_count_.fetch_add(1, std::memory_order_relaxed);
   return false;
 }
+
+// ---------------------------------------------------------------------------
+// EleroRefreshButton — diagnostic button that sends CHECK to a cover/light
+// ---------------------------------------------------------------------------
+#ifdef USE_BUTTON
+void EleroRefreshButton::dump_config() {
+  LOG_BUTTON("", "Elero Refresh Button", this);
+  if (this->blind_ != nullptr) {
+    ESP_LOGCONFIG(TAG, "  Target: cover 0x%06x", this->blind_->get_blind_address());
+  } else if (this->light_ != nullptr) {
+    ESP_LOGCONFIG(TAG, "  Target: light 0x%06x", this->light_->get_blind_address());
+  }
+}
+
+void EleroRefreshButton::press_action() {
+  if (this->blind_ != nullptr) {
+    ESP_LOGD(TAG, "Refresh: CHECK → cover 0x%06x", this->blind_->get_blind_address());
+    this->blind_->enqueue_command(this->blind_->get_command_check());
+  } else if (this->light_ != nullptr) {
+    ESP_LOGD(TAG, "Refresh: CHECK → light 0x%06x", this->light_->get_blind_address());
+    this->light_->enqueue_command(this->light_->get_command_check());
+  }
+}
+#endif  // USE_BUTTON
 
 }  // namespace elero
 }  // namespace esphome

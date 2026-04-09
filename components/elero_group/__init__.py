@@ -11,6 +11,7 @@ EleroGroupCover = elero_ns.class_("EleroGroupCover", cover.Cover, cg.Component)
 EleroCover = elero_ns.class_("EleroCover")
 
 CONF_MEMBERS = "members"
+CONF_ASSUMED_STATE = "assumed_state"
 
 
 def _validate_members(config):
@@ -31,6 +32,7 @@ CONFIG_SCHEMA = cv.All(
             {
                 cv.GenerateID(CONF_ELERO_ID): cv.use_id(elero),
                 cv.Required(CONF_MEMBERS): cv.ensure_list(cv.use_id(EleroCover)),
+                cv.Optional(CONF_ASSUMED_STATE, default=True): cv.boolean,
             }
         )
         .extend(cv.COMPONENT_SCHEMA)
@@ -45,6 +47,7 @@ async def to_code(config):
         await cg.register_component(var, group_conf)
         parent = await cg.get_variable(group_conf[CONF_ELERO_ID])
         cg.add(var.set_elero_parent(parent))
+        cg.add(var.set_assumed_state(group_conf[CONF_ASSUMED_STATE]))
         for member_id in group_conf[CONF_MEMBERS]:
             member = await cg.get_variable(member_id)
             cg.add(var.add_member(member))
