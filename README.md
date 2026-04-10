@@ -19,6 +19,7 @@
 - [Positionssteuerung](#positionssteuerung)
 - [Tilt-Steuerung](#tilt-steuerung)
 - [Lichtsteuerung](#lichtsteuerung)
+- [Gruppensteuerung](#gruppensteuerung)
 - [Diagnose-Sensoren](#diagnose-sensoren)
 - [RF-Discovery (Scan)](#rf-discovery-scan)
 - [Home Assistant Integration](#home-assistant-integration)
@@ -43,6 +44,7 @@
 | Web-UI fuer Discovery und YAML-Export | Stabil |
 | Mehrere Blinds gleichzeitig | Stabil |
 | TempoTel 2 Kompatibilität | Getestet |
+| Gruppensteuerung (mehrere Rollläden gleichzeitig) | Stabil |
 | Lichter schalten (Ein/Aus und Dimmen) | Beta (ungetestet) |
 
 ## Voraussetzungen
@@ -177,7 +179,7 @@ elero:
   freq1: 0x71            # Optional: Frequenz-Register FREQ1 (Standard: 0x71)
   freq2: 0x21            # Optional: Frequenz-Register FREQ2 (Standard: 0x21)
   send_repeats: 1        # Optional: RF-Paketwiederholungen (1-20, Standard: 1)
-  send_delay: 20ms       # Optional: Pause zwischen Wiederholungen (Standard: 20ms)
+  send_delay: 10ms       # Optional: Pause zwischen Wiederholungen (Standard: 10ms)
 ```
 
 | Parameter | Typ | Pflicht | Standard | Beschreibung |
@@ -188,7 +190,7 @@ elero:
 | `freq1` | Hex (0x00-0xFF) | Nein | `0x71` | CC1101 FREQ1 Register |
 | `freq2` | Hex (0x00-0xFF) | Nein | `0x21` | CC1101 FREQ2 Register |
 | `send_repeats` | Int (1-20) | Nein | `1` | RF-Paketwiederholungen pro Befehl |
-| `send_delay` | Zeitdauer | Nein | `20ms` | Pause zwischen Wiederholungen |
+| `send_delay` | Zeitdauer | Nein | `10ms` | Pause zwischen Wiederholungen |
 | `auto_sensors` | Boolean | Nein | `true` | Hub-Diagnose-Sensoren automatisch erstellen |
 
 ### Plattform `cover` (Rollladen)
@@ -226,8 +228,10 @@ cover:
 | `remote_address` | Hex (24-bit) | Ja | - | Adresse der zu simulierenden Fernbedienung |
 | `open_duration` | Zeitdauer | Nein | `0s` | Fahrzeit zum vollständigen Öffnen |
 | `close_duration` | Zeitdauer | Nein | `0s` | Fahrzeit zum vollständigen Schließen |
-| `poll_interval` | Zeitdauer / `never` | Nein | `5min` | Status-Abfrageintervall (`never` deaktiviert; während Fahrt alle 2 s) |
+| `poll_interval` | Zeitdauer / `never` | Nein | `5min` | Status-Abfrageintervall (`never` deaktiviert; während Fahrt alle 5 s) |
 | `supports_tilt` | Boolean | Nein | `false` | Tilt/Kipp-Unterstützung aktivieren |
+| `assumed_state` | Boolean | Nein | `true` | `true` = Hoch/Runter-Buttons immer aktiv (kein Warten auf Positionsrückmeldung) |
+| `auto_sensors` | Boolean | Nein | `true` | RSSI-Sensor, Status-Text-Sensor und Refresh-Button automatisch erstellen |
 | `payload_1` | Hex (0x00-0xFF) | Nein | `0x00` | Erstes Payload-Byte |
 | `payload_2` | Hex (0x00-0xFF) | Nein | `0x04` | Zweites Payload-Byte |
 | `pck_inf1` | Hex (0x00-0xFF) | Nein | `0x6a` | Erstes Paket-Info-Byte |
@@ -422,6 +426,33 @@ light:
 
 ---
 
+## Gruppensteuerung
+
+Mehrere Rollläden können zu einer Gruppe zusammengefasst werden. Die Gruppe erscheint in Home Assistant als eigenes Cover-Entity und steuert alle Mitglieder gleichzeitig.
+
+```yaml
+elero_group:
+  - name: "Alle Rollläden"
+    assumed_state: true
+    members:
+      - cover_schlafzimmer
+      - cover_wohnzimmer
+```
+
+| Parameter | Typ | Pflicht | Standard | Beschreibung |
+|---|---|---|---|---|
+| `name` | String | Ja | - | Anzeigename in Home Assistant |
+| `members` | Liste von Cover-IDs | Ja | - | Mitglieder der Gruppe (2–10 Covers) |
+| `assumed_state` | Boolean | Nein | `true` | `true` = Hoch/Runter-Buttons immer aktiv (keine Positionsrückmeldung von der Gruppe) |
+
+**Hinweise:**
+- Eine Gruppe benötigt mindestens 2 und maximal 10 Mitglieder.
+- Wenn alle Mitglieder dieselbe `remote_address` und denselben `channel` verwenden, wird ein einzelnes natives Multi-Destination-RF-Paket gesendet (effizienter).
+- Andernfalls werden die Befehle einzeln nacheinander an jedes Mitglied gesendet.
+- Vollständige Parameterliste: [Konfigurationsreferenz](docs/CONFIGURATION.md#plattform-elero_group)
+
+---
+
 ## Diagnose-Sensoren
 
 ### Hub-Diagnose-Sensoren
@@ -436,6 +467,18 @@ Bei `auto_sensors: true` (Standard) erzeugt der Hub automatisch vier Diagnose-Se
 | Elero Watchdog Recovery Count | - | Radio-Watchdog-Wiederherstellungen |
 
 Diese können mit `auto_sensors: false` am Hub deaktiviert oder individuell überschrieben werden (`frequency_sensor`, `rx_count_sensor`, `tx_count_sensor`, `watchdog_recovery_sensor`).
+
+### Cover-/Light-Diagnose (auto_sensors)
+
+Bei `auto_sensors: true` (Standard) erzeugt jeder Cover und jedes Light automatisch drei Diagnose-Entitäten:
+
+| Entity | Typ | Beschreibung |
+|---|---|---|
+| *Name* RSSI | Sensor (dBm) | Signalstärke des letzten empfangenen Pakets |
+| *Name* Status | Text Sensor | Aktueller Blind-/Licht-Status als Text |
+| *Name* Refresh | Button (Diagnose) | Sendet einen CHECK-Befehl zur sofortigen Statusabfrage |
+
+Diese können mit `auto_sensors: false` am Cover/Light deaktiviert oder individuell überschrieben werden (`rssi_sensor`, `status_sensor`, `refresh_button`).
 
 ### RSSI-Sensor
 
@@ -552,8 +595,11 @@ Nach dem Flashen erscheint das Gerät automatisch in Home Assistant (wenn `api:`
 | Entity-Typ | Beispiel | Beschreibung |
 |---|---|---|
 | `cover.schlafzimmer` | Cover | Hoch/Runter/Stopp, Position, Tilt |
-| `sensor.schlafzimmer_rssi` | Sensor | Signalstärke in dBm |
-| `text_sensor.schlafzimmer_status` | Text Sensor | Aktueller Status |
+| `cover.alle_rolllaeden` | Cover (Gruppe) | Steuert mehrere Covers gleichzeitig |
+| `light.wohnzimmerlicht` | Light | Ein/Aus, optional Helligkeit |
+| `sensor.schlafzimmer_rssi` | Sensor | Signalstärke in dBm (auto-generiert) |
+| `text_sensor.schlafzimmer_status` | Text Sensor | Aktueller Status (auto-generiert) |
+| `button.schlafzimmer_refresh` | Button (Diagnose) | Sofortige Statusabfrage (auto-generiert) |
 | `button.elero_start_scan` | Button | RF-Scan starten |
 | `button.elero_stop_scan` | Button | RF-Scan stoppen |
 

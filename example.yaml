@@ -26,6 +26,7 @@ elero:
 
 cover:
   - platform: elero
+    id: cover_schlafzimmer
     blind_address: 0xa831e5
     channel: 4
     remote_address: 0xf0d008
@@ -33,6 +34,20 @@ cover:
     open_duration: 25s
     close_duration: 22s
     poll_interval: 5min              # Optional: Status polling (default 5min, or "never")
+  - platform: elero
+    id: cover_wohnzimmer
+    blind_address: 0xb912f3
+    channel: 5
+    remote_address: 0xf0d008
+    name: Wohnzimmer
+
+# Group cover - control multiple covers with a single command
+elero_group:
+  - name: "Alle Rollläden"
+    assumed_state: true              # Optional: buttons always enabled (default true)
+    members:
+      - cover_schlafzimmer
+      - cover_wohnzimmer
 
 # Light - Elero light receiver (on/off or dimmable)
 light:

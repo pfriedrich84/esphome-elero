@@ -565,7 +565,7 @@ elero:
   freq1: 0x71            # CC1101 FREQ1 register
   freq2: 0x21            # CC1101 FREQ2 register
   send_repeats: 1        # RF packet repetitions per command (1–20, default 1)
-  send_delay: 20ms       # Delay between repeated packets (default 20ms)
+  send_delay: 10ms       # Delay between repeated packets (default 10ms)
   auto_sensors: true     # Auto-generate hub diagnostic sensors (default true)
 ```
 
