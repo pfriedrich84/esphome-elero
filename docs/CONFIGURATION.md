@@ -25,7 +25,7 @@ elero:
 | `freq1` | Hex (0x00-0xFF) | Nein | `0x71` | CC1101 Frequenz-Register FREQ1 |
 | `freq2` | Hex (0x00-0xFF) | Nein | `0x21` | CC1101 Frequenz-Register FREQ2 |
 | `send_repeats` | Integer (1-20) | Nein | `1` | Anzahl der RF-Paketwiederholungen pro Befehl |
-| `send_delay` | Zeitdauer | Nein | `20ms` | Verzögerung zwischen wiederholten Paketen |
+| `send_delay` | Zeitdauer | Nein | `10ms` | Verzögerung zwischen wiederholten Paketen |
 | `auto_sensors` | Boolean | Nein | `true` | Erstellt automatisch Hub-Diagnose-Sensoren (Frequenz, RX/TX-Zähler, Watchdog-Recovery) |
 
 > Der Hub erweitert die ESPHome SPI-Konfiguration. `spi:` muss separat mit `clk_pin`, `mosi_pin` und `miso_pin` konfiguriert sein.
@@ -98,7 +98,8 @@ cover:
 | `close_duration` | Zeitdauer | `0s` | Fahrzeit zum vollständigen Schließen. Wird für die zeitbasierte Positionssteuerung benötigt. Wenn gesetzt, muss auch `open_duration` gesetzt werden. |
 | `poll_interval` | Zeitdauer / `never` | `5min` | Intervall für Status-Abfragen. `never` deaktiviert das Polling. Während der Fahrt wird alle 5 s abgefragt (bei aktivierter Positionssteuerung werden Fahrt-Abfragen übersprungen, da der Motor seinen Status selbst sendet). |
 | `supports_tilt` | Boolean | `false` | Aktiviert Tilt/Kipp-Unterstützung (z.B. für Raffstore). |
-| `auto_sensors` | Boolean | `true` | Erstellt automatisch RSSI- und Status-Sensoren für diesen Rollladen. Setzen Sie auf `false`, um diese manuell zu konfigurieren. |
+| `assumed_state` | Boolean | `true` | `true` = Hoch/Runter-Buttons in Home Assistant immer aktiv (kein Warten auf Positionsrückmeldung). |
+| `auto_sensors` | Boolean | `true` | Erstellt automatisch RSSI-Sensor, Status-Text-Sensor und Refresh-Button für diesen Rollladen. Setzen Sie auf `false`, um diese manuell zu konfigurieren. |
 
 ### Protokoll-Parameter
 
@@ -163,7 +164,7 @@ light:
 | Parameter | Typ | Standard | Beschreibung |
 |---|---|---|---|
 | `dim_duration` | Zeitdauer | `0s` | Dimm-Fahrzeit von 0 % auf 100 %. `0s` = nur Ein/Aus (`ColorMode::ON_OFF`); Wert > 0 = Helligkeitssteuerung aktiv (`ColorMode::BRIGHTNESS`). |
-| `auto_sensors` | Boolean | `true` | Erstellt automatisch RSSI- und Status-Sensoren für dieses Licht. Setzen Sie auf `false`, um diese manuell zu konfigurieren. |
+| `auto_sensors` | Boolean | `true` | Erstellt automatisch RSSI-Sensor, Status-Text-Sensor und Refresh-Button für dieses Licht. Setzen Sie auf `false`, um diese manuell zu konfigurieren. |
 | `rssi_sensor` | Sensor-Konfig | - | Explizite RSSI-Sensor-Konfiguration (überschreibt auto-generierten Sensor). |
 | `status_sensor` | Text-Sensor-Konfig | - | Explizite Status-Text-Sensor-Konfiguration (überschreibt auto-generierten Sensor). |
 
@@ -287,6 +288,34 @@ button:
 | `scan_start` | Boolean | Nein | `true` | `true` = Scan starten, `false` = Scan stoppen |
 
 **Hinweis:** Für einen vollständigen Scan-Workflow werden zwei Buttons benötigt: einer zum Starten und einer zum Stoppen. Die Scan-Ergebnisse werden im ESPHome-Log ausgegeben.
+
+---
+
+## Plattform: `elero_group` (Gruppensteuerung)
+
+Fasst mehrere Rollläden zu einer Gruppe zusammen. Die Gruppe erscheint in Home Assistant als eigenes Cover-Entity und steuert alle Mitglieder gleichzeitig mit einem einzigen Befehl.
+
+```yaml
+elero_group:
+  - name: "Alle Rollläden"
+    assumed_state: true
+    members:
+      - cover_schlafzimmer
+      - cover_wohnzimmer
+      - cover_kueche
+```
+
+| Parameter | Typ | Pflicht | Standard | Beschreibung |
+|---|---|---|---|---|
+| `name` | String | Ja | - | Anzeigename in Home Assistant |
+| `members` | Liste von Cover-IDs | Ja | - | Mitglieder der Gruppe (mindestens 2, maximal 10) |
+| `assumed_state` | Boolean | Nein | `true` | `true` = Hoch/Runter-Buttons immer aktiv, da keine Positionsrückmeldung von der Gruppe erfolgt |
+
+**Hinweise:**
+- Es müssen mindestens 2 und maximal 10 Mitglieder angegeben werden (RF-Paketgrößenlimit).
+- Wenn alle Mitglieder dieselbe `remote_address` und denselben `channel` verwenden, wird ein einzelnes natives Multi-Destination-RF-Paket gesendet — dies ist effizienter als einzelne Befehle.
+- Andernfalls werden die Befehle einzeln nacheinander an jedes Mitglied gesendet.
+- Alle Mitglieder müssen als `cover: platform: elero` konfiguriert sein.
 
 ---
 
