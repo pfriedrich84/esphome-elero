@@ -109,17 +109,6 @@ jobs:
 
           cat changelog.md
 
-      - name: Select release notes
-        if: steps.check.outputs.count != '0'
-        run: |
-          if [ -f RELEASE_NOTES.md ]; then
-            echo "Using curated RELEASE_NOTES.md"
-            cp RELEASE_NOTES.md notes.md
-          else
-            echo "Using auto-generated changelog"
-            cp changelog.md notes.md
-          fi
-
       - name: Create release
         if: steps.check.outputs.count != '0'
         env:
@@ -130,5 +119,5 @@ jobs:
           git push origin "$TAG"
           gh release create "$TAG" \
             --title "$TAG" \
-            --notes-file notes.md \
+            --notes-file changelog.md \
             --latest
