@@ -78,12 +78,13 @@ void Elero::interpret_msg() {
     dst = this->msg_rx_[17];
   }
 
-  if((uint16_t)(26 + dests_len) > length || (uint16_t)(26 + dests_len) >= CC1101_FIFO_LENGTH) {
-    ESP_LOGW(TAG, "Received invalid packet: dests_len too long (%d) for length %d", dests_len, length);
+  // Require enough bytes for payload header + encrypted payload before decode.
+  if((uint16_t)(28 + dests_len) > length || (uint16_t)(26 + dests_len) >= CC1101_FIFO_LENGTH) {
+    ESP_LOGW(TAG, "Received invalid packet: payload bounds too short (dests_len=%d, length=%d)", dests_len, length);
     ESP_LOGW(TAG, "  Raw [%d bytes]: %s", length + 3,
              format_hex_pretty(this->msg_rx_, length + 3).c_str());
     if (this->packet_dump_pending_update_) {
-      this->mark_last_raw_packet_(false, "dests_len_too_long");
+      this->mark_last_raw_packet_(false, "payload_bounds_short");
       this->packet_dump_pending_update_ = false;
     }
     return;

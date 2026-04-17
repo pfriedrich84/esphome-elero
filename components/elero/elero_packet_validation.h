@@ -25,8 +25,11 @@ inline uint8_t calculate_dests_length(uint8_t typ, uint8_t num_dests) {
 }
 
 inline bool is_valid_packet_bounds(uint8_t length, uint8_t dests_len) {
+  // Minimum decode safety: payload[0..1] + encrypted payload bytes must exist.
+  // interpret_msg() reads payload bytes through index (19 + dests_len + 9),
+  // so length must be at least (28 + dests_len).
   uint16_t offset = 26u + dests_len;
-  return offset <= length && offset < FIFO_LENGTH;
+  return (offset + 2u) <= length && offset < FIFO_LENGTH;
 }
 
 inline bool is_rssi_in_bounds(uint8_t length) { return (uint16_t)(length + 2) < FIFO_LENGTH; }
