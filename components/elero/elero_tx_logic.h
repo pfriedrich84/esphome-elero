@@ -3,6 +3,8 @@
 
 #include <cstdint>
 
+#define ELERO_HAS_TX_ADDR_HELPER 1
+
 namespace esphome {
 namespace elero {
 namespace tx_logic {
@@ -13,6 +15,14 @@ inline uint8_t sanitize_num_dests(uint8_t requested, uint8_t max_dests) {
   if (requested > max_dests)
     return max_dests;
   return requested;
+}
+
+inline uint8_t count_nonzero_dest_addrs(const uint32_t *dest_addrs, uint8_t max_dests) {
+  uint8_t count = 0;
+  while (count < max_dests && dest_addrs[count] != 0) {
+    count++;
+  }
+  return count;
 }
 
 inline uint16_t calculate_msg_len(uint8_t num_dests) {
