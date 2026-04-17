@@ -3,6 +3,7 @@
 #include "elero_utils.h"
 #include "elero_watchdog_logic.h"
 #include "elero_recovery_logic.h"
+#include "elero_overflow_logic.h"
 #include "esphome/core/log.h"
 #include "esphome/core/helpers.h"
 #include <cstring>
@@ -73,21 +74,26 @@ void Elero::process_rx() {
 
     if (len & 0x80) {  // overflow bit set — FIFO data unreliable
       uint32_t now = millis();
-      // Rate-limit: if we already flushed recently, suppress log and skip
-      if (now - this->last_rx_overflow_ms_ < 1000) {
-        this->rx_overflow_count_++;
-        // After 5 rapid overflows, escalate to full radio reinit
-        if (this->rx_overflow_count_ >= 5) {
-          ESP_LOGW(TAG, "RX FIFO overflow persists after %d flushes, full radio reinit",
-                   this->rx_overflow_count_);
-          this->rx_overflow_count_ = 0;
-          this->last_rx_overflow_ms_ = now;
-          this->reset();
-          this->init();
-        }
+      this->rx_overflow_count_ = overflow_logic::next_overflow_count(
+          now, this->last_rx_overflow_ms_, this->rx_overflow_count_, 1000);
+
+      // After rapid repeated overflows, escalate to full radio reinit.
+      if (overflow_logic::should_reinit_after_overflow_count(this->rx_overflow_count_, 5)) {
+        ESP_LOGW(TAG, "RX FIFO overflow persists after %d flushes, full radio reinit",
+                 this->rx_overflow_count_);
+        this->rx_overflow_count_ = 0;
+        this->last_rx_overflow_ms_ = now;
+        this->reset();
+        this->init();
         return;
       }
-      this->rx_overflow_count_ = 1;
+
+      // For rapid repeated overflows, suppress repetitive flushes and let the
+      // counter decide when to escalate.
+      if (this->rx_overflow_count_ > 1) {
+        return;
+      }
+
       this->last_rx_overflow_ms_ = now;
       ESP_LOGW(TAG, "RX FIFO overflow in process_rx, flushing");
       this->flush_rx();

@@ -136,7 +136,7 @@ int main() {
   // RX overflow helper invariants.
   ocheck(HAS_OVERFLOW_HELPER == 1);
 #if HAS_OVERFLOW_HELPER
-  ocheck(esphome::elero::overflow_logic::next_overflow_count(1000, 100, 3, 1000) == 1);
+  ocheck(esphome::elero::overflow_logic::next_overflow_count(1100, 100, 3, 1000) == 1);
   ocheck(esphome::elero::overflow_logic::next_overflow_count(900, 100, 3, 1000) == 4);
   ocheck(esphome::elero::overflow_logic::should_reinit_after_overflow_count(5, 5));
   ocheck(!esphome::elero::overflow_logic::should_reinit_after_overflow_count(4, 5));
