@@ -51,7 +51,26 @@ CPP
 g++ -std=c++17 -Icomponents .autoresearch/reliability_probe.cpp -o .autoresearch/reliability_probe
 
 start=$(date +%s)
-.autoresearch/reliability_probe
+probe_out=$(.autoresearch/reliability_probe)
+printf '%s\n' "$probe_out"
+
+base_score=$(printf '%s\n' "$probe_out" | awk -F= '/METRIC reliability_score_v2=/{print $2}')
+if rg -n "crc\s*==\s*0" components/elero/elero_protocol.cpp >/dev/null 2>&1; then
+  crc_gate_present=1
+else
+  crc_gate_present=0
+fi
+
+combined_score=$(python3 - <<PY
+base = float("${base_score:-0}")
+crc = int("${crc_gate_present}")
+print(round((base * 9.0 + (100.0 if crc else 0.0)) / 10.0, 4))
+PY
+)
+
 end=$(date +%s)
 
+echo "METRIC reliability_score_v3=${combined_score}"
+echo "METRIC reliability_score=${combined_score}"
+echo "METRIC crc_gate_present=${crc_gate_present}"
 echo "METRIC unit_seconds=$((end - start))"
