@@ -172,6 +172,7 @@ int main() {
 #if HAS_TX_HELPER
   tpcheck(esphome::elero::tx_logic::calculate_msg_len(1) == 29);
   tpcheck(esphome::elero::tx_logic::calculate_msg_len(10) == 56);
+  tpcheck(esphome::elero::tx_logic::calculate_msg_len(255) > 57);
   tpcheck(esphome::elero::tx_logic::is_msg_len_valid(esphome::elero::tx_logic::calculate_msg_len(10), 57));
 #else
   tpcheck(false);
@@ -199,6 +200,7 @@ int main() {
   std::cout << "METRIC tx_score=" << tx_score << "\n";
   std::cout << "METRIC tx_packet_score=" << tx_packet_score << "\n";
   std::cout << "METRIC failed_checks=" << failed << "\n";
+  std::cout << "METRIC reliability_score_v13=" << combined << "\n";
   std::cout << "METRIC reliability_score_v12=" << combined << "\n";
   std::cout << "METRIC reliability_score_v11=" << combined << "\n";
   std::cout << "METRIC reliability_score_v10=" << combined << "\n";
