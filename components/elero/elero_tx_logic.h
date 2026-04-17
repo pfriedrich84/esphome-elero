@@ -4,6 +4,7 @@
 #include <cstdint>
 
 #define ELERO_HAS_TX_ADDR_HELPER 1
+#define ELERO_HAS_TX_EFFECTIVE_DESTS_HELPER 1
 
 namespace esphome {
 namespace elero {
@@ -23,6 +24,11 @@ inline uint8_t count_nonzero_dest_addrs(const uint32_t *dest_addrs, uint8_t max_
     count++;
   }
   return count;
+}
+
+inline uint8_t effective_num_dests(uint8_t requested_num_dests,
+                                   uint8_t available_num_dests) {
+  return (requested_num_dests < available_num_dests) ? requested_num_dests : available_num_dests;
 }
 
 inline uint16_t calculate_msg_len(uint8_t num_dests) {

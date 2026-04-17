@@ -666,11 +666,12 @@ bool Elero::send_command_internal_(t_elero_command *cmd) {
     ESP_LOGE(TAG, "No valid destination address available for TX command");
     return false;
   }
-  if (num_dests > available_dests) {
+  uint8_t effective_dests = tx_logic::effective_num_dests(num_dests, available_dests);
+  if (effective_dests != num_dests) {
     ESP_LOGW(TAG, "Requested %u destinations but only %u populated, clamping",
              num_dests, available_dests);
-    num_dests = available_dests;
   }
+  num_dests = effective_dests;
   uint16_t msg_len = tx_logic::calculate_msg_len(num_dests);
   if (!tx_logic::is_msg_len_valid(msg_len, ELERO_MAX_PACKET_SIZE)) {
     ESP_LOGE(TAG, "Invalid TX packet length %u for num_dests=%u", static_cast<unsigned>(msg_len), num_dests);
