@@ -12,6 +12,14 @@ cat > .autoresearch/reliability_probe.cpp <<'CPP'
 using namespace esphome::elero::dispatch_logic;
 using namespace esphome::elero::packet_validation;
 
+namespace {
+#ifdef ELERO_HAS_CRC_STATUS_HELPER
+constexpr bool kHasCrcHelper = true;
+#else
+constexpr bool kHasCrcHelper = false;
+#endif
+}
+
 int main() {
   int dispatch_total = 0;
   int dispatch_failed = 0;
@@ -52,6 +60,13 @@ int main() {
   pcheck(is_valid_packet_bounds(29, 3));
   pcheck(!is_valid_packet_bounds(28, 3));
 
+  // CRC helper should exist and correctly map appended status byte semantics.
+  pcheck(kHasCrcHelper);
+#ifdef ELERO_HAS_CRC_STATUS_HELPER
+  pcheck(is_crc_valid_status_byte(0x80));
+  pcheck(!is_crc_valid_status_byte(0x00));
+#endif
+
   int total = dispatch_total + packet_total;
   int failed = dispatch_failed + packet_failed;
   int passed = total - failed;
@@ -64,6 +79,7 @@ int main() {
   std::cout << "METRIC reliability_score_v2=" << dispatch_score << "\n";
   std::cout << "METRIC packet_score=" << packet_score << "\n";
   std::cout << "METRIC failed_checks=" << failed << "\n";
+  std::cout << "METRIC reliability_score_v7=" << combined << "\n";
   std::cout << "METRIC reliability_score_v6=" << combined << "\n";
   std::cout << "METRIC reliability_score_v5=" << combined << "\n";
   std::cout << "METRIC reliability_score_v4=" << combined << "\n";
