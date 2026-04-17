@@ -1,6 +1,7 @@
 #include "elero.h"
 #include "elero_crypto.h"
 #include "elero_utils.h"
+#include "elero_watchdog_logic.h"
 #include "esphome/core/log.h"
 #include "esphome/core/helpers.h"
 #include <cstring>
@@ -269,8 +270,17 @@ void Elero::check_radio_state_() {
 
   uint8_t marc = this->read_status(CC1101_MARCSTATE) & 0x1F;
 
-  // Healthy states — reset escalation window
+  // Healthy RX state — reset escalation counters/window.
   if (marc == CC1101_MARCSTATE_RX) {
+    watchdog_logic::EscalationState state{
+      this->watchdog_flush_count_,
+      this->watchdog_reset_count_,
+      this->watchdog_window_start_ms_
+    };
+    watchdog_logic::reset_on_healthy(state, now);
+    this->watchdog_flush_count_ = state.flush_count;
+    this->watchdog_reset_count_ = state.reset_count;
+    this->watchdog_window_start_ms_ = state.window_start_ms;
     return;
   }
   // Transient calibration states — let them settle
@@ -282,11 +292,17 @@ void Elero::check_radio_state_() {
   // --- Something is wrong: escalating recovery ---
   this->watchdog_recovery_count_.fetch_add(1, std::memory_order_relaxed);
 
-  // Reset escalation window if expired
-  if (now - this->watchdog_window_start_ms_ > WATCHDOG_ESCALATION_WINDOW_MS) {
-    this->watchdog_flush_count_ = 0;
-    this->watchdog_reset_count_ = 0;
-    this->watchdog_window_start_ms_ = now;
+  // Reset escalation window if expired.
+  {
+    watchdog_logic::EscalationState state{
+      this->watchdog_flush_count_,
+      this->watchdog_reset_count_,
+      this->watchdog_window_start_ms_
+    };
+    watchdog_logic::reset_if_window_expired(state, now, WATCHDOG_ESCALATION_WINDOW_MS);
+    this->watchdog_flush_count_ = state.flush_count;
+    this->watchdog_reset_count_ = state.reset_count;
+    this->watchdog_window_start_ms_ = state.window_start_ms;
   }
 
   // Stuck IDLE — simple SRX restart (Level 0, doesn't count toward escalation)
