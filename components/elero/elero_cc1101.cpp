@@ -658,14 +658,14 @@ bool Elero::send_command_internal_(t_elero_command *cmd) {
   if (num_dests != requested_num_dests) {
     ESP_LOGW(TAG, "Invalid num_dests=%d, sanitized to %d", requested_num_dests, num_dests);
   }
-  uint8_t msg_len = tx_logic::calculate_msg_len(num_dests);
+  uint16_t msg_len = tx_logic::calculate_msg_len(num_dests);
   if (!tx_logic::is_msg_len_valid(msg_len, ELERO_MAX_PACKET_SIZE)) {
-    ESP_LOGE(TAG, "Invalid TX packet length %u for num_dests=%u", msg_len, num_dests);
+    ESP_LOGE(TAG, "Invalid TX packet length %u for num_dests=%u", static_cast<unsigned>(msg_len), num_dests);
     return false;
   }
 
   uint16_t code = (0x00 - (cmd->counter * ELERO_CRYPTO_MULT)) & ELERO_CRYPTO_MASK;
-  this->msg_tx_[0] = msg_len;
+  this->msg_tx_[0] = static_cast<uint8_t>(msg_len);
   this->msg_tx_[1] = cmd->counter;
   this->msg_tx_[2] = cmd->pck_inf[0];
   this->msg_tx_[3] = cmd->pck_inf[1];
@@ -708,8 +708,8 @@ bool Elero::send_command_internal_(t_elero_command *cmd) {
              num_dests, cmd->payload[4], cmd->channel, cmd->counter);
   }
 #if ESPHOME_LOG_LEVEL >= ESPHOME_LOG_LEVEL_VERBOSE
-  ESP_LOGV(TAG, "  TX raw [%d bytes]: %s", msg_len + 1,
-           format_hex_pretty(this->msg_tx_, msg_len + 1).c_str());
+  ESP_LOGV(TAG, "  TX raw [%d bytes]: %s", static_cast<int>(msg_len + 1),
+           format_hex_pretty(this->msg_tx_, static_cast<uint8_t>(msg_len + 1)).c_str());
 #endif
 
   this->radio_->standby();

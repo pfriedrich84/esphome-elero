@@ -15,12 +15,12 @@ inline uint8_t sanitize_num_dests(uint8_t requested, uint8_t max_dests) {
   return requested;
 }
 
-inline uint8_t calculate_msg_len(uint8_t num_dests) {
+inline uint16_t calculate_msg_len(uint8_t num_dests) {
   // header(16) + num_dests*3 + payload(10)
-  return static_cast<uint8_t>(16 + num_dests * 3 + 10);
+  return static_cast<uint16_t>(16u + static_cast<uint16_t>(num_dests) * 3u + 10u);
 }
 
-inline bool is_msg_len_valid(uint8_t msg_len, uint8_t max_packet_size) {
+inline bool is_msg_len_valid(uint16_t msg_len, uint16_t max_packet_size) {
   return msg_len <= max_packet_size;
 }
 
