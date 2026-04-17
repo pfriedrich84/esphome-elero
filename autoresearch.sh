@@ -53,6 +53,11 @@ constexpr bool kHasRecoveryOutcomeHelper = true;
 #else
 constexpr bool kHasRecoveryOutcomeHelper = false;
 #endif
+#ifdef ELERO_HAS_TX_ADDR_HELPER
+constexpr bool kHasTxAddrHelper = true;
+#else
+constexpr bool kHasTxAddrHelper = false;
+#endif
 }
 
 int main() {
@@ -188,6 +193,13 @@ int main() {
   tcheck(esphome::elero::tx_logic::sanitize_num_dests(0, 10) == 1);
   tcheck(esphome::elero::tx_logic::sanitize_num_dests(5, 10) == 5);
   tcheck(esphome::elero::tx_logic::sanitize_num_dests(12, 10) == 10);
+  tcheck(kHasTxAddrHelper);
+#ifdef ELERO_HAS_TX_ADDR_HELPER
+  uint32_t addrs1[10] = {0x010203, 0x0A0B0C, 0, 0, 0, 0, 0, 0, 0, 0};
+  tcheck(esphome::elero::tx_logic::count_nonzero_dest_addrs(addrs1, 10) == 2);
+  uint32_t addrs2[10] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+  tcheck(esphome::elero::tx_logic::count_nonzero_dest_addrs(addrs2, 10) == 0);
+#endif
 #endif
 
   // TX packet-length invariants.
@@ -233,6 +245,7 @@ int main() {
   std::cout << "METRIC tx_packet_score=" << tx_packet_score << "\n";
   std::cout << "METRIC dedup_score=" << dedup_score << "\n";
   std::cout << "METRIC failed_checks=" << failed << "\n";
+  std::cout << "METRIC reliability_score_v16=" << combined << "\n";
   std::cout << "METRIC reliability_score_v15=" << combined << "\n";
   std::cout << "METRIC reliability_score_v14=" << combined << "\n";
   std::cout << "METRIC reliability_score_v13=" << combined << "\n";
