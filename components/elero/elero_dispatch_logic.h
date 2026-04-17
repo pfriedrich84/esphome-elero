@@ -43,7 +43,7 @@ inline bool is_dispatch_ready(bool is_stop_cmd, uint32_t now, uint32_t last_comm
 
 // Returns true if retry count exceeds the maximum (command should be dropped).
 inline bool should_drop_after_retries(uint8_t send_retries, uint8_t max_retries) {
-  return send_retries > max_retries;
+  return send_retries >= max_retries;
 }
 
 }  // namespace dispatch_logic

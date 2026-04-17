@@ -42,7 +42,7 @@ int main() {
   double score = total ? (100.0 * passed / total) : 0.0;
 
   std::cout << "checks=" << total << " failed=" << failed << " passed=" << passed << "\n";
-  std::cout << "METRIC reliability_score=" << score << "\n";
+  std::cout << "METRIC reliability_score_v2=" << score << "\n";
   std::cout << "METRIC failed_checks=" << failed << "\n";
   return 0;
 }
