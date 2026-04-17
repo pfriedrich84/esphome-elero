@@ -58,6 +58,11 @@ constexpr bool kHasTxAddrHelper = true;
 #else
 constexpr bool kHasTxAddrHelper = false;
 #endif
+#ifdef ELERO_HAS_TX_EFFECTIVE_DESTS_HELPER
+constexpr bool kHasTxEffectiveDestsHelper = true;
+#else
+constexpr bool kHasTxEffectiveDestsHelper = false;
+#endif
 }
 
 int main() {
@@ -194,11 +199,17 @@ int main() {
   tcheck(esphome::elero::tx_logic::sanitize_num_dests(5, 10) == 5);
   tcheck(esphome::elero::tx_logic::sanitize_num_dests(12, 10) == 10);
   tcheck(kHasTxAddrHelper);
+  tcheck(kHasTxEffectiveDestsHelper);
 #ifdef ELERO_HAS_TX_ADDR_HELPER
   uint32_t addrs1[10] = {0x010203, 0x0A0B0C, 0, 0, 0, 0, 0, 0, 0, 0};
   tcheck(esphome::elero::tx_logic::count_nonzero_dest_addrs(addrs1, 10) == 2);
   uint32_t addrs2[10] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
   tcheck(esphome::elero::tx_logic::count_nonzero_dest_addrs(addrs2, 10) == 0);
+#endif
+#ifdef ELERO_HAS_TX_EFFECTIVE_DESTS_HELPER
+  tcheck(esphome::elero::tx_logic::effective_num_dests(5, 2) == 2);
+  tcheck(esphome::elero::tx_logic::effective_num_dests(2, 5) == 2);
+  tcheck(esphome::elero::tx_logic::effective_num_dests(0, 5) == 0);
 #endif
 #endif
 
@@ -245,6 +256,7 @@ int main() {
   std::cout << "METRIC tx_packet_score=" << tx_packet_score << "\n";
   std::cout << "METRIC dedup_score=" << dedup_score << "\n";
   std::cout << "METRIC failed_checks=" << failed << "\n";
+  std::cout << "METRIC reliability_score_v17=" << combined << "\n";
   std::cout << "METRIC reliability_score_v16=" << combined << "\n";
   std::cout << "METRIC reliability_score_v15=" << combined << "\n";
   std::cout << "METRIC reliability_score_v14=" << combined << "\n";
