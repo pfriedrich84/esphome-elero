@@ -2,6 +2,7 @@
 #include "elero_crypto.h"
 #include "elero_utils.h"
 #include "elero_watchdog_logic.h"
+#include "elero_recovery_logic.h"
 #include "esphome/core/log.h"
 #include "esphome/core/helpers.h"
 #include <cstring>
@@ -705,7 +706,8 @@ bool Elero::send_command_internal_(t_elero_command *cmd) {
 
   uint8_t marc = this->read_status(CC1101_MARCSTATE) & 0x1F;
   if (marc != CC1101_MARCSTATE_IDLE) {
-    this->send_cmd_reinit_failures_++;
+    this->send_cmd_reinit_failures_ = recovery_logic::next_reinit_failure_count(
+        this->send_cmd_reinit_failures_, false);
     if (this->send_cmd_reinit_failures_ >= 3) {
       if (!this->spi_failed_.load(std::memory_order_acquire)) {
         ESP_LOGE(TAG, "send_command: %d consecutive reinit failures — SPI appears permanently broken.",
@@ -720,8 +722,11 @@ bool Elero::send_command_internal_(t_elero_command *cmd) {
     ESP_LOGW(TAG, "send_command: radio not in IDLE (marc=0x%02x), reinitializing (%d/%d)",
              marc, this->send_cmd_reinit_failures_, 3);
     this->reset();
-    if (!this->init()) {
-      this->send_cmd_reinit_failures_++;
+    bool init_ok = this->init();
+    if (!init_ok) {
+      // Already counted this failure cycle above; do not double increment.
+      this->send_cmd_reinit_failures_ = recovery_logic::next_reinit_failure_count(
+          this->send_cmd_reinit_failures_, true);
     }
     return false;
   }

@@ -21,7 +21,7 @@ inline void reset_on_healthy(EscalationState &state, uint32_t now_ms) {
 
 inline void reset_if_window_expired(EscalationState &state, uint32_t now_ms,
                                     uint32_t window_ms) {
-  if ((now_ms - state.window_start_ms) > window_ms) {
+  if ((now_ms - state.window_start_ms) >= window_ms) {
     state.flush_count = 0;
     state.reset_count = 0;
     state.window_start_ms = now_ms;
