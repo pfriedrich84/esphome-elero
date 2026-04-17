@@ -7,6 +7,12 @@
 #else
 #define HAS_WATCHDOG_HELPER 0
 #endif
+#if __has_include("elero/elero_recovery_logic.h")
+#include "elero/elero_recovery_logic.h"
+#define HAS_RECOVERY_HELPER 1
+#else
+#define HAS_RECOVERY_HELPER 0
+#endif
 
 using namespace esphome::elero::dispatch_logic;
 using namespace esphome::elero::packet_validation;
@@ -26,6 +32,8 @@ int main() {
   int packet_failed = 0;
   int watchdog_total = 0;
   int watchdog_failed = 0;
+  int recovery_total = 0;
+  int recovery_failed = 0;
 
   auto dcheck = [&](bool cond) {
     dispatch_total++;
@@ -38,6 +46,10 @@ int main() {
   auto wcheck = [&](bool cond) {
     watchdog_total++;
     if (!cond) watchdog_failed++;
+  };
+  auto rcheck = [&](bool cond) {
+    recovery_total++;
+    if (!cond) recovery_failed++;
   };
 
   // Dispatch reliability invariants.
@@ -85,20 +97,40 @@ int main() {
   wcheck(st.window_start_ms == 5000);
 #endif
 
-  int total = dispatch_total + packet_total + watchdog_total;
-  int failed = dispatch_failed + packet_failed + watchdog_failed;
+  // Recovery helper invariants for reinit-failure counting + window boundaries.
+  rcheck(HAS_RECOVERY_HELPER == 1);
+#if HAS_RECOVERY_HELPER
+  rcheck(esphome::elero::recovery_logic::next_reinit_failure_count(0, false) == 1);
+  rcheck(esphome::elero::recovery_logic::next_reinit_failure_count(1, false) == 2);
+  rcheck(esphome::elero::recovery_logic::next_reinit_failure_count(1, true) == 1);
+
+  esphome::elero::watchdog_logic::EscalationState win{};
+  win.flush_count = 2;
+  win.reset_count = 1;
+  win.window_start_ms = 1000;
+  esphome::elero::watchdog_logic::reset_if_window_expired(win, 61000, 60000);
+  // At exact boundary, window should be considered expired.
+  rcheck(win.flush_count == 0);
+  rcheck(win.reset_count == 0);
+#endif
+
+  int total = dispatch_total + packet_total + watchdog_total + recovery_total;
+  int failed = dispatch_failed + packet_failed + watchdog_failed + recovery_failed;
   int passed = total - failed;
 
   double dispatch_score = dispatch_total ? (100.0 * (dispatch_total - dispatch_failed) / dispatch_total) : 0.0;
   double packet_score = packet_total ? (100.0 * (packet_total - packet_failed) / packet_total) : 0.0;
   double watchdog_score = watchdog_total ? (100.0 * (watchdog_total - watchdog_failed) / watchdog_total) : 0.0;
+  double recovery_score = recovery_total ? (100.0 * (recovery_total - recovery_failed) / recovery_total) : 0.0;
   double combined = total ? (100.0 * passed / total) : 0.0;
 
   std::cout << "checks=" << total << " failed=" << failed << " passed=" << passed << "\n";
   std::cout << "METRIC reliability_score_v2=" << dispatch_score << "\n";
   std::cout << "METRIC packet_score=" << packet_score << "\n";
   std::cout << "METRIC watchdog_score=" << watchdog_score << "\n";
+  std::cout << "METRIC recovery_score=" << recovery_score << "\n";
   std::cout << "METRIC failed_checks=" << failed << "\n";
+  std::cout << "METRIC reliability_score_v9=" << combined << "\n";
   std::cout << "METRIC reliability_score_v8=" << combined << "\n";
   std::cout << "METRIC reliability_score_v7=" << combined << "\n";
   std::cout << "METRIC reliability_score_v6=" << combined << "\n";
