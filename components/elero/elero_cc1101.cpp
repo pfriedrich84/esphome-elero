@@ -5,6 +5,7 @@
 #include "elero_recovery_logic.h"
 #include "elero_overflow_logic.h"
 #include "elero_tx_logic.h"
+#include "elero_dedup_logic.h"
 #include "esphome/core/log.h"
 #include "esphome/core/helpers.h"
 #include <cstring>
@@ -247,7 +248,8 @@ bool Elero::is_duplicate_packet_(uint32_t src, uint8_t cnt) {
   uint32_t now = millis();
   uint64_t key = (static_cast<uint64_t>(src) << 8) | cnt;
   auto it = this->dedup_map_.find(key);
-  if (it != this->dedup_map_.end() && (now - it->second) < ELERO_DEDUP_WINDOW_MS) {
+  if (it != this->dedup_map_.end() &&
+      dedup_logic::is_duplicate_within_window(now, it->second, ELERO_DEDUP_WINDOW_MS)) {
     return true;  // already seen within window
   }
   this->dedup_map_[key] = now;
@@ -260,7 +262,7 @@ void Elero::prune_dedup_map_() {
     return;
   this->last_dedup_prune_ms_ = now;
   for (auto it = this->dedup_map_.begin(); it != this->dedup_map_.end();) {
-    if ((now - it->second) >= ELERO_DEDUP_WINDOW_MS)
+    if (dedup_logic::should_prune_entry(now, it->second, ELERO_DEDUP_WINDOW_MS))
       it = this->dedup_map_.erase(it);
     else
       ++it;
