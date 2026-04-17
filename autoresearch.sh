@@ -32,6 +32,12 @@ cat > .autoresearch/reliability_probe.cpp <<'CPP'
 #else
 #define HAS_TX_HELPER 0
 #endif
+#if __has_include("elero/elero_dedup_logic.h")
+#include "elero/elero_dedup_logic.h"
+#define HAS_DEDUP_HELPER 1
+#else
+#define HAS_DEDUP_HELPER 0
+#endif
 
 using namespace esphome::elero::dispatch_logic;
 using namespace esphome::elero::packet_validation;
@@ -59,6 +65,8 @@ int main() {
   int tx_failed = 0;
   int tx_packet_total = 0;
   int tx_packet_failed = 0;
+  int dedup_total = 0;
+  int dedup_failed = 0;
 
   auto dcheck = [&](bool cond) {
     dispatch_total++;
@@ -87,6 +95,10 @@ int main() {
   auto tpcheck = [&](bool cond) {
     tx_packet_total++;
     if (!cond) tx_packet_failed++;
+  };
+  auto ddcheck = [&](bool cond) {
+    dedup_total++;
+    if (!cond) dedup_failed++;
   };
 
   // Dispatch reliability invariants.
@@ -178,8 +190,17 @@ int main() {
   tpcheck(false);
 #endif
 
-  int total = dispatch_total + packet_total + watchdog_total + recovery_total + overflow_total + tx_total + tx_packet_total;
-  int failed = dispatch_failed + packet_failed + watchdog_failed + recovery_failed + overflow_failed + tx_failed + tx_packet_failed;
+  // Dedup helper invariants.
+  ddcheck(HAS_DEDUP_HELPER == 1);
+#if HAS_DEDUP_HELPER
+  ddcheck(esphome::elero::dedup_logic::is_duplicate_within_window(1000, 500, 600));
+  ddcheck(!esphome::elero::dedup_logic::is_duplicate_within_window(1100, 500, 600));
+  ddcheck(esphome::elero::dedup_logic::should_prune_entry(1100, 500, 600));
+  ddcheck(!esphome::elero::dedup_logic::should_prune_entry(1099, 500, 600));
+#endif
+
+  int total = dispatch_total + packet_total + watchdog_total + recovery_total + overflow_total + tx_total + tx_packet_total + dedup_total;
+  int failed = dispatch_failed + packet_failed + watchdog_failed + recovery_failed + overflow_failed + tx_failed + tx_packet_failed + dedup_failed;
   int passed = total - failed;
 
   double dispatch_score = dispatch_total ? (100.0 * (dispatch_total - dispatch_failed) / dispatch_total) : 0.0;
@@ -189,6 +210,7 @@ int main() {
   double overflow_score = overflow_total ? (100.0 * (overflow_total - overflow_failed) / overflow_total) : 0.0;
   double tx_score = tx_total ? (100.0 * (tx_total - tx_failed) / tx_total) : 0.0;
   double tx_packet_score = tx_packet_total ? (100.0 * (tx_packet_total - tx_packet_failed) / tx_packet_total) : 0.0;
+  double dedup_score = dedup_total ? (100.0 * (dedup_total - dedup_failed) / dedup_total) : 0.0;
   double combined = total ? (100.0 * passed / total) : 0.0;
 
   std::cout << "checks=" << total << " failed=" << failed << " passed=" << passed << "\n";
@@ -199,7 +221,9 @@ int main() {
   std::cout << "METRIC overflow_score=" << overflow_score << "\n";
   std::cout << "METRIC tx_score=" << tx_score << "\n";
   std::cout << "METRIC tx_packet_score=" << tx_packet_score << "\n";
+  std::cout << "METRIC dedup_score=" << dedup_score << "\n";
   std::cout << "METRIC failed_checks=" << failed << "\n";
+  std::cout << "METRIC reliability_score_v14=" << combined << "\n";
   std::cout << "METRIC reliability_score_v13=" << combined << "\n";
   std::cout << "METRIC reliability_score_v12=" << combined << "\n";
   std::cout << "METRIC reliability_score_v11=" << combined << "\n";
