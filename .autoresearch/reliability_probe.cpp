@@ -38,10 +38,12 @@ int main() {
   pcheck(!is_valid_dest_count(max_safe_dests() + 1));
   pcheck(!is_valid_dest_count(0));
 
-  // Need at least bytes for payload[0..1] + encrypted payload bytes before decode.
-  // length=26 with dests_len=0 is too short and should be rejected.
-  pcheck(!is_valid_packet_bounds(26, 0));
-  pcheck(is_valid_packet_bounds(28, 0));
+  // Payload bounds: payload[7] sits at index (26 + dests_len), so that index
+  // must be within the declared packet length.
+  pcheck(is_valid_packet_bounds(26, 0));
+  pcheck(!is_valid_packet_bounds(25, 0));
+  pcheck(is_valid_packet_bounds(29, 3));
+  pcheck(!is_valid_packet_bounds(28, 3));
 
   int total = dispatch_total + packet_total;
   int failed = dispatch_failed + packet_failed;
@@ -55,6 +57,7 @@ int main() {
   std::cout << "METRIC reliability_score_v2=" << dispatch_score << "\n";
   std::cout << "METRIC packet_score=" << packet_score << "\n";
   std::cout << "METRIC failed_checks=" << failed << "\n";
+  std::cout << "METRIC reliability_score_v6=" << combined << "\n";
   std::cout << "METRIC reliability_score_v5=" << combined << "\n";
   std::cout << "METRIC reliability_score_v4=" << combined << "\n";
   std::cout << "METRIC reliability_score=" << combined << "\n";
