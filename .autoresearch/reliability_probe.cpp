@@ -36,6 +36,7 @@ int main() {
   pcheck(!is_valid_packet_length(16));
   pcheck(is_valid_dest_count(max_safe_dests()));
   pcheck(!is_valid_dest_count(max_safe_dests() + 1));
+  pcheck(!is_valid_dest_count(0));
 
   // Need at least bytes for payload[0..1] + encrypted payload bytes before decode.
   // length=26 with dests_len=0 is too short and should be rejected.
