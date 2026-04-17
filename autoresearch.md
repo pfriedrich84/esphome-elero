@@ -34,7 +34,7 @@ Improve command/packet handling reliability for the Elero protocol stack (CC1101
 - Baseline reliability probe found boundary failures in dispatch predicates.
 - **Kept:** `is_dispatch_ready()` and `should_clear_stale_queue()` now use inclusive `>=` boundaries to avoid 1-tick timing blind spots.
 - **Kept:** retry drop now triggers at retry ceiling (`should_drop_after_retries >= max_retries`) to avoid extra failed retry cycles.
-- **Kept:** packet decode bound hardening: require length `>= 28 + dests_len` before decode; reject as `payload_bounds_short` when violated.
+- **Kept (corrected):** packet decode bounds now match actual payload indexing (`26 + dests_len` must be within `length`) to avoid rejecting valid frames while preserving safety checks.
 - **Kept:** strict destination count validation: reject `num_dests == 0` and `num_dests > max` with explicit reasons (`zero_dests`, `too_many_dests`).
-- CRC-gate experiments in `interpret_msg()` looked promising manually but were not consistently reflected by `run_experiment`; deferred for a cleaner benchmark signal.
+- **Kept:** explicit CRC status helper in `elero_packet_validation.h` and parser integration in `interpret_msg()`; bad-CRC packets are dropped before decode with `bad_crc` reason.
 - Environment lacked `cmake` and `esphome` for full upstream tests, so local dependency-free checks are used in this session.

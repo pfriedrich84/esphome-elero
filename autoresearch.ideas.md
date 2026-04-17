@@ -1,3 +1,4 @@
 - Add explicit CRC gating in `interpret_msg()` (drop packets when appended CC1101 CRC bit indicates failure) and expose counters for rejected bad-CRC frames.
 - Refactor packet accept/reject predicates into a pure helper (length, dest count, bounds, CRC) with fuzz/property tests to harden parser behavior.
 - Add targeted RadioLib/CC1101 recovery simulation tests for repeated RX overflow and failed reinit paths to verify escalation logic and failure latching.
+- Add deterministic watchdog-state invariants (flush→reset→fail escalation thresholds per 60s window) via a pure helper, then route `check_radio_state_()` through it to prevent silent regression in recovery policy.

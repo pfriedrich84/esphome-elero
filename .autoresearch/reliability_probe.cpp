@@ -1,6 +1,12 @@
 #include <iostream>
 #include "elero/elero_dispatch_logic.h"
 #include "elero/elero_packet_validation.h"
+#if __has_include("elero/elero_watchdog_logic.h")
+#include "elero/elero_watchdog_logic.h"
+#define HAS_WATCHDOG_HELPER 1
+#else
+#define HAS_WATCHDOG_HELPER 0
+#endif
 
 using namespace esphome::elero::dispatch_logic;
 using namespace esphome::elero::packet_validation;
@@ -18,6 +24,8 @@ int main() {
   int dispatch_failed = 0;
   int packet_total = 0;
   int packet_failed = 0;
+  int watchdog_total = 0;
+  int watchdog_failed = 0;
 
   auto dcheck = [&](bool cond) {
     dispatch_total++;
@@ -26,6 +34,10 @@ int main() {
   auto pcheck = [&](bool cond) {
     packet_total++;
     if (!cond) packet_failed++;
+  };
+  auto wcheck = [&](bool cond) {
+    watchdog_total++;
+    if (!cond) watchdog_failed++;
   };
 
   // Dispatch reliability invariants.
@@ -60,18 +72,34 @@ int main() {
   pcheck(!is_crc_valid_status_byte(0x00));
 #endif
 
-  int total = dispatch_total + packet_total;
-  int failed = dispatch_failed + packet_failed;
+  // Watchdog helper should exist and reset escalation counters on healthy RX.
+  wcheck(HAS_WATCHDOG_HELPER == 1);
+#if HAS_WATCHDOG_HELPER
+  esphome::elero::watchdog_logic::EscalationState st{};
+  st.flush_count = 2;
+  st.reset_count = 1;
+  st.window_start_ms = 100;
+  esphome::elero::watchdog_logic::reset_on_healthy(st, 5000);
+  wcheck(st.flush_count == 0);
+  wcheck(st.reset_count == 0);
+  wcheck(st.window_start_ms == 5000);
+#endif
+
+  int total = dispatch_total + packet_total + watchdog_total;
+  int failed = dispatch_failed + packet_failed + watchdog_failed;
   int passed = total - failed;
 
   double dispatch_score = dispatch_total ? (100.0 * (dispatch_total - dispatch_failed) / dispatch_total) : 0.0;
   double packet_score = packet_total ? (100.0 * (packet_total - packet_failed) / packet_total) : 0.0;
+  double watchdog_score = watchdog_total ? (100.0 * (watchdog_total - watchdog_failed) / watchdog_total) : 0.0;
   double combined = total ? (100.0 * passed / total) : 0.0;
 
   std::cout << "checks=" << total << " failed=" << failed << " passed=" << passed << "\n";
   std::cout << "METRIC reliability_score_v2=" << dispatch_score << "\n";
   std::cout << "METRIC packet_score=" << packet_score << "\n";
+  std::cout << "METRIC watchdog_score=" << watchdog_score << "\n";
   std::cout << "METRIC failed_checks=" << failed << "\n";
+  std::cout << "METRIC reliability_score_v8=" << combined << "\n";
   std::cout << "METRIC reliability_score_v7=" << combined << "\n";
   std::cout << "METRIC reliability_score_v6=" << combined << "\n";
   std::cout << "METRIC reliability_score_v5=" << combined << "\n";
