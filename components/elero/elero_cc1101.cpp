@@ -658,8 +658,11 @@ bool Elero::send_command_internal_(t_elero_command *cmd) {
   if (num_dests != requested_num_dests) {
     ESP_LOGW(TAG, "Invalid num_dests=%d, sanitized to %d", requested_num_dests, num_dests);
   }
-  // Dynamic packet length: header(16) + num_dests*3 + payload(10)
-  uint8_t msg_len = 16 + num_dests * 3 + 10;
+  uint8_t msg_len = tx_logic::calculate_msg_len(num_dests);
+  if (!tx_logic::is_msg_len_valid(msg_len, ELERO_MAX_PACKET_SIZE)) {
+    ESP_LOGE(TAG, "Invalid TX packet length %u for num_dests=%u", msg_len, num_dests);
+    return false;
+  }
 
   uint16_t code = (0x00 - (cmd->counter * ELERO_CRYPTO_MULT)) & ELERO_CRYPTO_MASK;
   this->msg_tx_[0] = msg_len;

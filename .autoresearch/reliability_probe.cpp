@@ -50,6 +50,8 @@ int main() {
   int overflow_failed = 0;
   int tx_total = 0;
   int tx_failed = 0;
+  int tx_packet_total = 0;
+  int tx_packet_failed = 0;
 
   auto dcheck = [&](bool cond) {
     dispatch_total++;
@@ -74,6 +76,10 @@ int main() {
   auto tcheck = [&](bool cond) {
     tx_total++;
     if (!cond) tx_failed++;
+  };
+  auto tpcheck = [&](bool cond) {
+    tx_packet_total++;
+    if (!cond) tx_packet_failed++;
   };
 
   // Dispatch reliability invariants.
@@ -155,8 +161,17 @@ int main() {
   tcheck(esphome::elero::tx_logic::sanitize_num_dests(12, 10) == 10);
 #endif
 
-  int total = dispatch_total + packet_total + watchdog_total + recovery_total + overflow_total + tx_total;
-  int failed = dispatch_failed + packet_failed + watchdog_failed + recovery_failed + overflow_failed + tx_failed;
+  // TX packet-length invariants.
+#if HAS_TX_HELPER
+  tpcheck(esphome::elero::tx_logic::calculate_msg_len(1) == 29);
+  tpcheck(esphome::elero::tx_logic::calculate_msg_len(10) == 56);
+  tpcheck(esphome::elero::tx_logic::is_msg_len_valid(esphome::elero::tx_logic::calculate_msg_len(10), 57));
+#else
+  tpcheck(false);
+#endif
+
+  int total = dispatch_total + packet_total + watchdog_total + recovery_total + overflow_total + tx_total + tx_packet_total;
+  int failed = dispatch_failed + packet_failed + watchdog_failed + recovery_failed + overflow_failed + tx_failed + tx_packet_failed;
   int passed = total - failed;
 
   double dispatch_score = dispatch_total ? (100.0 * (dispatch_total - dispatch_failed) / dispatch_total) : 0.0;
@@ -165,6 +180,7 @@ int main() {
   double recovery_score = recovery_total ? (100.0 * (recovery_total - recovery_failed) / recovery_total) : 0.0;
   double overflow_score = overflow_total ? (100.0 * (overflow_total - overflow_failed) / overflow_total) : 0.0;
   double tx_score = tx_total ? (100.0 * (tx_total - tx_failed) / tx_total) : 0.0;
+  double tx_packet_score = tx_packet_total ? (100.0 * (tx_packet_total - tx_packet_failed) / tx_packet_total) : 0.0;
   double combined = total ? (100.0 * passed / total) : 0.0;
 
   std::cout << "checks=" << total << " failed=" << failed << " passed=" << passed << "\n";
@@ -174,7 +190,9 @@ int main() {
   std::cout << "METRIC recovery_score=" << recovery_score << "\n";
   std::cout << "METRIC overflow_score=" << overflow_score << "\n";
   std::cout << "METRIC tx_score=" << tx_score << "\n";
+  std::cout << "METRIC tx_packet_score=" << tx_packet_score << "\n";
   std::cout << "METRIC failed_checks=" << failed << "\n";
+  std::cout << "METRIC reliability_score_v12=" << combined << "\n";
   std::cout << "METRIC reliability_score_v11=" << combined << "\n";
   std::cout << "METRIC reliability_score_v10=" << combined << "\n";
   std::cout << "METRIC reliability_score_v9=" << combined << "\n";

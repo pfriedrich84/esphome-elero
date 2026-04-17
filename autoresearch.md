@@ -37,4 +37,8 @@ Improve command/packet handling reliability for the Elero protocol stack (CC1101
 - **Kept (corrected):** packet decode bounds now match actual payload indexing (`26 + dests_len` must be within `length`) to avoid rejecting valid frames while preserving safety checks.
 - **Kept:** strict destination count validation: reject `num_dests == 0` and `num_dests > max` with explicit reasons (`zero_dests`, `too_many_dests`).
 - **Kept:** explicit CRC status helper in `elero_packet_validation.h` and parser integration in `interpret_msg()`; bad-CRC packets are dropped before decode with `bad_crc` reason.
+- **Kept:** watchdog escalation helpers added and wired (`elero_watchdog_logic.h`) with healthy-state reset and inclusive window-expiry behavior.
+- **Kept:** recovery helper (`elero_recovery_logic.h`) removes double counting in `send_command_internal_` reinit-failure escalation path.
+- **Kept:** RX overflow helper (`elero_overflow_logic.h`) centralizes overflow count progression and reinit threshold behavior in `process_rx()`.
+- **Kept:** TX sanitization helper (`elero_tx_logic.h`) clamps oversized `num_dests` to max destinations instead of collapsing to single destination.
 - Environment lacked `cmake` and `esphome` for full upstream tests, so local dependency-free checks are used in this session.
