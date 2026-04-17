@@ -18,7 +18,9 @@ inline bool is_valid_packet_length(uint8_t length) {
 
 inline uint8_t max_safe_dests() { return (MAX_PACKET_SIZE - HEADER_OVERHEAD) / 3; }
 
-inline bool is_valid_dest_count(uint8_t num_dests) { return num_dests <= max_safe_dests(); }
+inline bool is_valid_dest_count(uint8_t num_dests) {
+  return num_dests >= 1 && num_dests <= max_safe_dests();
+}
 
 inline uint8_t calculate_dests_length(uint8_t typ, uint8_t num_dests) {
   return (typ > 0x60) ? static_cast<uint8_t>(num_dests * 3) : num_dests;

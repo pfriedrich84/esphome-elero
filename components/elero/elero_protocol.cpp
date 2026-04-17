@@ -59,12 +59,12 @@ void Elero::interpret_msg() {
   uint8_t dests_len;
 
   static const uint8_t MAX_SAFE_DESTS = (ELERO_MAX_PACKET_SIZE - 27) / 3;
-  if (num_dests > MAX_SAFE_DESTS) {
-    ESP_LOGW(TAG, "Received invalid packet: too many destinations (%d)", num_dests);
+  if (num_dests == 0 || num_dests > MAX_SAFE_DESTS) {
+    ESP_LOGW(TAG, "Received invalid packet: invalid destination count (%d)", num_dests);
     ESP_LOGW(TAG, "  Raw [%d bytes]: %s", length + 3,
              format_hex_pretty(this->msg_rx_, length + 3).c_str());
     if (this->packet_dump_pending_update_) {
-      this->mark_last_raw_packet_(false, "too_many_dests");
+      this->mark_last_raw_packet_(false, (num_dests == 0) ? "zero_dests" : "too_many_dests");
       this->packet_dump_pending_update_ = false;
     }
     return;

@@ -55,6 +55,7 @@ int main() {
   std::cout << "METRIC reliability_score_v2=" << dispatch_score << "\n";
   std::cout << "METRIC packet_score=" << packet_score << "\n";
   std::cout << "METRIC failed_checks=" << failed << "\n";
+  std::cout << "METRIC reliability_score_v5=" << combined << "\n";
   std::cout << "METRIC reliability_score_v4=" << combined << "\n";
   std::cout << "METRIC reliability_score=" << combined << "\n";
   std::cout << "METRIC crc_gate_present=0\n";
