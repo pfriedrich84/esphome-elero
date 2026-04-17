@@ -29,4 +29,7 @@ Improve command/packet handling reliability for the Elero protocol stack (CC1101
 - Do not overfit to benchmark-only behavior; keep invariants generally valid.
 
 ## What's Been Tried
-- Session start.
+- Baseline reliability probe found 2 boundary failures in dispatch predicates.
+- **Kept:** `is_dispatch_ready()` and `should_clear_stale_queue()` now use inclusive `>=` boundaries to avoid 1-tick timing blind spots.
+- Tried earlier retry-drop (`send_retries >= max_retries`), but no reliability_score gain; discarded.
+- Environment lacked `cmake` and `esphome` for full upstream tests, so local dependency-free checks are used in this session.

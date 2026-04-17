@@ -27,6 +27,10 @@ int main() {
   check(!should_defer_for_stop(true, 0x03, 0x03, 0x04));
   check(!should_defer_for_stop(true, 0x04, 0x03, 0x04));
 
+  // At retry ceiling, command should be dropped to prevent queue starvation.
+  check(!should_drop_after_retries(2, 3));
+  check(should_drop_after_retries(3, 3));
+
   int passed = total - failed;
   double score = total ? (100.0 * passed / total) : 0.0;
 
