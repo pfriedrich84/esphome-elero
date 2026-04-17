@@ -735,11 +735,8 @@ bool Elero::send_command_internal_(t_elero_command *cmd) {
              marc, this->send_cmd_reinit_failures_, 3);
     this->reset();
     bool init_ok = this->init();
-    if (!init_ok) {
-      // Already counted this failure cycle above; do not double increment.
-      this->send_cmd_reinit_failures_ = recovery_logic::next_reinit_failure_count(
-          this->send_cmd_reinit_failures_, true);
-    }
+    this->send_cmd_reinit_failures_ =
+        recovery_logic::apply_reinit_outcome(this->send_cmd_reinit_failures_, init_ok);
     return false;
   }
   this->send_cmd_reinit_failures_ = 0;
