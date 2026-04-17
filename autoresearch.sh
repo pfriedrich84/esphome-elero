@@ -20,6 +20,12 @@ cat > .autoresearch/reliability_probe.cpp <<'CPP'
 #else
 #define HAS_RECOVERY_HELPER 0
 #endif
+#if __has_include("elero/elero_overflow_logic.h")
+#include "elero/elero_overflow_logic.h"
+#define HAS_OVERFLOW_HELPER 1
+#else
+#define HAS_OVERFLOW_HELPER 0
+#endif
 
 using namespace esphome::elero::dispatch_logic;
 using namespace esphome::elero::packet_validation;
@@ -41,6 +47,8 @@ int main() {
   int watchdog_failed = 0;
   int recovery_total = 0;
   int recovery_failed = 0;
+  int overflow_total = 0;
+  int overflow_failed = 0;
 
   auto dcheck = [&](bool cond) {
     dispatch_total++;
@@ -57,6 +65,10 @@ int main() {
   auto rcheck = [&](bool cond) {
     recovery_total++;
     if (!cond) recovery_failed++;
+  };
+  auto ocheck = [&](bool cond) {
+    overflow_total++;
+    if (!cond) overflow_failed++;
   };
 
   // Dispatch reliability invariants.
@@ -121,14 +133,24 @@ int main() {
   rcheck(win.reset_count == 0);
 #endif
 
-  int total = dispatch_total + packet_total + watchdog_total + recovery_total;
-  int failed = dispatch_failed + packet_failed + watchdog_failed + recovery_failed;
+  // RX overflow helper invariants.
+  ocheck(HAS_OVERFLOW_HELPER == 1);
+#if HAS_OVERFLOW_HELPER
+  ocheck(esphome::elero::overflow_logic::next_overflow_count(1000, 100, 3, 1000) == 1);
+  ocheck(esphome::elero::overflow_logic::next_overflow_count(900, 100, 3, 1000) == 4);
+  ocheck(esphome::elero::overflow_logic::should_reinit_after_overflow_count(5, 5));
+  ocheck(!esphome::elero::overflow_logic::should_reinit_after_overflow_count(4, 5));
+#endif
+
+  int total = dispatch_total + packet_total + watchdog_total + recovery_total + overflow_total;
+  int failed = dispatch_failed + packet_failed + watchdog_failed + recovery_failed + overflow_failed;
   int passed = total - failed;
 
   double dispatch_score = dispatch_total ? (100.0 * (dispatch_total - dispatch_failed) / dispatch_total) : 0.0;
   double packet_score = packet_total ? (100.0 * (packet_total - packet_failed) / packet_total) : 0.0;
   double watchdog_score = watchdog_total ? (100.0 * (watchdog_total - watchdog_failed) / watchdog_total) : 0.0;
   double recovery_score = recovery_total ? (100.0 * (recovery_total - recovery_failed) / recovery_total) : 0.0;
+  double overflow_score = overflow_total ? (100.0 * (overflow_total - overflow_failed) / overflow_total) : 0.0;
   double combined = total ? (100.0 * passed / total) : 0.0;
 
   std::cout << "checks=" << total << " failed=" << failed << " passed=" << passed << "\n";
@@ -136,7 +158,9 @@ int main() {
   std::cout << "METRIC packet_score=" << packet_score << "\n";
   std::cout << "METRIC watchdog_score=" << watchdog_score << "\n";
   std::cout << "METRIC recovery_score=" << recovery_score << "\n";
+  std::cout << "METRIC overflow_score=" << overflow_score << "\n";
   std::cout << "METRIC failed_checks=" << failed << "\n";
+  std::cout << "METRIC reliability_score_v10=" << combined << "\n";
   std::cout << "METRIC reliability_score_v9=" << combined << "\n";
   std::cout << "METRIC reliability_score_v8=" << combined << "\n";
   std::cout << "METRIC reliability_score_v7=" << combined << "\n";
