@@ -48,6 +48,11 @@ constexpr bool kHasCrcHelper = true;
 #else
 constexpr bool kHasCrcHelper = false;
 #endif
+#ifdef ELERO_HAS_RECOVERY_OUTCOME_HELPER
+constexpr bool kHasRecoveryOutcomeHelper = true;
+#else
+constexpr bool kHasRecoveryOutcomeHelper = false;
+#endif
 }
 
 int main() {
@@ -152,6 +157,11 @@ int main() {
   rcheck(esphome::elero::recovery_logic::next_reinit_failure_count(0, false) == 1);
   rcheck(esphome::elero::recovery_logic::next_reinit_failure_count(1, false) == 2);
   rcheck(esphome::elero::recovery_logic::next_reinit_failure_count(1, true) == 1);
+  rcheck(kHasRecoveryOutcomeHelper);
+#ifdef ELERO_HAS_RECOVERY_OUTCOME_HELPER
+  rcheck(esphome::elero::recovery_logic::apply_reinit_outcome(2, true) == 0);
+  rcheck(esphome::elero::recovery_logic::apply_reinit_outcome(2, false) == 2);
+#endif
 
   esphome::elero::watchdog_logic::EscalationState win{};
   win.flush_count = 2;
@@ -223,6 +233,7 @@ int main() {
   std::cout << "METRIC tx_packet_score=" << tx_packet_score << "\n";
   std::cout << "METRIC dedup_score=" << dedup_score << "\n";
   std::cout << "METRIC failed_checks=" << failed << "\n";
+  std::cout << "METRIC reliability_score_v15=" << combined << "\n";
   std::cout << "METRIC reliability_score_v14=" << combined << "\n";
   std::cout << "METRIC reliability_score_v13=" << combined << "\n";
   std::cout << "METRIC reliability_score_v12=" << combined << "\n";
