@@ -4,6 +4,7 @@
 #include "elero_watchdog_logic.h"
 #include "elero_recovery_logic.h"
 #include "elero_overflow_logic.h"
+#include "elero_tx_logic.h"
 #include "esphome/core/log.h"
 #include "esphome/core/helpers.h"
 #include <cstring>
@@ -652,10 +653,10 @@ bool Elero::send_command_internal_(t_elero_command *cmd) {
   // dequeuing a TX_COMMAND, so no idle check needed here.
 
   ESP_LOGVV(TAG, "send_command called");
-  uint8_t num_dests = cmd->num_dests;
-  if (num_dests == 0 || num_dests > ELERO_MAX_DESTS) {
-    ESP_LOGW(TAG, "Invalid num_dests=%d, clamping to 1", num_dests);
-    num_dests = 1;
+  uint8_t requested_num_dests = cmd->num_dests;
+  uint8_t num_dests = tx_logic::sanitize_num_dests(requested_num_dests, ELERO_MAX_DESTS);
+  if (num_dests != requested_num_dests) {
+    ESP_LOGW(TAG, "Invalid num_dests=%d, sanitized to %d", requested_num_dests, num_dests);
   }
   // Dynamic packet length: header(16) + num_dests*3 + payload(10)
   uint8_t msg_len = 16 + num_dests * 3 + 10;
