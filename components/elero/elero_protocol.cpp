@@ -1,6 +1,7 @@
 #include "elero.h"
 #include "elero_crypto.h"
 #include "elero_utils.h"
+#include "elero_packet_validation.h"
 #include "esphome/core/log.h"
 #include "esphome/core/helpers.h"
 #include <cstring>
@@ -102,8 +103,18 @@ void Elero::interpret_msg() {
 
   uint8_t payload1 = this->msg_rx_[17 + dests_len];
   uint8_t payload2 = this->msg_rx_[18 + dests_len];
-  uint8_t crc = this->msg_rx_[length + 2] >> 7;
-  uint8_t lqi = this->msg_rx_[length + 2] & 0x7f;
+  uint8_t status_byte = this->msg_rx_[length + 2];
+  uint8_t crc = packet_validation::extract_crc(status_byte);
+  uint8_t lqi = packet_validation::extract_lqi(status_byte);
+
+  if (!packet_validation::is_crc_valid_status_byte(status_byte)) {
+    ESP_LOGV(TAG, "Received packet with bad CRC, dropping");
+    if (this->packet_dump_pending_update_) {
+      this->mark_last_raw_packet_(false, "bad_crc");
+      this->packet_dump_pending_update_ = false;
+    }
+    return;
+  }
 
   float rssi = utils::calculate_rssi(this->msg_rx_[length + 1]);
   uint8_t *payload = &this->msg_rx_[19 + dests_len];

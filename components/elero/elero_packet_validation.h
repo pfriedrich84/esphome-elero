@@ -3,6 +3,8 @@
 
 #include <cstdint>
 
+#define ELERO_HAS_CRC_STATUS_HELPER 1
+
 namespace esphome {
 namespace elero {
 namespace packet_validation {
@@ -38,6 +40,10 @@ inline bool is_rssi_in_bounds(uint8_t length) { return (uint16_t)(length + 2) < 
 inline uint8_t extract_crc(uint8_t status_byte) { return status_byte >> 7; }
 
 inline uint8_t extract_lqi(uint8_t status_byte) { return status_byte & 0x7f; }
+
+inline bool is_crc_valid_status_byte(uint8_t status_byte) {
+  return extract_crc(status_byte) == 1;
+}
 
 }  // namespace packet_validation
 }  // namespace elero
