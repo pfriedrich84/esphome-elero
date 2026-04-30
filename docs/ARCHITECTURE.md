@@ -9,7 +9,7 @@ This document tracks the intended deep Modules and seams for the ESPHome Elero i
 3. **Command profile** — Group cover reads one Blind command profile instead of many unrelated RF getters.
 4. **CC1101 radio orchestration** — in progress: pure state predicates now cover RX drain limits, FIFO completeness, TX progress states, and watchdog state classification.
 5. **Runtime adopted blind behaviour** — in progress: pure polling, counter, direction, and position rules are extracted.
-6. **Elero hub split** — future: shrink the Elero hub once the lower seams are stable.
+6. **Elero hub split** — in progress: runtime adopted blind management moved out of protocol dispatch into its own translation unit.
 
 ## Module status
 
@@ -44,10 +44,17 @@ This document tracks the intended deep Modules and seams for the ESPHome Elero i
 
 ### Runtime blind logic
 
-- **Files**: `components/elero/elero_runtime_blind_logic.h`, `components/elero/elero_protocol.cpp`, `tests/unit/test_runtime_blind_logic.cpp`
+- **Files**: `components/elero/elero_runtime_blind_logic.h`, `components/elero/elero_runtime.cpp`, `tests/unit/test_runtime_blind_logic.cpp`
 - **Interface**: pure predicates and calculations for runtime polling, command counter wrapping, direction from Elero state, and dead-reckoned position updates.
 - **Implementation owns**: behaviour rules for runtime adopted blind timing and movement.
-- **Depth**: medium — the Elero hub still owns storage and locking, but runtime blind behaviour is no longer embedded directly in map loops.
+- **Depth**: medium — the Elero hub still owns storage and locking, but runtime blind behaviour is no longer embedded directly in protocol dispatch.
+
+### Runtime blind management
+
+- **Files**: `components/elero/elero_runtime.cpp`, `components/elero/elero_protocol.cpp`
+- **Interface**: existing Elero hub methods for adopt/remove/update/send runtime blinds.
+- **Implementation owns**: runtime adopted blind storage loops, queue draining, polling, and position recompute orchestration.
+- **Depth**: low-to-medium — the public hub Interface is unchanged, but locality improves because RF packet dispatch and runtime adopted blind management no longer share one file.
 
 ## Review notes
 
