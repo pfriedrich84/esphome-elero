@@ -344,12 +344,12 @@ TEST(PacketValidation, MidRange) {
 }
 
 TEST(PacketValidation, ValidDestCount) {
-  EXPECT_TRUE(is_valid_dest_count(0));
   EXPECT_TRUE(is_valid_dest_count(1));
   EXPECT_TRUE(is_valid_dest_count(max_safe_dests()));
 }
 
 TEST(PacketValidation, InvalidDestCount) {
+  EXPECT_FALSE(is_valid_dest_count(0));
   EXPECT_FALSE(is_valid_dest_count(max_safe_dests() + 1));
   EXPECT_FALSE(is_valid_dest_count(255));
 }
