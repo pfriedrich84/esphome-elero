@@ -8,6 +8,7 @@
 #include "esphome/components/button/button.h"
 #endif
 #include "cc1101.h"
+#include "elero_command_profile.h"
 #include <RadioLib.h>
 #include <string>
 #include <vector>
@@ -362,6 +363,19 @@ class EleroBlindBase {
   virtual uint8_t get_pck_inf1() const = 0;
   virtual uint8_t get_payload_1() const = 0;
   virtual uint8_t get_payload_2() const = 0;
+  /// RF profile for group command building and other command-intent consumers.
+  virtual BlindCommandProfile get_command_profile() {
+    BlindCommandProfile profile{};
+    profile.blind_address = this->get_blind_address();
+    profile.remote_address = this->get_remote_address();
+    profile.channel = this->get_channel();
+    profile.pck_inf[0] = this->get_pck_inf0();
+    profile.pck_inf[1] = this->get_pck_inf1();
+    profile.hop = this->get_hop();
+    profile.payload_1 = this->get_payload_1();
+    profile.payload_2 = this->get_payload_2();
+    return profile;
+  }
   /// Build a ready-to-send t_elero_command with the given command byte,
   /// using this blind's current RF params and counter.  Increments the counter.
   virtual t_elero_command build_tx_command(uint8_t cmd_byte) = 0;

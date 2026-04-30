@@ -2,6 +2,9 @@
 #include "elero_crypto.h"
 #include "elero_utils.h"
 #include "elero_packet_validation.h"
+#include "elero_packet_parser.h"
+#include "elero_runtime_blind_logic.h"
+#include "elero_dispatch_logic.h"
 #include "esphome/core/log.h"
 #include "esphome/core/helpers.h"
 #include <cstring>
@@ -22,160 +25,88 @@ static const char *TAG = "elero";
 // interpret_msg — parse CC1101 FIFO, extract header/payload, decode
 // ---------------------------------------------------------------------------
 void Elero::interpret_msg() {
-  uint8_t length = this->msg_rx_[0];
-  // Sanity check
-  if(length > ELERO_MAX_PACKET_SIZE) {
-    uint8_t dump_len = (length <= (uint8_t)(CC1101_FIFO_LENGTH - 3)) ? (length + 3) : CC1101_FIFO_LENGTH;
-    ESP_LOGE(TAG, "Received invalid packet: too long (%d)", length);
-    ESP_LOGD(TAG, "  Raw [%d bytes]: %s", dump_len,
-             format_hex_pretty(this->msg_rx_, dump_len).c_str());
+  auto parsed = packet_parser::parse_fifo_packet(this->msg_rx_);
+  const auto &packet = parsed.packet;
+
+  if (!parsed.ok) {
+    uint8_t length = packet.length;
+    const char *reason = parsed.reject_reason;
+    if (strcmp(reason, "too_long") == 0) {
+      uint8_t dump_len = (length <= (uint8_t)(CC1101_FIFO_LENGTH - 3)) ? (length + 3) : CC1101_FIFO_LENGTH;
+      ESP_LOGE(TAG, "Received invalid packet: too long (%d)", length);
+      ESP_LOGD(TAG, "  Raw [%d bytes]: %s", dump_len,
+               format_hex_pretty(this->msg_rx_, dump_len).c_str());
+    } else if (strcmp(reason, "too_short") == 0) {
+      ESP_LOGD(TAG, "Received non-Elero packet: too short (%d bytes)", length);
+    } else if (strcmp(reason, "zero_dests") == 0 || strcmp(reason, "too_many_dests") == 0) {
+      ESP_LOGW(TAG, "Received invalid packet: invalid destination count (%d)", packet.num_dests);
+      ESP_LOGW(TAG, "  Raw [%d bytes]: %s", length + 3,
+               format_hex_pretty(this->msg_rx_, length + 3).c_str());
+    } else if (strcmp(reason, "dests_len_too_long") == 0) {
+      ESP_LOGW(TAG, "Received invalid packet: dests_len too long (%d) for length %d", packet.dests_len, length);
+      ESP_LOGW(TAG, "  Raw [%d bytes]: %s", length + 3,
+               format_hex_pretty(this->msg_rx_, length + 3).c_str());
+    } else if (strcmp(reason, "rssi_oob") == 0) {
+      ESP_LOGW(TAG, "Received invalid packet: RSSI/LQI out of buffer bounds (length=%d)", length);
+      ESP_LOGW(TAG, "  Raw [%d bytes]: %s", CC1101_FIFO_LENGTH,
+               format_hex_pretty(this->msg_rx_, CC1101_FIFO_LENGTH).c_str());
+    } else if (strcmp(reason, "bad_crc") == 0) {
+      ESP_LOGV(TAG, "Received packet with bad CRC, dropping");
+    }
+
     if (this->packet_dump_pending_update_) {
-      this->mark_last_raw_packet_(false, "too_long");
+      this->mark_last_raw_packet_(false, reason);
       this->packet_dump_pending_update_ = false;
     }
     return;
   }
 
-  static const uint8_t ELERO_MIN_PACKET_SIZE = 17;
-  if (length < ELERO_MIN_PACKET_SIZE) {
-    ESP_LOGD(TAG, "Received non-Elero packet: too short (%d bytes)", length);
-    if (this->packet_dump_pending_update_) {
-      this->mark_last_raw_packet_(false, "too_short");
-      this->packet_dump_pending_update_ = false;
-    }
-    return;
-  }
-
-  uint8_t cnt = this->msg_rx_[1];
-  uint8_t typ = this->msg_rx_[2];
-  uint8_t typ2 = this->msg_rx_[3];
-  uint8_t hop = this->msg_rx_[4];
-  uint8_t syst = this->msg_rx_[5];
-  uint8_t chl = this->msg_rx_[6];
-  uint32_t src = ((uint32_t)this->msg_rx_[7] << 16) | ((uint32_t)this->msg_rx_[8] << 8) | (this->msg_rx_[9]);
-  uint32_t bwd = ((uint32_t)this->msg_rx_[10] << 16) | ((uint32_t)this->msg_rx_[11] << 8) | (this->msg_rx_[12]);
-  uint32_t fwd = ((uint32_t)this->msg_rx_[13] << 16) | ((uint32_t)this->msg_rx_[14] << 8) | (this->msg_rx_[15]);
-  uint8_t num_dests = this->msg_rx_[16];
-  uint32_t dst;
-  uint8_t dests_len;
-
-  static const uint8_t MAX_SAFE_DESTS = (ELERO_MAX_PACKET_SIZE - 27) / 3;
-  if (num_dests == 0 || num_dests > MAX_SAFE_DESTS) {
-    ESP_LOGW(TAG, "Received invalid packet: invalid destination count (%d)", num_dests);
-    ESP_LOGW(TAG, "  Raw [%d bytes]: %s", length + 3,
-             format_hex_pretty(this->msg_rx_, length + 3).c_str());
-    if (this->packet_dump_pending_update_) {
-      this->mark_last_raw_packet_(false, (num_dests == 0) ? "zero_dests" : "too_many_dests");
-      this->packet_dump_pending_update_ = false;
-    }
-    return;
-  }
-
-  if(typ > 0x60) {
-    dests_len = num_dests * 3;
-    dst = ((uint32_t)this->msg_rx_[17] << 16) | ((uint32_t)this->msg_rx_[18] << 8) | (this->msg_rx_[19]);
-  } else {
-    dests_len = num_dests;
-    dst = this->msg_rx_[17];
-  }
-
-  if((uint16_t)(26 + dests_len) > length || (uint16_t)(26 + dests_len) >= CC1101_FIFO_LENGTH) {
-    ESP_LOGW(TAG, "Received invalid packet: dests_len too long (%d) for length %d", dests_len, length);
-    ESP_LOGW(TAG, "  Raw [%d bytes]: %s", length + 3,
-             format_hex_pretty(this->msg_rx_, length + 3).c_str());
-    if (this->packet_dump_pending_update_) {
-      this->mark_last_raw_packet_(false, "dests_len_too_long");
-      this->packet_dump_pending_update_ = false;
-    }
-    return;
-  }
-
-  if ((uint16_t)(length + 2) >= CC1101_FIFO_LENGTH) {
-    ESP_LOGW(TAG, "Received invalid packet: RSSI/LQI out of buffer bounds (length=%d)", length);
-    ESP_LOGW(TAG, "  Raw [%d bytes]: %s", CC1101_FIFO_LENGTH,
-             format_hex_pretty(this->msg_rx_, CC1101_FIFO_LENGTH).c_str());
-    if (this->packet_dump_pending_update_) {
-      this->mark_last_raw_packet_(false, "rssi_oob");
-      this->packet_dump_pending_update_ = false;
-    }
-    return;
-  }
-
-  uint8_t payload1 = this->msg_rx_[17 + dests_len];
-  uint8_t payload2 = this->msg_rx_[18 + dests_len];
-  uint8_t status_byte = this->msg_rx_[length + 2];
-  uint8_t crc = packet_validation::extract_crc(status_byte);
-  uint8_t lqi = packet_validation::extract_lqi(status_byte);
-
-  if (!packet_validation::is_crc_valid_status_byte(status_byte)) {
-    ESP_LOGV(TAG, "Received packet with bad CRC, dropping");
-    if (this->packet_dump_pending_update_) {
-      this->mark_last_raw_packet_(false, "bad_crc");
-      this->packet_dump_pending_update_ = false;
-    }
-    return;
-  }
-
-  float rssi = utils::calculate_rssi(this->msg_rx_[length + 1]);
-  uint8_t *payload = &this->msg_rx_[19 + dests_len];
-  crypto::msg_decode(payload);
   if (this->packet_dump_pending_update_) {
     this->mark_last_raw_packet_(true, nullptr);
     this->packet_dump_pending_update_ = false;
   }
   this->rx_count_.fetch_add(1, std::memory_order_relaxed);
-  ESP_LOGD(TAG, "rcv'd from 0x%06x: state=0x%02x rssi=%.1f", src, payload[6], rssi);
-  ESP_LOGV(TAG, "rcv'd: len=%02d, cnt=%02d, typ=0x%02x, typ2=0x%02x, hop=0x%02x, syst=0x%02x, chl=%02d, src=0x%06x, bwd=0x%06x, fwd=0x%06x, #dst=%02d, dst=0x%06x, rssi=%2.1f, lqi=%2d, crc=%2d, payload=[0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x]", length, cnt, typ, typ2, hop, syst, chl, src, bwd, fwd, num_dests, dst, rssi, lqi, crc, payload1, payload2, payload[0], payload[1], payload[2], payload[3], payload[4], payload[5], payload[6], payload[7]);
+  ESP_LOGD(TAG, "rcv'd from 0x%06x: state=0x%02x rssi=%.1f", packet.src, packet.payload[6], packet.rssi);
+  ESP_LOGV(TAG, "rcv'd: len=%02d, cnt=%02d, typ=0x%02x, typ2=0x%02x, hop=0x%02x, syst=0x%02x, chl=%02d, src=0x%06x, bwd=0x%06x, fwd=0x%06x, #dst=%02d, dst=0x%06x, rssi=%2.1f, lqi=%2d, crc=%2d, payload=[0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x]", packet.length, packet.cnt, packet.typ, packet.typ2, packet.hop, packet.syst, packet.channel, packet.src, packet.bwd, packet.fwd, packet.num_dests, packet.first_dst, packet.rssi, packet.lqi, packet.crc, packet.payload_1, packet.payload_2, packet.payload[0], packet.payload[1], packet.payload[2], packet.payload[3], packet.payload[4], packet.payload[5], packet.payload[6], packet.payload[7]);
 
-  // Build RxResult and push to queue for Core 1 dispatch.
-  bool is_status = (typ == 0xca) || (typ == 0xc9);
-  bool is_command = (typ == 0x6a) || (typ == 0x69);
-
-  if (is_status && this->is_duplicate_packet_(src, cnt)) {
-    ESP_LOGV(TAG, "Duplicate status from 0x%06x cnt=%d (relay hop), skipping", src, cnt);
+  if (packet.is_status && this->is_duplicate_packet_(packet.src, packet.cnt)) {
+    ESP_LOGV(TAG, "Duplicate status from 0x%06x cnt=%d (relay hop), skipping", packet.src, packet.cnt);
     return;
   }
 
   RxResult rx{};
-  rx.blind_address = src;
-  rx.remote_address = is_status ? fwd : src;
-  rx.channel = chl;
-  rx.pck_inf[0] = typ;
-  rx.pck_inf[1] = typ2;
-  rx.hop = hop;
-  rx.state = payload[6];
-  rx.rssi = rssi;
+  rx.blind_address = packet.src;
+  rx.remote_address = packet.is_status ? packet.fwd : packet.src;
+  rx.channel = packet.channel;
+  rx.pck_inf[0] = packet.typ;
+  rx.pck_inf[1] = packet.typ2;
+  rx.hop = packet.hop;
+  rx.state = packet.payload[6];
+  rx.rssi = packet.rssi;
   rx.timestamp_ms = millis();
-  memcpy(rx.payload, payload, 10);
-  rx.cnt = cnt;
-  rx.is_status = is_status;
-  rx.is_command = is_command;
-  rx.payload_1 = payload1;
-  rx.payload_2 = payload2;
+  memcpy(rx.payload, packet.payload, sizeof(rx.payload));
+  rx.cnt = packet.cnt;
+  rx.is_status = packet.is_status;
+  rx.is_command = packet.is_command;
+  rx.payload_1 = packet.payload_1;
+  rx.payload_2 = packet.payload_2;
 
-  rx.scan_hit = this->scan_mode_.load(std::memory_order_acquire) && (is_status || is_command);
-  rx.params_from_command = is_command;
+  rx.scan_hit = this->scan_mode_.load(std::memory_order_acquire) && (packet.is_status || packet.is_command);
+  rx.params_from_command = packet.is_command;
 
   rx.num_dests = 0;
   rx.is_own_echo = false;
-  if (is_command) {
-    rx.is_own_echo = (this->own_remote_addresses_.count(src) > 0);
-    uint8_t safe_num = (num_dests > 10) ? 10 : num_dests;
-    rx.num_dests = safe_num;
-    for (uint8_t i = 0; i < safe_num; i++) {
-      if (typ > 0x60) {
-        rx.dest_addrs[i] = ((uint32_t)this->msg_rx_[17 + i * 3] << 16) |
-                            ((uint32_t)this->msg_rx_[18 + i * 3] << 8) |
-                            this->msg_rx_[19 + i * 3];
-      } else {
-        rx.dest_addrs[i] = this->msg_rx_[17 + i];
-      }
+  if (packet.is_command) {
+    rx.is_own_echo = (this->own_remote_addresses_.count(packet.src) > 0);
+    rx.num_dests = (packet.num_dests > packet_parser::MAX_DESTS) ? packet_parser::MAX_DESTS : packet.num_dests;
+    for (uint8_t i = 0; i < rx.num_dests; i++) {
+      rx.dest_addrs[i] = packet.dest_addrs[i];
     }
   }
 
   if (this->rx_queue_) {
     if (xQueueSend(this->rx_queue_, &rx, 0) != pdTRUE) {
-      ESP_LOGW(TAG, "RX queue full, dropping packet from 0x%06x", src);
+      ESP_LOGW(TAG, "RX queue full, dropping packet from 0x%06x", packet.src);
     }
   }
 }
@@ -432,7 +363,8 @@ void Elero::drain_runtime_queues() {
       rb.last_queue_drain_ms = now;  // reset timer while idle
     } else {
       // Queue aging: clear stale commands if blind is offline
-      if ((now - rb.last_queue_drain_ms) > ELERO_COMMAND_QUEUE_MAX_AGE_MS) {
+      if (dispatch_logic::should_clear_stale_queue(now, rb.last_queue_drain_ms,
+                                                    ELERO_COMMAND_QUEUE_MAX_AGE_MS)) {
         ESP_LOGW(TAG, "Runtime blind 0x%06x queue stale, clearing %d commands",
                  rb.blind_address, (int)rb.command_queue.size());
         while (!rb.command_queue.empty()) rb.command_queue.pop();
@@ -458,10 +390,7 @@ void Elero::drain_runtime_queues() {
           rb.command_queue.pop();
           rb.send_packets_count = 0;
           rb.last_queue_drain_ms = now;
-          if (rb.cmd_counter == 0xFF)
-            rb.cmd_counter = 1;
-          else
-            rb.cmd_counter++;
+          rb.cmd_counter = runtime_blind_logic::next_command_counter(rb.cmd_counter);
         }
       } else {
         break;  // TX queue full or failed — stop enqueuing, retry next loop
@@ -475,11 +404,8 @@ void Elero::poll_runtime_blinds_() {
   uint32_t now = millis();
   for (auto &entry : this->runtime_blinds_) {
     auto &rb = entry.second;
-    if (rb.poll_intvl_ms == 0 || rb.poll_intvl_ms == UINT32_MAX)
-      continue;
-    if (!rb.command_queue.empty())
-      continue;
-    if ((now - rb.last_poll_ms) >= rb.poll_intvl_ms) {
+    if (runtime_blind_logic::should_poll_runtime_blind(now, rb.last_poll_ms,
+                                                       rb.poll_intvl_ms, rb.command_queue.empty())) {
       rb.last_poll_ms = now;
       if (rb.command_queue.size() < ELERO_MAX_COMMAND_QUEUE) {
         rb.command_queue.push(ELERO_COMMAND_COVER_CHECK);
@@ -491,34 +417,19 @@ void Elero::poll_runtime_blinds_() {
 
 void Elero::update_runtime_blind_direction_(RuntimeBlind &rb, uint8_t state) {
   int8_t old_dir = rb.moving_direction;
-  switch (state) {
-    case ELERO_STATE_START_MOVING_UP:
-    case ELERO_STATE_MOVING_UP:
-      rb.moving_direction = 1;
-      break;
-    case ELERO_STATE_START_MOVING_DOWN:
-    case ELERO_STATE_MOVING_DOWN:
-      rb.moving_direction = -1;
-      break;
-    case ELERO_STATE_TOP:
-      rb.moving_direction = 0;
-      rb.position = 1.0f;
-      break;
-    case ELERO_STATE_BOTTOM:
-      rb.moving_direction = 0;
-      rb.position = 0.0f;
-      break;
-    case ELERO_STATE_STOPPED:
-    case ELERO_STATE_INTERMEDIATE:
-    case ELERO_STATE_TILT:
-    case ELERO_STATE_BLOCKING:
-    case ELERO_STATE_OVERHEATED:
-    case ELERO_STATE_TIMEOUT:
-      rb.moving_direction = 0;
-      break;
-    default:
-      break;
-  }
+  rb.moving_direction = runtime_blind_logic::direction_for_state(
+      state, ELERO_STATE_TOP, ELERO_STATE_BOTTOM,
+      ELERO_STATE_START_MOVING_UP, ELERO_STATE_MOVING_UP,
+      ELERO_STATE_START_MOVING_DOWN, ELERO_STATE_MOVING_DOWN,
+      rb.moving_direction);
+  if (state == ELERO_STATE_TOP)
+    rb.position = 1.0f;
+  else if (state == ELERO_STATE_BOTTOM)
+    rb.position = 0.0f;
+  else if (runtime_blind_logic::state_stops_runtime_motion(
+               state, ELERO_STATE_STOPPED, ELERO_STATE_INTERMEDIATE, ELERO_STATE_TILT,
+               ELERO_STATE_BLOCKING, ELERO_STATE_OVERHEATED, ELERO_STATE_TIMEOUT))
+    rb.moving_direction = 0;
   if (old_dir != rb.moving_direction) {
     rb.last_recompute_ms = millis();
   }
@@ -529,11 +440,10 @@ void Elero::recompute_runtime_positions_() {
   uint32_t now = millis();
   for (auto &entry : this->runtime_blinds_) {
     auto &rb = entry.second;
-    if (rb.moving_direction == 0)
-      continue;
-    if (rb.open_duration_ms == 0 || rb.close_duration_ms == 0)
-      continue;
-    if (rb.position < 0.0f)
+    if (!runtime_blind_logic::can_recompute_position(rb.moving_direction,
+                                                     rb.open_duration_ms,
+                                                     rb.close_duration_ms,
+                                                     rb.position))
       continue;
 
     uint32_t elapsed = now - rb.last_recompute_ms;
@@ -545,16 +455,9 @@ void Elero::recompute_runtime_positions_() {
       continue;
     }
 
-    float delta;
-    if (rb.moving_direction > 0) {
-      delta = static_cast<float>(elapsed) / static_cast<float>(rb.open_duration_ms);
-      rb.position += delta;
-    } else {
-      delta = static_cast<float>(elapsed) / static_cast<float>(rb.close_duration_ms);
-      rb.position -= delta;
-    }
-    if (rb.position > 1.0f) rb.position = 1.0f;
-    if (rb.position < 0.0f) rb.position = 0.0f;
+    rb.position = runtime_blind_logic::recompute_position(
+        rb.position, rb.moving_direction, elapsed,
+        rb.open_duration_ms, rb.close_duration_ms);
     rb.last_recompute_ms = now;
   }
 }

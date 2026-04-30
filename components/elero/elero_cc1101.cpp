@@ -6,6 +6,7 @@
 #include "elero_overflow_logic.h"
 #include "elero_tx_logic.h"
 #include "elero_dedup_logic.h"
+#include "elero_radio_state_logic.h"
 #include "esphome/core/log.h"
 #include "esphome/core/helpers.h"
 #include <cstring>
@@ -66,11 +67,10 @@ void Elero::process_rx() {
   // When TX commands are pending, limit RX drain to 1 packet per call so
   // the next radio_task_loop_() iteration can dequeue TX first (TX priority).
   // When TX idle, drain up to ELERO_MAX_RX_PER_LOOP to clear the FIFO fast.
-  uint8_t max_drain = ELERO_MAX_RX_PER_LOOP;
-  if ((this->tx_priority_queue_ && uxQueueMessagesWaiting(this->tx_priority_queue_) > 0) ||
-      (this->tx_queue_ && uxQueueMessagesWaiting(this->tx_queue_) > 0)) {
-    max_drain = 1;
-  }
+  uint8_t max_drain = radio_state_logic::rx_drain_limit(
+      this->tx_priority_queue_ && uxQueueMessagesWaiting(this->tx_priority_queue_) > 0,
+      this->tx_queue_ && uxQueueMessagesWaiting(this->tx_queue_) > 0,
+      ELERO_MAX_RX_PER_LOOP);
   for (uint8_t iter = 0; iter < max_drain; iter++) {
     uint8_t len = this->read_status(CC1101_RXBYTES);
 
@@ -106,15 +106,11 @@ void Elero::process_rx() {
     if (avail == 0)
       return;  // FIFO empty — done
 
-    uint8_t fifo_count;
+    uint8_t fifo_count = radio_state_logic::bounded_fifo_count(avail, CC1101_FIFO_LENGTH);
     if (avail > CC1101_FIFO_LENGTH) {
       ESP_LOGV(TAG, "Received more bytes than FIFO length");
-      this->read_buf(CC1101_RXFIFO, this->msg_rx_, CC1101_FIFO_LENGTH);
-      fifo_count = CC1101_FIFO_LENGTH;
-    } else {
-      fifo_count = avail;
-      this->read_buf(CC1101_RXFIFO, this->msg_rx_, fifo_count);
     }
+    this->read_buf(CC1101_RXFIFO, this->msg_rx_, fifo_count);
 
 #if ESPHOME_LOG_LEVEL >= ESPHOME_LOG_LEVEL_VERBOSE
     ESP_LOGV(TAG, "RAW RX %d bytes: %s", fifo_count,
@@ -130,7 +126,7 @@ void Elero::process_rx() {
 
     // Sanity check: first byte is the payload length; we need at least
     // payload + length byte + 2 appended status bytes (RSSI + LQI).
-    if (this->msg_rx_[0] + 3 <= fifo_count) {
+    if (radio_state_logic::has_complete_fifo_packet(this->msg_rx_[0], fifo_count)) {
       this->interpret_msg();
     } else if (this->packet_dump_pending_update_) {
       this->mark_last_raw_packet_(false, "short_read");
@@ -173,15 +169,7 @@ void Elero::advance_tx() {
       }
 
       // Fallback: poll MARCSTATE for TX completion
-      bool tx_in_progress = (marc == CC1101_MARCSTATE_TX) ||
-                            (marc == CC1101_MARCSTATE_STARTCAL) ||
-                            (marc == CC1101_MARCSTATE_BWBOOST) ||
-                            (marc == CC1101_MARCSTATE_FS_LOCK) ||
-                            (marc == CC1101_MARCSTATE_IFADCON) ||
-                            (marc == CC1101_MARCSTATE_ENDCAL) ||
-                            (marc == CC1101_MARCSTATE_FSTXON) ||
-                            (marc == CC1101_MARCSTATE_RXTX_SWITCH);
-      if (tx_in_progress) {
+      if (radio_state_logic::is_tx_progress_state(marc)) {
         if (elapsed > TX_STATE_TIMEOUT_MS) {
           ESP_LOGW(TAG, "TX timeout in TRANSMITTING (marc=%s, %lums), aborting",
                    marcstate_to_string(marc), (unsigned long) elapsed);
@@ -281,7 +269,7 @@ void Elero::check_radio_state_() {
   uint8_t marc = this->read_status(CC1101_MARCSTATE) & 0x1F;
 
   // Healthy RX state — reset escalation counters/window.
-  if (marc == CC1101_MARCSTATE_RX) {
+  if (radio_state_logic::is_watchdog_healthy_rx(marc)) {
     watchdog_logic::EscalationState state{
       this->watchdog_flush_count_,
       this->watchdog_reset_count_,
@@ -294,9 +282,7 @@ void Elero::check_radio_state_() {
     return;
   }
   // Transient calibration states — let them settle
-  if (marc >= CC1101_MARCSTATE_VCOON_MC && marc <= CC1101_MARCSTATE_ENDCAL)
-    return;
-  if (marc == CC1101_MARCSTATE_RX_END || marc == CC1101_MARCSTATE_RX_RST)
+  if (radio_state_logic::is_watchdog_transient_state(marc))
     return;
 
   // --- Something is wrong: escalating recovery ---
@@ -316,7 +302,7 @@ void Elero::check_radio_state_() {
   }
 
   // Stuck IDLE — simple SRX restart (Level 0, doesn't count toward escalation)
-  if (marc == CC1101_MARCSTATE_IDLE) {
+  if (radio_state_logic::should_restart_rx_from_idle(marc)) {
     ESP_LOGW(TAG, "Radio watchdog: stuck in IDLE, restarting RX");
     this->write_cmd(CC1101_SRX);
     return;
