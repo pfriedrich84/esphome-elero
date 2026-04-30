@@ -4,11 +4,12 @@
 Improve command/packet handling reliability for the Elero protocol stack (CC1101 + RadioLib integration), with emphasis on edge-case timing behavior that can cause delayed command dispatch or stale queue handling.
 
 ## Metrics
-- **Primary**: `reliability_score_v5` (unitless, higher is better) — combined dispatch + packet-validation reliability score from deterministic invariants in `autoresearch.sh`.
+- **Primary**: `reliability_score_v20` (unitless, higher is better) — combined dispatch + packet-validation + watchdog/radio-state reliability score from deterministic invariants in `autoresearch.sh`.
 - **Secondary**:
   - `reliability_score_v2` (dispatch-only score)
   - `packet_score` (packet validation score)
   - `failed_checks` (count, lower is better)
+  - `radio_state_score` (radio MARC-state classification score)
   - `unit_seconds` (s, lower is better)
 
 ## How to Run
@@ -41,4 +42,8 @@ Improve command/packet handling reliability for the Elero protocol stack (CC1101
 - **Kept:** recovery helper (`elero_recovery_logic.h`) removes double counting in `send_command_internal_` reinit-failure escalation path.
 - **Kept:** RX overflow helper (`elero_overflow_logic.h`) centralizes overflow count progression and reinit threshold behavior in `process_rx()`.
 - **Kept:** TX sanitization helper (`elero_tx_logic.h`) clamps oversized `num_dests` to max destinations instead of collapsing to single destination.
+- **Kept:** TX destination-address availability and effective-destination helpers prevent malformed group commands from sending unset/zero destination slots.
+- **Kept:** packet bounds validation now requires the full copied/decrypted 10-byte payload (`28 + dests_len`) to fit inside declared packet length, preventing status/stale FIFO bytes from being decoded as payload.
+- **Kept:** retry-drop path advances the command counter when a partially transmitted command is abandoned after retry exhaustion, matching stale-queue cleanup semantics and avoiding counter reuse.
+- **Kept:** watchdog radio-state classification treats CC1101 TX/RX and RX/TX switch states as transient while keeping FIFO overflow/underflow as non-transient errors.
 - Environment lacked `cmake` and `esphome` for full upstream tests, so local dependency-free checks are used in this session.
