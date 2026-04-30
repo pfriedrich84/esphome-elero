@@ -9,7 +9,7 @@ This document tracks the intended deep Modules and seams for the ESPHome Elero i
 3. **Command profile** — Group cover reads one Blind command profile instead of many unrelated RF getters.
 4. **CC1101 radio orchestration** — in progress: pure state predicates now cover RX drain limits, FIFO completeness, TX progress states, and watchdog state classification.
 5. **Runtime adopted blind behaviour** — in progress: pure polling, counter, direction, and position rules are extracted.
-6. **Elero hub split** — in progress: runtime adopted blind management moved out of protocol dispatch into its own translation unit.
+6. **Elero hub split** — in progress: runtime adopted blind management and discovery/packet-dump management moved out of protocol dispatch into their own translation units.
 
 ## Module status
 
@@ -55,6 +55,13 @@ This document tracks the intended deep Modules and seams for the ESPHome Elero i
 - **Interface**: existing Elero hub methods for adopt/remove/update/send runtime blinds.
 - **Implementation owns**: runtime adopted blind storage loops, queue draining, polling, and position recompute orchestration.
 - **Depth**: low-to-medium — the public hub Interface is unchanged, but locality improves because RF packet dispatch and runtime adopted blind management no longer share one file.
+
+### Discovery and packet dump management
+
+- **Files**: `components/elero/elero_discovery.cpp`, `components/elero/elero_protocol.cpp`, `components/elero/elero_cc1101.cpp`
+- **Interface**: existing Elero hub methods for scan/discovery snapshots and packet dump capture.
+- **Implementation owns**: discovered blind tracking, packet dump lifecycle, and raw packet ring-buffer updates.
+- **Depth**: low-to-medium — the public hub Interface is unchanged, but protocol dispatch now focuses on packet-to-entity routing.
 
 ## Review notes
 
