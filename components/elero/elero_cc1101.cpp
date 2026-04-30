@@ -170,7 +170,7 @@ void Elero::advance_tx() {
 
       // Fallback: poll MARCSTATE for TX completion
       if (radio_state_logic::is_tx_progress_state(marc)) {
-        if (elapsed > TX_STATE_TIMEOUT_MS) {
+        if (radio_state_logic::has_tx_timed_out(elapsed, TX_STATE_TIMEOUT_MS)) {
           ESP_LOGW(TAG, "TX timeout in TRANSMITTING (marc=%s, %lums), aborting",
                    marcstate_to_string(marc), (unsigned long) elapsed);
           this->tx_abort_();
@@ -301,49 +301,50 @@ void Elero::check_radio_state_() {
     this->watchdog_window_start_ms_ = state.window_start_ms;
   }
 
-  // Stuck IDLE — simple SRX restart (Level 0, doesn't count toward escalation)
-  if (radio_state_logic::should_restart_rx_from_idle(marc)) {
-    ESP_LOGW(TAG, "Radio watchdog: stuck in IDLE, restarting RX");
-    this->write_cmd(CC1101_SRX);
-    return;
-  }
+  switch (watchdog_logic::choose_recovery_action(marc, this->watchdog_flush_count_,
+                                                 this->watchdog_reset_count_,
+                                                 WATCHDOG_MAX_FLUSHES_PER_WINDOW,
+                                                 WATCHDOG_MAX_RESETS_PER_WINDOW)) {
+    case watchdog_logic::RecoveryAction::RESTART_RX:
+      ESP_LOGW(TAG, "Radio watchdog: stuck in IDLE, restarting RX");
+      this->write_cmd(CC1101_SRX);
+      return;
 
-  // Level 1: flush FIFO
-  if (this->watchdog_flush_count_ < WATCHDOG_MAX_FLUSHES_PER_WINDOW) {
-    this->watchdog_flush_count_++;
-    if (marc == CC1101_MARCSTATE_RXFIFO_OFLOW) {
+    case watchdog_logic::RecoveryAction::FLUSH_RX:
+      this->watchdog_flush_count_++;
       ESP_LOGW(TAG, "Radio watchdog L1: RX FIFO overflow, flushing (%d/%d in window)",
                this->watchdog_flush_count_, WATCHDOG_MAX_FLUSHES_PER_WINDOW);
       this->flush_rx();
-    } else {
+      return;
+
+    case watchdog_logic::RecoveryAction::FLUSH_AND_RX:
+      this->watchdog_flush_count_++;
       ESP_LOGW(TAG, "Radio watchdog L1: unexpected state %s (0x%02x), flushing (%d/%d in window)",
                marcstate_to_string(marc), marc,
                this->watchdog_flush_count_, WATCHDOG_MAX_FLUSHES_PER_WINDOW);
       this->flush_and_rx();
-    }
-    return;
-  }
+      return;
 
-  // Level 2: full chip reset
-  if (this->watchdog_reset_count_ < WATCHDOG_MAX_RESETS_PER_WINDOW) {
-    this->watchdog_reset_count_++;
-    ESP_LOGW(TAG, "Radio watchdog L2: %d flushes exhausted, full reset (%d/%d in window)",
-             WATCHDOG_MAX_FLUSHES_PER_WINDOW,
-             this->watchdog_reset_count_, WATCHDOG_MAX_RESETS_PER_WINDOW);
-    this->reset();
-    if (!this->init()) {
-      ESP_LOGW(TAG, "Radio watchdog L2: reinit failed after reset");
-    }
-    return;
-  }
+    case watchdog_logic::RecoveryAction::RESET:
+      this->watchdog_reset_count_++;
+      ESP_LOGW(TAG, "Radio watchdog L2: %d flushes exhausted, full reset (%d/%d in window)",
+               WATCHDOG_MAX_FLUSHES_PER_WINDOW,
+               this->watchdog_reset_count_, WATCHDOG_MAX_RESETS_PER_WINDOW);
+      this->reset();
+      if (!this->init()) {
+        ESP_LOGW(TAG, "Radio watchdog L2: reinit failed after reset");
+      }
+      return;
 
-  // Level 3: mark permanently failed
-  ESP_LOGE(TAG, "Radio watchdog L3: %d flushes + %d resets exhausted in 60s window — marking failed",
-           WATCHDOG_MAX_FLUSHES_PER_WINDOW, WATCHDOG_MAX_RESETS_PER_WINDOW);
-  ESP_LOGE(TAG, "  If GPIO12 is used for SPI MISO, it may be pulling VDD_SDIO to 1.8V at boot.");
-  ESP_LOGE(TAG, "  Use non-strapping pins for SPI (e.g. CLK=18, MISO=19, MOSI=23).");
-  this->spi_failed_.store(true, std::memory_order_release);
-  this->radio_fatal_error_.store(true, std::memory_order_release);
+    case watchdog_logic::RecoveryAction::FAIL:
+      ESP_LOGE(TAG, "Radio watchdog L3: %d flushes + %d resets exhausted in 60s window — marking failed",
+               WATCHDOG_MAX_FLUSHES_PER_WINDOW, WATCHDOG_MAX_RESETS_PER_WINDOW);
+      ESP_LOGE(TAG, "  If GPIO12 is used for SPI MISO, it may be pulling VDD_SDIO to 1.8V at boot.");
+      ESP_LOGE(TAG, "  Use non-strapping pins for SPI (e.g. CLK=18, MISO=19, MOSI=23).");
+      this->spi_failed_.store(true, std::memory_order_release);
+      this->radio_fatal_error_.store(true, std::memory_order_release);
+      return;
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -3,13 +3,15 @@
 
 #include <cstdint>
 
+#define ELERO_HAS_POLL_INCLUSIVE_HELPER 1
+
 namespace esphome {
 namespace elero {
 namespace poll_logic {
 
 // Returns true if enough time has elapsed since the last poll.
 inline bool should_poll_now(uint32_t now, uint32_t last_poll, uint32_t interval) {
-  return (now - last_poll) > interval;
+  return (now - last_poll) >= interval;
 }
 
 // Returns true if an immediate poll is allowed (rate-limited).

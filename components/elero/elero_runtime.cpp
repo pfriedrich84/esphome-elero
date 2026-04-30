@@ -26,6 +26,9 @@ void Elero::drain_runtime_queues() {
                                                     ELERO_COMMAND_QUEUE_MAX_AGE_MS)) {
         ESP_LOGW(TAG, "Runtime blind 0x%06x queue stale, clearing %d commands",
                  rb.blind_address, (int)rb.command_queue.size());
+        if (runtime_blind_logic::should_advance_counter_on_stale_clear(rb.send_packets_count)) {
+          rb.cmd_counter = runtime_blind_logic::next_command_counter(rb.cmd_counter);
+        }
         while (!rb.command_queue.empty()) rb.command_queue.pop();
         rb.send_packets_count = 0;
         rb.last_queue_drain_ms = now;

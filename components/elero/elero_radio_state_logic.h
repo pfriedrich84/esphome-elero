@@ -4,6 +4,8 @@
 #include "cc1101.h"
 #include <cstdint>
 
+#define ELERO_HAS_TX_TIMEOUT_HELPER 1
+
 namespace esphome {
 namespace elero {
 namespace radio_state_logic {
@@ -26,11 +28,16 @@ inline bool is_watchdog_healthy_rx(uint8_t marc) {
 inline bool is_watchdog_transient_state(uint8_t marc) {
   if (marc >= CC1101_MARCSTATE_VCOON_MC && marc <= CC1101_MARCSTATE_ENDCAL)
     return true;
-  return marc == CC1101_MARCSTATE_RX_END || marc == CC1101_MARCSTATE_RX_RST;
+  return marc == CC1101_MARCSTATE_RX_END || marc == CC1101_MARCSTATE_RX_RST ||
+         marc == CC1101_MARCSTATE_TXRX_SWITCH || marc == CC1101_MARCSTATE_RXTX_SWITCH;
 }
 
 inline bool should_restart_rx_from_idle(uint8_t marc) {
   return marc == CC1101_MARCSTATE_IDLE;
+}
+
+inline bool has_tx_timed_out(uint32_t elapsed_ms, uint32_t timeout_ms) {
+  return elapsed_ms >= timeout_ms;
 }
 
 inline uint8_t rx_drain_limit(bool priority_tx_pending, bool normal_tx_pending, uint8_t max_when_idle) {

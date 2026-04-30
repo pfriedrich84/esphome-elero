@@ -29,10 +29,11 @@ inline uint8_t calculate_dests_length(uint8_t typ, uint8_t num_dests) {
 }
 
 inline bool is_valid_packet_bounds(uint8_t length, uint8_t dests_len) {
-  // Minimum decode safety: payload[7] is read at absolute index (26 + dests_len).
-  // That index must be within the declared packet length.
-  uint16_t offset = 26u + dests_len;
-  return offset <= length && offset < FIFO_LENGTH;
+  // Decode safety: the full 10-byte payload is copied from absolute index
+  // (19 + dests_len), so payload[9] at (28 + dests_len) must be within
+  // the declared packet length before decryption/parsing.
+  uint16_t last_payload_offset = 28u + dests_len;
+  return last_payload_offset <= length && last_payload_offset < FIFO_LENGTH;
 }
 
 inline bool is_rssi_in_bounds(uint8_t length) { return (uint16_t)(length + 2) < FIFO_LENGTH; }

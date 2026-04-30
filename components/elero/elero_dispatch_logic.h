@@ -4,14 +4,18 @@
 #include <cstdint>
 #include <algorithm>
 
+#define ELERO_HAS_DISPATCH_DROP_COUNTER_HELPER 1
+#define ELERO_HAS_DISPATCH_DROP_STALE_REFRESH_HELPER 1
+#define ELERO_HAS_DISPATCH_QUEUE_FULL_DROP_CLEAR_HELPER 1
+
 namespace esphome {
 namespace elero {
 namespace dispatch_logic {
 
 // Returns true if the command queue has been sitting without a successful drain
-// for longer than max_age_ms (stale commands should be cleared).
+// for at least max_age_ms (stale commands should be cleared).
 inline bool should_clear_stale_queue(uint32_t now, uint32_t last_drain_ms, uint32_t max_age_ms) {
-  return (now - last_drain_ms) > max_age_ms;
+  return (now - last_drain_ms) >= max_age_ms;
 }
 
 // Returns true if this cover is in stop-verification and the front command
@@ -38,12 +42,33 @@ inline bool is_dispatch_ready(bool is_stop_cmd, uint32_t now, uint32_t last_comm
                               uint32_t delay) {
   if (is_stop_cmd)
     return true;
-  return (now - last_command) > delay;
+  return (now - last_command) >= delay;
 }
 
-// Returns true if retry count exceeds the maximum (command should be dropped).
+// Returns true if retry count reaches the maximum (command should be dropped).
 inline bool should_drop_after_retries(uint8_t send_retries, uint8_t max_retries) {
-  return send_retries > max_retries;
+  return send_retries >= max_retries;
+}
+
+// Returns true when dropping a command must consume the command counter because
+// at least one repeat was already transmitted. This prevents the next queued
+// command from reusing a rolling counter value that a blind may treat as replay.
+inline bool should_advance_counter_on_drop(uint8_t send_packets) {
+  return send_packets > 0;
+}
+
+// Dropping a command after retry exhaustion is queue progress. Refreshing the
+// stale timer prevents the next queued command from inheriting the abandoned
+// command's age and being cleared immediately.
+inline bool should_refresh_stale_timer_on_drop(bool had_queued_command) {
+  return had_queued_command;
+}
+
+// If a retry-drop empties a queue that was previously marked full, clear the
+// latch so a future queue-full episode can publish diagnostics again.
+inline bool should_clear_queue_full_latch_after_drop(bool queue_empty_after_drop,
+                                                    bool queue_full_published) {
+  return queue_empty_after_drop && queue_full_published;
 }
 
 }  // namespace dispatch_logic
