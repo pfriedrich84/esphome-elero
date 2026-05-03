@@ -29,10 +29,10 @@ inline uint8_t calculate_dests_length(uint8_t typ, uint8_t num_dests) {
 }
 
 inline bool is_valid_packet_bounds(uint8_t length, uint8_t dests_len) {
-  // Decode safety: the full 10-byte payload is copied from absolute index
-  // (19 + dests_len), so payload[9] at (28 + dests_len) must be within
-  // the declared packet length before decryption/parsing.
-  uint16_t last_payload_offset = 28u + dests_len;
+  // Decode safety: Elero frames carry two plain payload bytes followed by an
+  // 8-byte encrypted payload. The last encrypted payload byte is at absolute
+  // index (26 + dests_len), which may equal the declared CC1101 length byte.
+  uint16_t last_payload_offset = 26u + dests_len;
   return last_payload_offset <= length && last_payload_offset < FIFO_LENGTH;
 }
 
