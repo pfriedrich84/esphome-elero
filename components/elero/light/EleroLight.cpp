@@ -55,6 +55,21 @@ void EleroLight::write_state(LightState *state) {
 
   bool new_on = state->current_values.is_on();
   float new_brightness = state->current_values.get_brightness();
+  auto planned_action = light_logic::determine_action(new_on, new_brightness,
+                                                      this->brightness_, this->dim_duration_);
+  if (light_logic::should_reject_action_before_state_update(
+          planned_action.action, static_cast<uint8_t>(this->commands_to_send_.size()),
+          ELERO_MAX_COMMAND_QUEUE)) {
+    ESP_LOGW(TAG, "Command queue lacks capacity for light 0x%06x state action",
+             this->command_.blind_addr);
+#ifdef USE_TEXT_SENSOR
+    if (!this->queue_full_published_) {
+      this->parent_->publish_text_sensor_state(this->command_.blind_addr, "queue_full");
+      this->queue_full_published_ = true;
+    }
+#endif
+    return;
+  }
 
   if (!new_on) {
     if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE) {
@@ -161,7 +176,7 @@ void EleroLight::loop() {
     }
 
     // Publish estimated brightness every second while dimming
-    if (now - this->last_publish_ > 1000) {
+    if (light_logic::should_publish_dimming(now, this->last_publish_, 1000)) {
       if (this->state_ != nullptr)
         this->state_->publish_state();
       this->last_publish_ = now;
@@ -183,10 +198,10 @@ void EleroLight::handle_commands(uint32_t now) {
 
 void EleroLight::schedule_immediate_poll() {
   uint32_t now = millis();
-  if ((now - this->last_immediate_poll_ms_) < ELERO_IMMEDIATE_POLL_MIN_INTERVAL_MS) {
-    return;  // rate-limited
-  }
-  if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE) {
+  if (light_logic::should_schedule_immediate_poll(
+          this->command_check_, static_cast<uint8_t>(this->commands_to_send_.size()),
+          ELERO_MAX_COMMAND_QUEUE, now, this->last_immediate_poll_ms_,
+          ELERO_IMMEDIATE_POLL_MIN_INTERVAL_MS)) {
     this->commands_to_send_.push(this->command_check_);
     this->last_immediate_poll_ms_ = now;
   }

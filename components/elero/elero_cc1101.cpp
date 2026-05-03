@@ -1,6 +1,12 @@
 #include "elero.h"
 #include "elero_crypto.h"
 #include "elero_utils.h"
+#include "elero_watchdog_logic.h"
+#include "elero_recovery_logic.h"
+#include "elero_overflow_logic.h"
+#include "elero_tx_logic.h"
+#include "elero_dedup_logic.h"
+#include "elero_radio_state_logic.h"
 #include "esphome/core/log.h"
 #include "esphome/core/helpers.h"
 #include <cstring>
@@ -61,31 +67,35 @@ void Elero::process_rx() {
   // When TX commands are pending, limit RX drain to 1 packet per call so
   // the next radio_task_loop_() iteration can dequeue TX first (TX priority).
   // When TX idle, drain up to ELERO_MAX_RX_PER_LOOP to clear the FIFO fast.
-  uint8_t max_drain = ELERO_MAX_RX_PER_LOOP;
-  if ((this->tx_priority_queue_ && uxQueueMessagesWaiting(this->tx_priority_queue_) > 0) ||
-      (this->tx_queue_ && uxQueueMessagesWaiting(this->tx_queue_) > 0)) {
-    max_drain = 1;
-  }
+  uint8_t max_drain = radio_state_logic::rx_drain_limit(
+      this->tx_priority_queue_ && uxQueueMessagesWaiting(this->tx_priority_queue_) > 0,
+      this->tx_queue_ && uxQueueMessagesWaiting(this->tx_queue_) > 0,
+      ELERO_MAX_RX_PER_LOOP);
   for (uint8_t iter = 0; iter < max_drain; iter++) {
     uint8_t len = this->read_status(CC1101_RXBYTES);
 
     if (len & 0x80) {  // overflow bit set — FIFO data unreliable
       uint32_t now = millis();
-      // Rate-limit: if we already flushed recently, suppress log and skip
-      if (now - this->last_rx_overflow_ms_ < 1000) {
-        this->rx_overflow_count_++;
-        // After 5 rapid overflows, escalate to full radio reinit
-        if (this->rx_overflow_count_ >= 5) {
-          ESP_LOGW(TAG, "RX FIFO overflow persists after %d flushes, full radio reinit",
-                   this->rx_overflow_count_);
-          this->rx_overflow_count_ = 0;
-          this->last_rx_overflow_ms_ = now;
-          this->reset();
-          this->init();
-        }
+      this->rx_overflow_count_ = overflow_logic::next_overflow_count(
+          now, this->last_rx_overflow_ms_, this->rx_overflow_count_, 1000);
+
+      // After rapid repeated overflows, escalate to full radio reinit.
+      if (overflow_logic::should_reinit_after_overflow_count(this->rx_overflow_count_, 5)) {
+        ESP_LOGW(TAG, "RX FIFO overflow persists after %d flushes, full radio reinit",
+                 this->rx_overflow_count_);
+        this->rx_overflow_count_ = 0;
+        this->last_rx_overflow_ms_ = now;
+        this->reset();
+        this->init();
         return;
       }
-      this->rx_overflow_count_ = 1;
+
+      // For rapid repeated overflows, suppress repetitive flushes and let the
+      // counter decide when to escalate.
+      if (this->rx_overflow_count_ > 1) {
+        return;
+      }
+
       this->last_rx_overflow_ms_ = now;
       ESP_LOGW(TAG, "RX FIFO overflow in process_rx, flushing");
       this->flush_rx();
@@ -96,15 +106,11 @@ void Elero::process_rx() {
     if (avail == 0)
       return;  // FIFO empty — done
 
-    uint8_t fifo_count;
+    uint8_t fifo_count = radio_state_logic::bounded_fifo_count(avail, CC1101_FIFO_LENGTH);
     if (avail > CC1101_FIFO_LENGTH) {
       ESP_LOGV(TAG, "Received more bytes than FIFO length");
-      this->read_buf(CC1101_RXFIFO, this->msg_rx_, CC1101_FIFO_LENGTH);
-      fifo_count = CC1101_FIFO_LENGTH;
-    } else {
-      fifo_count = avail;
-      this->read_buf(CC1101_RXFIFO, this->msg_rx_, fifo_count);
     }
+    this->read_buf(CC1101_RXFIFO, this->msg_rx_, fifo_count);
 
 #if ESPHOME_LOG_LEVEL >= ESPHOME_LOG_LEVEL_VERBOSE
     ESP_LOGV(TAG, "RAW RX %d bytes: %s", fifo_count,
@@ -120,7 +126,7 @@ void Elero::process_rx() {
 
     // Sanity check: first byte is the payload length; we need at least
     // payload + length byte + 2 appended status bytes (RSSI + LQI).
-    if (this->msg_rx_[0] + 3 <= fifo_count) {
+    if (radio_state_logic::has_complete_fifo_packet(this->msg_rx_[0], fifo_count)) {
       this->interpret_msg();
     } else if (this->packet_dump_pending_update_) {
       this->mark_last_raw_packet_(false, "short_read");
@@ -163,16 +169,8 @@ void Elero::advance_tx() {
       }
 
       // Fallback: poll MARCSTATE for TX completion
-      bool tx_in_progress = (marc == CC1101_MARCSTATE_TX) ||
-                            (marc == CC1101_MARCSTATE_STARTCAL) ||
-                            (marc == CC1101_MARCSTATE_BWBOOST) ||
-                            (marc == CC1101_MARCSTATE_FS_LOCK) ||
-                            (marc == CC1101_MARCSTATE_IFADCON) ||
-                            (marc == CC1101_MARCSTATE_ENDCAL) ||
-                            (marc == CC1101_MARCSTATE_FSTXON) ||
-                            (marc == CC1101_MARCSTATE_RXTX_SWITCH);
-      if (tx_in_progress) {
-        if (elapsed > TX_STATE_TIMEOUT_MS) {
+      if (radio_state_logic::is_tx_progress_state(marc)) {
+        if (radio_state_logic::has_tx_timed_out(elapsed, TX_STATE_TIMEOUT_MS)) {
           ESP_LOGW(TAG, "TX timeout in TRANSMITTING (marc=%s, %lums), aborting",
                    marcstate_to_string(marc), (unsigned long) elapsed);
           this->tx_abort_();
@@ -238,7 +236,8 @@ bool Elero::is_duplicate_packet_(uint32_t src, uint8_t cnt) {
   uint32_t now = millis();
   uint64_t key = (static_cast<uint64_t>(src) << 8) | cnt;
   auto it = this->dedup_map_.find(key);
-  if (it != this->dedup_map_.end() && (now - it->second) < ELERO_DEDUP_WINDOW_MS) {
+  if (it != this->dedup_map_.end() &&
+      dedup_logic::is_duplicate_within_window(now, it->second, ELERO_DEDUP_WINDOW_MS)) {
     return true;  // already seen within window
   }
   this->dedup_map_[key] = now;
@@ -251,7 +250,7 @@ void Elero::prune_dedup_map_() {
     return;
   this->last_dedup_prune_ms_ = now;
   for (auto it = this->dedup_map_.begin(); it != this->dedup_map_.end();) {
-    if ((now - it->second) >= ELERO_DEDUP_WINDOW_MS)
+    if (dedup_logic::should_prune_entry(now, it->second, ELERO_DEDUP_WINDOW_MS))
       it = this->dedup_map_.erase(it);
     else
       ++it;
@@ -269,69 +268,83 @@ void Elero::check_radio_state_() {
 
   uint8_t marc = this->read_status(CC1101_MARCSTATE) & 0x1F;
 
-  // Healthy states — reset escalation window
-  if (marc == CC1101_MARCSTATE_RX) {
+  // Healthy RX state — reset escalation counters/window.
+  if (radio_state_logic::is_watchdog_healthy_rx(marc)) {
+    watchdog_logic::EscalationState state{
+      this->watchdog_flush_count_,
+      this->watchdog_reset_count_,
+      this->watchdog_window_start_ms_
+    };
+    watchdog_logic::reset_on_healthy(state, now);
+    this->watchdog_flush_count_ = state.flush_count;
+    this->watchdog_reset_count_ = state.reset_count;
+    this->watchdog_window_start_ms_ = state.window_start_ms;
     return;
   }
   // Transient calibration states — let them settle
-  if (marc >= CC1101_MARCSTATE_VCOON_MC && marc <= CC1101_MARCSTATE_ENDCAL)
-    return;
-  if (marc == CC1101_MARCSTATE_RX_END || marc == CC1101_MARCSTATE_RX_RST)
+  if (radio_state_logic::is_watchdog_transient_state(marc))
     return;
 
   // --- Something is wrong: escalating recovery ---
   this->watchdog_recovery_count_.fetch_add(1, std::memory_order_relaxed);
 
-  // Reset escalation window if expired
-  if (now - this->watchdog_window_start_ms_ > WATCHDOG_ESCALATION_WINDOW_MS) {
-    this->watchdog_flush_count_ = 0;
-    this->watchdog_reset_count_ = 0;
-    this->watchdog_window_start_ms_ = now;
+  // Reset escalation window if expired.
+  {
+    watchdog_logic::EscalationState state{
+      this->watchdog_flush_count_,
+      this->watchdog_reset_count_,
+      this->watchdog_window_start_ms_
+    };
+    watchdog_logic::reset_if_window_expired(state, now, WATCHDOG_ESCALATION_WINDOW_MS);
+    this->watchdog_flush_count_ = state.flush_count;
+    this->watchdog_reset_count_ = state.reset_count;
+    this->watchdog_window_start_ms_ = state.window_start_ms;
   }
 
-  // Stuck IDLE — simple SRX restart (Level 0, doesn't count toward escalation)
-  if (marc == CC1101_MARCSTATE_IDLE) {
-    ESP_LOGW(TAG, "Radio watchdog: stuck in IDLE, restarting RX");
-    this->write_cmd(CC1101_SRX);
-    return;
-  }
+  switch (watchdog_logic::choose_recovery_action(marc, this->watchdog_flush_count_,
+                                                 this->watchdog_reset_count_,
+                                                 WATCHDOG_MAX_FLUSHES_PER_WINDOW,
+                                                 WATCHDOG_MAX_RESETS_PER_WINDOW)) {
+    case watchdog_logic::RecoveryAction::RESTART_RX:
+      ESP_LOGW(TAG, "Radio watchdog: stuck in IDLE, restarting RX");
+      this->write_cmd(CC1101_SRX);
+      return;
 
-  // Level 1: flush FIFO
-  if (this->watchdog_flush_count_ < WATCHDOG_MAX_FLUSHES_PER_WINDOW) {
-    this->watchdog_flush_count_++;
-    if (marc == CC1101_MARCSTATE_RXFIFO_OFLOW) {
+    case watchdog_logic::RecoveryAction::FLUSH_RX:
+      this->watchdog_flush_count_++;
       ESP_LOGW(TAG, "Radio watchdog L1: RX FIFO overflow, flushing (%d/%d in window)",
                this->watchdog_flush_count_, WATCHDOG_MAX_FLUSHES_PER_WINDOW);
       this->flush_rx();
-    } else {
+      return;
+
+    case watchdog_logic::RecoveryAction::FLUSH_AND_RX:
+      this->watchdog_flush_count_++;
       ESP_LOGW(TAG, "Radio watchdog L1: unexpected state %s (0x%02x), flushing (%d/%d in window)",
                marcstate_to_string(marc), marc,
                this->watchdog_flush_count_, WATCHDOG_MAX_FLUSHES_PER_WINDOW);
       this->flush_and_rx();
-    }
-    return;
-  }
+      return;
 
-  // Level 2: full chip reset
-  if (this->watchdog_reset_count_ < WATCHDOG_MAX_RESETS_PER_WINDOW) {
-    this->watchdog_reset_count_++;
-    ESP_LOGW(TAG, "Radio watchdog L2: %d flushes exhausted, full reset (%d/%d in window)",
-             WATCHDOG_MAX_FLUSHES_PER_WINDOW,
-             this->watchdog_reset_count_, WATCHDOG_MAX_RESETS_PER_WINDOW);
-    this->reset();
-    if (!this->init()) {
-      ESP_LOGW(TAG, "Radio watchdog L2: reinit failed after reset");
-    }
-    return;
-  }
+    case watchdog_logic::RecoveryAction::RESET:
+      this->watchdog_reset_count_++;
+      ESP_LOGW(TAG, "Radio watchdog L2: %d flushes exhausted, full reset (%d/%d in window)",
+               WATCHDOG_MAX_FLUSHES_PER_WINDOW,
+               this->watchdog_reset_count_, WATCHDOG_MAX_RESETS_PER_WINDOW);
+      this->reset();
+      if (!this->init()) {
+        ESP_LOGW(TAG, "Radio watchdog L2: reinit failed after reset");
+      }
+      return;
 
-  // Level 3: mark permanently failed
-  ESP_LOGE(TAG, "Radio watchdog L3: %d flushes + %d resets exhausted in 60s window — marking failed",
-           WATCHDOG_MAX_FLUSHES_PER_WINDOW, WATCHDOG_MAX_RESETS_PER_WINDOW);
-  ESP_LOGE(TAG, "  If GPIO12 is used for SPI MISO, it may be pulling VDD_SDIO to 1.8V at boot.");
-  ESP_LOGE(TAG, "  Use non-strapping pins for SPI (e.g. CLK=18, MISO=19, MOSI=23).");
-  this->spi_failed_.store(true, std::memory_order_release);
-  this->radio_fatal_error_.store(true, std::memory_order_release);
+    case watchdog_logic::RecoveryAction::FAIL:
+      ESP_LOGE(TAG, "Radio watchdog L3: %d flushes + %d resets exhausted in 60s window — marking failed",
+               WATCHDOG_MAX_FLUSHES_PER_WINDOW, WATCHDOG_MAX_RESETS_PER_WINDOW);
+      ESP_LOGE(TAG, "  If GPIO12 is used for SPI MISO, it may be pulling VDD_SDIO to 1.8V at boot.");
+      ESP_LOGE(TAG, "  Use non-strapping pins for SPI (e.g. CLK=18, MISO=19, MOSI=23).");
+      this->spi_failed_.store(true, std::memory_order_release);
+      this->radio_fatal_error_.store(true, std::memory_order_release);
+      return;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -629,16 +642,31 @@ bool Elero::send_command_internal_(t_elero_command *cmd) {
   // dequeuing a TX_COMMAND, so no idle check needed here.
 
   ESP_LOGVV(TAG, "send_command called");
-  uint8_t num_dests = cmd->num_dests;
-  if (num_dests == 0 || num_dests > ELERO_MAX_DESTS) {
-    ESP_LOGW(TAG, "Invalid num_dests=%d, clamping to 1", num_dests);
-    num_dests = 1;
+  uint8_t requested_num_dests = cmd->num_dests;
+  uint8_t num_dests = tx_logic::sanitize_num_dests(requested_num_dests, ELERO_MAX_DESTS);
+  if (num_dests != requested_num_dests) {
+    ESP_LOGW(TAG, "Invalid num_dests=%d, sanitized to %d", requested_num_dests, num_dests);
   }
-  // Dynamic packet length: header(16) + num_dests*3 + payload(10)
-  uint8_t msg_len = 16 + num_dests * 3 + 10;
+
+  uint8_t available_dests = tx_logic::count_nonzero_dest_addrs(cmd->dest_addrs, ELERO_MAX_DESTS);
+  if (available_dests == 0) {
+    ESP_LOGE(TAG, "No valid destination address available for TX command");
+    return false;
+  }
+  uint8_t effective_dests = tx_logic::effective_num_dests(num_dests, available_dests);
+  if (effective_dests != num_dests) {
+    ESP_LOGW(TAG, "Requested %u destinations but only %u populated, clamping",
+             num_dests, available_dests);
+  }
+  num_dests = effective_dests;
+  uint16_t msg_len = tx_logic::calculate_msg_len(num_dests);
+  if (!tx_logic::is_msg_len_valid(msg_len, ELERO_MAX_PACKET_SIZE)) {
+    ESP_LOGE(TAG, "Invalid TX packet length %u for num_dests=%u", static_cast<unsigned>(msg_len), num_dests);
+    return false;
+  }
 
   uint16_t code = (0x00 - (cmd->counter * ELERO_CRYPTO_MULT)) & ELERO_CRYPTO_MASK;
-  this->msg_tx_[0] = msg_len;
+  this->msg_tx_[0] = static_cast<uint8_t>(msg_len);
   this->msg_tx_[1] = cmd->counter;
   this->msg_tx_[2] = cmd->pck_inf[0];
   this->msg_tx_[3] = cmd->pck_inf[1];
@@ -681,15 +709,16 @@ bool Elero::send_command_internal_(t_elero_command *cmd) {
              num_dests, cmd->payload[4], cmd->channel, cmd->counter);
   }
 #if ESPHOME_LOG_LEVEL >= ESPHOME_LOG_LEVEL_VERBOSE
-  ESP_LOGV(TAG, "  TX raw [%d bytes]: %s", msg_len + 1,
-           format_hex_pretty(this->msg_tx_, msg_len + 1).c_str());
+  ESP_LOGV(TAG, "  TX raw [%d bytes]: %s", static_cast<int>(msg_len + 1),
+           format_hex_pretty(this->msg_tx_, static_cast<uint8_t>(msg_len + 1)).c_str());
 #endif
 
   this->radio_->standby();
 
   uint8_t marc = this->read_status(CC1101_MARCSTATE) & 0x1F;
   if (marc != CC1101_MARCSTATE_IDLE) {
-    this->send_cmd_reinit_failures_++;
+    this->send_cmd_reinit_failures_ = recovery_logic::next_reinit_failure_count(
+        this->send_cmd_reinit_failures_, false);
     if (this->send_cmd_reinit_failures_ >= 3) {
       if (!this->spi_failed_.load(std::memory_order_acquire)) {
         ESP_LOGE(TAG, "send_command: %d consecutive reinit failures — SPI appears permanently broken.",
@@ -704,9 +733,9 @@ bool Elero::send_command_internal_(t_elero_command *cmd) {
     ESP_LOGW(TAG, "send_command: radio not in IDLE (marc=0x%02x), reinitializing (%d/%d)",
              marc, this->send_cmd_reinit_failures_, 3);
     this->reset();
-    if (!this->init()) {
-      this->send_cmd_reinit_failures_++;
-    }
+    bool init_ok = this->init();
+    this->send_cmd_reinit_failures_ =
+        recovery_logic::apply_reinit_outcome(this->send_cmd_reinit_failures_, init_ok);
     return false;
   }
   this->send_cmd_reinit_failures_ = 0;

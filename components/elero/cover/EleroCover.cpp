@@ -64,7 +64,7 @@ void EleroCover::loop() {
     }
   }
 
-  if ((now - this->last_poll_) > intvl) {
+  if (cover_logic::should_poll(now, this->last_poll_, intvl)) {
     if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE) {
       this->commands_to_send_.push(this->command_check_);
       this->last_poll_ = now;
@@ -130,14 +130,17 @@ void EleroCover::loop() {
       // Record position at stop trigger for post-verification correction
       this->stop_trigger_position_ = this->position;
       this->stop_trigger_ms_ = now;
-      // Signal other covers to defer their non-stop commands
-      this->parent_->increment_stop_urgent();
-      this->stop_urgent_active_ = true;
       // Clear queue so stop goes out immediately (mirrors manual stop behavior)
       while (!this->commands_to_send_.empty())
         this->commands_to_send_.pop();
       // Send stop via priority queue with retry for immediate processing.
-      this->send_stop_priority_();
+      if (!cover_logic::should_apply_auto_stop_after_priority_result(this->send_stop_priority_())) {
+        this->stop_trigger_ms_ = 0;
+        return;
+      }
+      // Signal other covers to defer their non-stop commands
+      this->parent_->increment_stop_urgent();
+      this->stop_urgent_active_ = true;
       this->increase_counter();
       this->current_operation = COVER_OPERATION_IDLE;
       // Keep target_position_ at the user's requested value — do NOT reset
@@ -169,7 +172,7 @@ void EleroCover::loop() {
     }
 
     // Publish position every second
-    if(now - this->last_publish_ > 1000) {
+    if(cover_logic::should_publish_position(now, this->last_publish_, 1000)) {
       this->publish_state(false);
       this->last_publish_ = now;
     }
@@ -396,9 +399,20 @@ void EleroCover::control(const cover::CoverCall &call) {
   if (call.get_tilt().has_value()) {
     auto tilt = *call.get_tilt();
     if(tilt > 0) {
-      if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE) {
+      if (cover_logic::can_enqueue_tilt_command(
+              static_cast<uint8_t>(this->commands_to_send_.size()), ELERO_MAX_COMMAND_QUEUE)) {
         this->commands_to_send_.push(this->command_tilt_);
         this->tilt = 1.0;
+      } else if (cover_logic::should_publish_queue_full_for_tilt(
+                     static_cast<uint8_t>(this->commands_to_send_.size()), ELERO_MAX_COMMAND_QUEUE)) {
+        ESP_LOGW(TAG, "Command queue full for blind 0x%06x, dropping TILT command",
+                 this->command_.blind_addr);
+#ifdef USE_TEXT_SENSOR
+        if (!this->queue_full_published_) {
+          this->parent_->publish_text_sensor_state(this->command_.blind_addr, "queue_full");
+          this->queue_full_published_ = true;
+        }
+#endif
       }
     } else {
       this->tilt = 0.0;
@@ -443,12 +457,8 @@ void EleroCover::start_movement(CoverOperation dir) {
   switch(dir) {
     case COVER_OPERATION_OPENING:
       ESP_LOGV(TAG, "Sending OPEN command");
-      if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE) {
-        this->commands_to_send_.push(this->command_up_);
-        // Reset tilt state on movement
-        this->tilt = 0.0;
-        this->last_operation_ = COVER_OPERATION_OPENING;
-      } else {
+      if (cover_logic::should_reject_movement_before_state_update(
+              static_cast<uint8_t>(this->commands_to_send_.size()), ELERO_MAX_COMMAND_QUEUE)) {
         ESP_LOGW(TAG, "Command queue full for blind 0x%06x, dropping OPEN command",
                  this->command_.blind_addr);
 #ifdef USE_TEXT_SENSOR
@@ -457,16 +467,17 @@ void EleroCover::start_movement(CoverOperation dir) {
           this->queue_full_published_ = true;
         }
 #endif
+        return;
       }
+      this->commands_to_send_.push(this->command_up_);
+      // Reset tilt state on movement
+      this->tilt = 0.0;
+      this->last_operation_ = COVER_OPERATION_OPENING;
     break;
     case COVER_OPERATION_CLOSING:
       ESP_LOGV(TAG, "Sending CLOSE command");
-      if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE) {
-        this->commands_to_send_.push(this->command_down_);
-        // Reset tilt state on movement
-        this->tilt = 0.0;
-        this->last_operation_ = COVER_OPERATION_CLOSING;
-      } else {
+      if (cover_logic::should_reject_movement_before_state_update(
+              static_cast<uint8_t>(this->commands_to_send_.size()), ELERO_MAX_COMMAND_QUEUE)) {
         ESP_LOGW(TAG, "Command queue full for blind 0x%06x, dropping CLOSE command",
                  this->command_.blind_addr);
 #ifdef USE_TEXT_SENSOR
@@ -475,7 +486,12 @@ void EleroCover::start_movement(CoverOperation dir) {
           this->queue_full_published_ = true;
         }
 #endif
+        return;
       }
+      this->commands_to_send_.push(this->command_down_);
+      // Reset tilt state on movement
+      this->tilt = 0.0;
+      this->last_operation_ = COVER_OPERATION_CLOSING;
     break;
     case COVER_OPERATION_IDLE:
       ESP_LOGI(TAG, "Blind 0x%06x manual stop at position %.2f",
@@ -484,15 +500,20 @@ void EleroCover::start_movement(CoverOperation dir) {
       while (!this->commands_to_send_.empty())
         this->commands_to_send_.pop();
       // Send stop via priority queue for immediate processing
-      this->parent_->increment_stop_urgent();
-      this->stop_urgent_active_ = true;
       this->stop_trigger_position_ = this->position;
       this->stop_trigger_ms_ = millis();
-      this->send_stop_priority_();
+      if (!cover_logic::should_apply_stop_after_priority_result(this->send_stop_priority_())) {
+        this->stop_trigger_ms_ = 0;
+        return;
+      }
+      this->parent_->increment_stop_urgent();
+      this->stop_urgent_active_ = true;
       this->increase_counter();
       // Schedule verification to confirm motor actually stopped
-      this->stop_verify_at_ = millis() + ELERO_STOP_VERIFY_DELAY_MS;
-      this->stop_verify_retries_ = 0;
+      if (cover_logic::should_schedule_stop_verification(true)) {
+        this->stop_verify_at_ = millis() + ELERO_STOP_VERIFY_DELAY_MS;
+        this->stop_verify_retries_ = 0;
+      }
     break;
   }
 
@@ -516,10 +537,10 @@ void EleroCover::start_movement(CoverOperation dir) {
 
 void EleroCover::schedule_immediate_poll() {
   uint32_t now = millis();
-  if ((now - this->last_immediate_poll_ms_) < ELERO_IMMEDIATE_POLL_MIN_INTERVAL_MS) {
-    return;  // rate-limited
-  }
-  if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE) {
+  if (cover_logic::should_schedule_immediate_poll(
+          this->command_check_, static_cast<uint8_t>(this->commands_to_send_.size()),
+          ELERO_MAX_COMMAND_QUEUE, now, this->last_immediate_poll_ms_,
+          ELERO_IMMEDIATE_POLL_MIN_INTERVAL_MS)) {
     this->commands_to_send_.push(this->command_check_);
     this->last_immediate_poll_ms_ = now;
   }

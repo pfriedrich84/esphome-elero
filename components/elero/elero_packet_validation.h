@@ -3,6 +3,8 @@
 
 #include <cstdint>
 
+#define ELERO_HAS_CRC_STATUS_HELPER 1
+
 namespace esphome {
 namespace elero {
 namespace packet_validation {
@@ -18,15 +20,20 @@ inline bool is_valid_packet_length(uint8_t length) {
 
 inline uint8_t max_safe_dests() { return (MAX_PACKET_SIZE - HEADER_OVERHEAD) / 3; }
 
-inline bool is_valid_dest_count(uint8_t num_dests) { return num_dests <= max_safe_dests(); }
+inline bool is_valid_dest_count(uint8_t num_dests) {
+  return num_dests >= 1 && num_dests <= max_safe_dests();
+}
 
 inline uint8_t calculate_dests_length(uint8_t typ, uint8_t num_dests) {
   return (typ > 0x60) ? static_cast<uint8_t>(num_dests * 3) : num_dests;
 }
 
 inline bool is_valid_packet_bounds(uint8_t length, uint8_t dests_len) {
-  uint16_t offset = 26u + dests_len;
-  return offset <= length && offset < FIFO_LENGTH;
+  // Decode safety: Elero frames carry two plain payload bytes followed by an
+  // 8-byte encrypted payload. The last encrypted payload byte is at absolute
+  // index (26 + dests_len), which may equal the declared CC1101 length byte.
+  uint16_t last_payload_offset = 26u + dests_len;
+  return last_payload_offset <= length && last_payload_offset < FIFO_LENGTH;
 }
 
 inline bool is_rssi_in_bounds(uint8_t length) { return (uint16_t)(length + 2) < FIFO_LENGTH; }
@@ -34,6 +41,10 @@ inline bool is_rssi_in_bounds(uint8_t length) { return (uint16_t)(length + 2) < 
 inline uint8_t extract_crc(uint8_t status_byte) { return status_byte >> 7; }
 
 inline uint8_t extract_lqi(uint8_t status_byte) { return status_byte & 0x7f; }
+
+inline bool is_crc_valid_status_byte(uint8_t status_byte) {
+  return extract_crc(status_byte) == 1;
+}
 
 }  // namespace packet_validation
 }  // namespace elero

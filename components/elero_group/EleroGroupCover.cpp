@@ -1,10 +1,23 @@
 #include "EleroGroupCover.h"
+#include "../elero/elero_group_command_logic.h"
 #include "esphome/core/log.h"
 
 namespace esphome {
 namespace elero {
 
 static const char *const TAG = "elero.group";
+
+static group_command_logic::HubSubmitResult to_group_submit_result(SendResult result) {
+  switch (result) {
+    case SendResult::OK:
+      return group_command_logic::HubSubmitResult::OK;
+    case SendResult::QUEUE_FULL:
+      return group_command_logic::HubSubmitResult::QUEUE_FULL;
+    case SendResult::FAILED:
+    default:
+      return group_command_logic::HubSubmitResult::FAILED;
+  }
+}
 
 void EleroGroupCover::setup() {
   this->native_group_ = this->can_use_native_group_();
@@ -97,28 +110,41 @@ void EleroGroupCover::control(const cover::CoverCall &call) {
 
 void EleroGroupCover::send_group_command_(uint8_t cmd_byte) {
   if (this->native_group_ && this->parent_ != nullptr) {
-    // Native multi-dest: single RF packet to all members (same channel/remote)
+    // Native multi-dest: single RF packet to all members (same channel/remote).
+    // If the hub cannot accept it, fall back to member queues so normal cover
+    // dispatch retry/aging semantics take over instead of silently dropping it.
     t_elero_command cmd{};
     this->build_group_command_(cmd, cmd_byte);
-    this->parent_->send_command(&cmd);
-    // Increment counter (wraps 255 → 1, skip 0)
-    if (this->group_counter_ == 0xFF)
-      this->group_counter_ = 1;
-    else
-      this->group_counter_++;
-    ESP_LOGD(TAG, "Sent native group command 0x%02x to %d dests", cmd_byte, (int) this->members_.size());
+    auto result = to_group_submit_result(this->parent_->send_command(&cmd));
+    if (group_command_logic::should_increment_group_counter(result)) {
+      this->group_counter_ = group_command_logic::next_group_counter(this->group_counter_);
+      ESP_LOGD(TAG, "Sent native group command 0x%02x to %d dests", cmd_byte, (int) this->members_.size());
+      return;
+    }
+    ESP_LOGW(TAG, "Native group command 0x%02x was not accepted by hub, queueing %d member commands",
+             cmd_byte, (int) this->members_.size());
+    for (auto *member : this->members_) {
+      member->enqueue_command(cmd_byte);
+    }
   } else if (this->parent_ != nullptr) {
-    // Direct TX: build each member's command and enqueue directly to the hub's
-    // TX queue, bypassing per-cover command queues and dispatch_commands() delays.
-    // This fills the FreeRTOS TX queue in one burst — the radio task sends them
-    // back-to-back with only 1ms cooldown between each (~5ms per blind total).
+    // Direct TX: enqueue each member's command directly to the hub's TX queue.
+    // Queue-full/failed sends fall back to the member's own command queue so
+    // per-cover dispatch delay, retry, and stale-queue rules remain the retry path.
+    uint8_t sent = 0;
+    uint8_t queued = 0;
     for (auto *member : this->members_) {
       t_elero_command cmd = member->build_tx_command(cmd_byte);
-      this->parent_->send_command(&cmd);
+      auto result = to_group_submit_result(this->parent_->send_command(&cmd));
+      if (group_command_logic::should_fallback_to_member_queues(result)) {
+        member->enqueue_command(cmd_byte);
+        queued++;
+      } else {
+        sent++;
+      }
     }
-    ESP_LOGD(TAG, "Sent direct burst 0x%02x to %d members", cmd_byte, (int) this->members_.size());
+    ESP_LOGD(TAG, "Direct group command 0x%02x: sent=%d queued=%d", cmd_byte, sent, queued);
   } else {
-    // Last resort fallback: use per-cover command queues
+    // Last resort fallback: use per-cover command queues.
     for (auto *member : this->members_) {
       member->enqueue_command(cmd_byte);
     }
@@ -128,31 +154,29 @@ void EleroGroupCover::send_group_command_(uint8_t cmd_byte) {
 bool EleroGroupCover::can_use_native_group_() const {
   if (this->members_.size() < 2 || this->members_.size() > ELERO_MAX_DESTS)
     return false;
-  uint32_t remote = this->members_[0]->get_remote_address();
-  uint8_t channel = this->members_[0]->get_channel();
+  auto first_profile = this->members_[0]->get_command_profile();
   for (size_t i = 1; i < this->members_.size(); i++) {
-    if (this->members_[i]->get_remote_address() != remote ||
-        this->members_[i]->get_channel() != channel)
+    if (!command_profile::can_share_native_group(first_profile, this->members_[i]->get_command_profile()))
       return false;
   }
   return true;
 }
 
 void EleroGroupCover::build_group_command_(t_elero_command &cmd, uint8_t cmd_byte) {
-  auto *first = this->members_[0];
+  auto first_profile = this->members_[0]->get_command_profile();
   cmd.counter = this->group_counter_;
-  cmd.remote_addr = first->get_remote_address();
-  cmd.channel = first->get_channel();
-  cmd.pck_inf[0] = first->get_pck_inf0();
-  cmd.pck_inf[1] = first->get_pck_inf1();
-  cmd.hop = first->get_hop();
-  cmd.payload[0] = first->get_payload_1();
-  cmd.payload[1] = first->get_payload_2();
+  cmd.remote_addr = first_profile.remote_address;
+  cmd.channel = first_profile.channel;
+  cmd.pck_inf[0] = first_profile.pck_inf[0];
+  cmd.pck_inf[1] = first_profile.pck_inf[1];
+  cmd.hop = first_profile.hop;
+  cmd.payload[0] = first_profile.payload_1;
+  cmd.payload[1] = first_profile.payload_2;
   cmd.payload[4] = cmd_byte;
   cmd.num_dests = static_cast<uint8_t>(this->members_.size());
-  cmd.blind_addr = first->get_blind_address();
+  cmd.blind_addr = first_profile.blind_address;
   for (size_t i = 0; i < this->members_.size(); i++) {
-    cmd.dest_addrs[i] = this->members_[i]->get_blind_address();
+    cmd.dest_addrs[i] = this->members_[i]->get_command_profile().blind_address;
   }
 }
 

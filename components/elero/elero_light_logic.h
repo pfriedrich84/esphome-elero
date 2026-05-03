@@ -4,9 +4,27 @@
 #include <algorithm>
 #include <cstdint>
 
+#define ELERO_HAS_LIGHT_PUBLISH_HELPER 1
+#define ELERO_HAS_LIGHT_IMMEDIATE_POLL_HELPER 1
+#define ELERO_HAS_LIGHT_ACTION_QUEUE_HELPER 1
+#define ELERO_HAS_LIGHT_ACTION_PRECHECK_HELPER 1
+
 namespace esphome {
 namespace elero {
 namespace light_logic {
+
+inline bool should_publish_dimming(uint32_t now, uint32_t last_publish_ms,
+                                   uint32_t publish_interval_ms) {
+  return (now - last_publish_ms) >= publish_interval_ms;
+}
+
+inline bool should_schedule_immediate_poll(uint8_t command_check, uint8_t queue_size,
+                                           uint8_t max_queue_size, uint32_t now,
+                                           uint32_t last_immediate_ms,
+                                           uint32_t min_interval_ms) {
+  return command_check != 0x00 && queue_size < max_queue_size &&
+         (now - last_immediate_ms) >= min_interval_ms;
+}
 
 // Returns the updated brightness after dead-reckoning.
 // dim_up: true = increasing brightness, false = decreasing
@@ -32,6 +50,30 @@ enum class LightAction : uint8_t {
   DIM_UP,         // start dimming up
   DIM_DOWN,       // start dimming down
 };
+
+inline uint8_t required_command_slots(LightAction action) {
+  switch (action) {
+    case LightAction::NONE:
+      return 0;
+    case LightAction::ON_THEN_DIM_DOWN:
+      return 2;
+    case LightAction::OFF:
+    case LightAction::ON:
+    case LightAction::DIM_UP:
+    case LightAction::DIM_DOWN:
+    default:
+      return 1;
+  }
+}
+
+inline bool can_enqueue_action(LightAction action, uint8_t queue_size, uint8_t max_queue_size) {
+  return static_cast<uint16_t>(queue_size) + required_command_slots(action) <= max_queue_size;
+}
+
+inline bool should_reject_action_before_state_update(LightAction action, uint8_t queue_size,
+                                                     uint8_t max_queue_size) {
+  return !can_enqueue_action(action, queue_size, max_queue_size);
+}
 
 struct LightActionResult {
   LightAction action;

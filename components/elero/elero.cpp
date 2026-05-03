@@ -215,8 +215,20 @@ void dispatch_commands(Elero *parent, std::queue<uint8_t> &queue,
         if (dispatch_logic::should_drop_after_retries(send_retries, ELERO_SEND_RETRIES)) {
           ESP_LOGE(tag, "Hit maximum retries for 0x%06x, giving up.", blind_addr);
           parent->increment_tx_drop_count();
+          if (dispatch_logic::should_advance_counter_on_drop(send_packets)) {
+            increase_counter_fn(ctx);
+          }
+          send_packets = 0;
           send_retries = 0;
           queue.pop();
+          if (dispatch_logic::should_clear_queue_full_latch_after_drop(queue.empty(),
+                                                                       queue_full_published)) {
+            queue_full_published = false;
+          }
+          if (last_queue_drain_ms != nullptr &&
+              dispatch_logic::should_refresh_stale_timer_on_drop(true)) {
+            *last_queue_drain_ms = now;
+          }
         }
         last_command = now;
       }
