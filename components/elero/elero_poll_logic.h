@@ -9,9 +9,9 @@ namespace esphome {
 namespace elero {
 namespace poll_logic {
 
-// Returns true if enough time has elapsed since the last poll.
+// Returns true if the poll interval has elapsed since the last poll.
 inline bool should_poll_now(uint32_t now, uint32_t last_poll, uint32_t interval) {
-  return (now - last_poll) >= interval;
+  return (now - last_poll) > interval;
 }
 
 // Returns true if an immediate poll is allowed (rate-limited).

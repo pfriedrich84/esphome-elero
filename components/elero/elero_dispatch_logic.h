@@ -13,9 +13,9 @@ namespace elero {
 namespace dispatch_logic {
 
 // Returns true if the command queue has been sitting without a successful drain
-// for at least max_age_ms (stale commands should be cleared).
+// for more than max_age_ms (stale commands should be cleared).
 inline bool should_clear_stale_queue(uint32_t now, uint32_t last_drain_ms, uint32_t max_age_ms) {
-  return (now - last_drain_ms) >= max_age_ms;
+  return (now - last_drain_ms) > max_age_ms;
 }
 
 // Returns true if this cover is in stop-verification and the front command
@@ -42,12 +42,12 @@ inline bool is_dispatch_ready(bool is_stop_cmd, uint32_t now, uint32_t last_comm
                               uint32_t delay) {
   if (is_stop_cmd)
     return true;
-  return (now - last_command) >= delay;
+  return (now - last_command) > delay;
 }
 
-// Returns true if retry count reaches the maximum (command should be dropped).
+// Returns true if retry count exceeds the maximum (command should be dropped).
 inline bool should_drop_after_retries(uint8_t send_retries, uint8_t max_retries) {
-  return send_retries >= max_retries;
+  return send_retries > max_retries;
 }
 
 // Returns true when dropping a command must consume the command counter because
