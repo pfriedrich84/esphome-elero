@@ -6,6 +6,8 @@ user-invocable: true
 
 # Code Quality Review
 
+Canonical repository instructions live in [`../../AGENTS.md`](../../AGENTS.md); this Claude skill only defines the slash-command workflow.
+
 Review pending changes against project-specific quality gates.
 
 ## Quality Gates
@@ -45,9 +47,9 @@ New endpoints must have:
 - `std::string` reserves capacity for known-size JSON
 
 ### Gate 7: Documentation
-- New YAML parameters documented in `docs/CONFIGURATION.md`
-- New constants added to `CLAUDE.md` key constants table
-- New API endpoints added to the REST API table in `CLAUDE.md`
+- New YAML parameters documented in `docs/user/configuration.md`
+- New constants added to `docs/developer/development.md` key constants table
+- New API endpoints added to the REST API table in `docs/developer/development.md`
 
 ## Output Format
 

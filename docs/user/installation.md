@@ -492,6 +492,6 @@ text_sensor:
 
 ## Nächste Schritte
 
-- [Konfigurationsreferenz](CONFIGURATION.md) - Alle Parameter im Detail
+- [Konfigurationsreferenz](configuration.md) - Alle Parameter im Detail
 - [Beispielkonfigurationen](examples/) - Vorlagen für verschiedene Szenarien
-- [README](../README.md) - Übersicht und Fehlerbehebung
+- [README](../../README.md) - Übersicht und Fehlerbehebung

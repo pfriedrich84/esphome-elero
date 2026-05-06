@@ -6,6 +6,8 @@ user-invocable: true
 
 # Run Project Tests
 
+Canonical repository instructions live in [`../../AGENTS.md`](../../AGENTS.md); this Claude skill only defines the slash-command workflow.
+
 Execute the test suites and report results.
 
 ## Task

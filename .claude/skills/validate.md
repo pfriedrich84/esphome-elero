@@ -6,6 +6,8 @@ user-invocable: true
 
 # Validate ESPHome Config
 
+Canonical repository instructions live in [`../../AGENTS.md`](../../AGENTS.md); this Claude skill only defines the slash-command workflow.
+
 Run ESPHome schema validation (no compilation) to quickly catch YAML errors.
 
 ## Task

@@ -531,4 +531,4 @@ switch:
     restore_mode: RESTORE_DEFAULT_ON
 ```
 
-Siehe auch: [Installationsanleitung](INSTALLATION.md) | [README](../README.md) | [Beispiel-YAML](../example.yaml)
+Siehe auch: [Installationsanleitung](installation.md) | [README](../../README.md) | [Beispiel-YAML](../../example.yaml)
