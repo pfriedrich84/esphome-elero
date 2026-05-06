@@ -1,6 +1,6 @@
 # Elero Architecture Notes
 
-This document tracks the intended deep Modules and seams for the ESPHome Elero integration. Domain vocabulary lives in [`../CONTEXT.md`](../CONTEXT.md).
+This document tracks the intended deep Modules and seams for the ESPHome Elero integration. Domain vocabulary lives in [`../agent/CONTEXT.md`](../agent/CONTEXT.md).
 
 ## Current deepening sequence
 
@@ -67,4 +67,4 @@ This document tracks the intended deep Modules and seams for the ESPHome Elero i
 
 - Keep ESPHome/FreeRTOS dependencies out of pure logic Modules whenever possible so unit tests stay cheap.
 - A new seam is only worth keeping when it has at least test leverage or multiple real callers.
-- Prefer adding stable domain terms to `CONTEXT.md` as soon as a refactor names them.
+- Prefer adding stable domain terms to `../agent/CONTEXT.md` as soon as a refactor names them.

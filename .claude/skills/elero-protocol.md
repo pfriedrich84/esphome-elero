@@ -6,6 +6,8 @@ user-invocable: true
 
 # Elero RF Protocol Reference
 
+Canonical repository instructions live in [`../../AGENTS.md`](../../AGENTS.md); this Claude skill only defines the slash-command workflow.
+
 ## Packet Structure (27-30 bytes typical)
 
 ```

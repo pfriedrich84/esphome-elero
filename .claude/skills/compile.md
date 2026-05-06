@@ -6,6 +6,8 @@ user-invocable: true
 
 # ESPHome Compile Test
 
+Canonical repository instructions live in [`../../AGENTS.md`](../../AGENTS.md); this Claude skill only defines the slash-command workflow.
+
 Compile the ESPHome firmware to verify the component builds without errors.
 
 ## Task

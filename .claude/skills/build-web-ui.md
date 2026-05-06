@@ -6,6 +6,8 @@ user-invocable: true
 
 # Build Web UI
 
+Canonical repository instructions live in [`../../AGENTS.md`](../../AGENTS.md); this Claude skill only defines the slash-command workflow.
+
 Rebuild the Elero web UI frontend and regenerate the embedded C++ header.
 
 ## Steps

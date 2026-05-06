@@ -62,7 +62,7 @@
 
 ### Hinweise zur Verkabelung
 
-Bei separatem CC1101-Modul werden 5 Kabelverbindungen benötigt (SPI + GDO0). GDO2 wird **nicht** benötigt. Die Pin-Zuordnung ist frei wählbar und wird in der YAML-Konfiguration festgelegt (`cs_pin`, `gdo0_pin`, SPI-Bus). Hinweise zu Strapping-Pins und SPI-Konflikten siehe [docs/INSTALLATION.md](docs/INSTALLATION.md).
+Bei separatem CC1101-Modul werden 5 Kabelverbindungen benötigt (SPI + GDO0). GDO2 wird **nicht** benötigt. Die Pin-Zuordnung ist frei wählbar und wird in der YAML-Konfiguration festgelegt (`cs_pin`, `gdo0_pin`, SPI-Bus). Hinweise zu Strapping-Pins und SPI-Konflikten siehe [docs/user/installation.md](docs/user/installation.md).
 
 ## Schnellstart
 
@@ -117,7 +117,7 @@ elero:
   freq2: 0x21
 ```
 
-> **Andere Boards:** Die SPI-Pins und `cs_pin`/`gdo0_pin` muessen an das jeweilige Board angepasst werden. Siehe [docs/INSTALLATION.md](docs/INSTALLATION.md) fuer Details.
+> **Andere Boards:** Die SPI-Pins und `cs_pin`/`gdo0_pin` muessen an das jeweilige Board angepasst werden. Siehe [docs/user/installation.md](docs/user/installation.md) fuer Details.
 
 ### 2. Blind-Adressen ermitteln
 
@@ -422,7 +422,7 @@ light:
 
 - Der richtige Wert für `dim_duration` hängt vom jeweiligen Empfänger ab — typisch sind 3–8 Sekunden.
 - Alle Protokoll-Parameter (`blind_address`, `channel`, `remote_address`, `payload_*`, `pck_inf*`, `hop`) werden genauso ermittelt wie bei einem Rollladen (via RF-Log oder Web-UI-Discovery).
-- Vollständige Parameterliste: [Konfigurationsreferenz](docs/CONFIGURATION.md#plattform-light)
+- Vollständige Parameterliste: [Konfigurationsreferenz](docs/user/configuration.md#plattform-light)
 
 ---
 
@@ -449,7 +449,7 @@ elero_group:
 - Eine Gruppe benötigt mindestens 2 und maximal 10 Mitglieder.
 - Wenn alle Mitglieder dieselbe `remote_address` und denselben `channel` verwenden, wird ein einzelnes natives Multi-Destination-RF-Paket gesendet (effizienter).
 - Andernfalls werden die Befehle einzeln nacheinander an jedes Mitglied gesendet.
-- Vollständige Parameterliste: [Konfigurationsreferenz](docs/CONFIGURATION.md#plattform-elero_group)
+- Vollständige Parameterliste: [Konfigurationsreferenz](docs/user/configuration.md#plattform-elero_group-gruppensteuerung)
 
 ---
 
@@ -666,10 +666,13 @@ entities:
 
 ## Weiterführende Dokumentation
 
-- [docs/INSTALLATION.md](docs/INSTALLATION.md) - Detaillierte Schritt-für-Schritt Installationsanleitung
-- [docs/CONFIGURATION.md](docs/CONFIGURATION.md) - Vollständige Konfigurationsreferenz mit Beispielen
+- [docs/README.md](docs/README.md) - Dokumentationsindex für User-, Developer- und Agent-Dokumente
+- [docs/user/installation.md](docs/user/installation.md) - Detaillierte Schritt-für-Schritt Installationsanleitung
+- [docs/user/configuration.md](docs/user/configuration.md) - Vollständige Konfigurationsreferenz mit Beispielen
+- [docs/developer/architecture.md](docs/developer/architecture.md) - Architektur- und Modul-Seams
+- [AGENTS.md](AGENTS.md) - Tool-neutrale Hinweise für Coding-Agents
 - [example.yaml](example.yaml) - Minimales Beispiel
-- [docs/examples/](docs/examples/) - Weitere Beispielkonfigurationen
+- [docs/user/examples/](docs/user/examples/) - Weitere Beispielkonfigurationen
 
 ---
 
