@@ -178,8 +178,8 @@ elero:
   freq0: 0x7a            # Optional: Frequenz-Register FREQ0 (Standard: 0x7a)
   freq1: 0x71            # Optional: Frequenz-Register FREQ1 (Standard: 0x71)
   freq2: 0x21            # Optional: Frequenz-Register FREQ2 (Standard: 0x21)
-  send_repeats: 1        # Optional: RF-Paketwiederholungen (1-20, Standard: 1)
-  send_delay: 10ms       # Optional: Pause zwischen Wiederholungen (Standard: 10ms)
+  send_repeats: 1        # Optional: RF-Pakete pro Befehl (1-20, Standard: 1 = keine Wiederholung)
+  send_delay: 0ms        # Optional: Pause zwischen Wiederholungen (Standard: 0ms)
   dedup_window: 500ms    # Optional: Duplikat-Unterdrückung für Statuspakete
 ```
 
@@ -190,8 +190,8 @@ elero:
 | `freq0` | Hex (0x00-0xFF) | Nein | `0x7a` | CC1101 FREQ0 Register |
 | `freq1` | Hex (0x00-0xFF) | Nein | `0x71` | CC1101 FREQ1 Register |
 | `freq2` | Hex (0x00-0xFF) | Nein | `0x21` | CC1101 FREQ2 Register |
-| `send_repeats` | Int (1-20) | Nein | `1` | RF-Paketwiederholungen pro Befehl |
-| `send_delay` | Zeitdauer | Nein | `10ms` | Pause zwischen Wiederholungen |
+| `send_repeats` | Int (1-20) | Nein | `1` | RF-Pakete pro Befehl; `1` bedeutet keine Wiederholung |
+| `send_delay` | Zeitdauer | Nein | `0ms` | Pause zwischen Wiederholungen |
 | `dedup_window` | Zeitdauer | Nein | `500ms` | Statuspaket-Duplikate gleicher Quelle/Zähler unterdrücken; bei Doppelstatus auf `1s`-`2s` erhöhen |
 | `auto_sensors` | Boolean | Nein | `true` | Hub-Diagnose-Sensoren automatisch erstellen |
 

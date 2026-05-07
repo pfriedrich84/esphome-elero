@@ -296,8 +296,8 @@ Key constants (defined in `elero.h` unless noted):
 | `ELERO_TIMEOUT_MOVEMENT` | 120 000 ms | Give up movement tracking after 2 min |
 | `ELERO_POST_MOVEMENT_POLL_DELAY` | 5 000 ms | Poll delay after open/close duration elapses |
 | `ELERO_SEND_RETRIES` | 3 | Command retry count |
-| `ELERO_DEFAULT_SEND_REPEATS` | 1 | RF packet repetitions per command (configurable 1–20) |
-| `ELERO_DEFAULT_SEND_DELAY` | 20 ms | Default delay between repeated packets (configurable) |
+| `ELERO_DEFAULT_SEND_REPEATS` | 1 | RF packets per command (configurable 1–20); 1 means no repeats |
+| `ELERO_DEFAULT_SEND_DELAY` | 0 ms | Default delay between repeated packets (configurable) |
 | `ELERO_MAX_COMMAND_QUEUE` | 10 | Max queued commands per blind (prevents OOM) |
 | `ELERO_COMMAND_QUEUE_MAX_AGE_MS` | 30 000 ms | Clear stale command queue after 30 s without successful send |
 | `ELERO_TX_QUEUE_DEPTH` | 16 | Normal TX FreeRTOS queue depth |
@@ -574,8 +574,8 @@ elero:
   freq0: 0x7a            # CC1101 FREQ0 register (optional, default 868.35 MHz)
   freq1: 0x71            # CC1101 FREQ1 register
   freq2: 0x21            # CC1101 FREQ2 register
-  send_repeats: 1        # RF packet repetitions per command (1–20, default 1)
-  send_delay: 10ms       # Delay between repeated packets (default 10ms)
+  send_repeats: 1        # RF packets per command (1–20, default 1 = no repeats)
+  send_delay: 0ms        # Delay between repeated packets (default 0ms)
   auto_sensors: true     # Auto-generate hub diagnostic sensors (default true)
 ```
 

@@ -24,8 +24,8 @@ elero:
 | `freq0` | Hex (0x00-0xFF) | Nein | `0x7a` | CC1101 Frequenz-Register FREQ0 |
 | `freq1` | Hex (0x00-0xFF) | Nein | `0x71` | CC1101 Frequenz-Register FREQ1 |
 | `freq2` | Hex (0x00-0xFF) | Nein | `0x21` | CC1101 Frequenz-Register FREQ2 |
-| `send_repeats` | Integer (1-20) | Nein | `1` | Anzahl der RF-Paketwiederholungen pro Befehl |
-| `send_delay` | Zeitdauer | Nein | `10ms` | Verzögerung zwischen wiederholten Paketen |
+| `send_repeats` | Integer (1-20) | Nein | `1` | Anzahl der RF-Pakete pro Befehl; `1` bedeutet keine Wiederholung |
+| `send_delay` | Zeitdauer | Nein | `0ms` | Verzögerung zwischen wiederholten Paketen |
 | `dedup_window` | Zeitdauer (`100ms`-`60s`) | Nein | `500ms` | Zeitfenster, in dem doppelte Statuspakete gleicher Quelle/Zähler unterdrückt werden. Bei sichtbaren Doppelstatus ggf. auf `1s`-`2s` erhöhen. |
 | `auto_sensors` | Boolean | Nein | `true` | Erstellt automatisch Hub-Diagnose-Sensoren (Frequenz, Zähler, Drop- und Latenzmetriken) |
 
@@ -475,7 +475,7 @@ spi:
 elero:
   cs_pin: GPIO5
   gdo0_pin: GPIO26
-  # send_repeats: 1     # RF packet repetitions (1-20, default 1)
+  # send_repeats: 1     # RF packets per command (1-20, default 1 = no repeats)
   # auto_sensors: true  # Auto-generate hub diagnostic sensors (default true)
 
 cover:

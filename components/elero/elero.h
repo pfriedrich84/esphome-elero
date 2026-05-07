@@ -113,12 +113,12 @@ static const uint8_t ELERO_STATE_ON = 0x10;
 static const uint8_t ELERO_MAX_PACKET_SIZE = 57; // according to FCC documents
 
 static const uint32_t ELERO_POLL_INTERVAL_MOVING = 5000;  // poll every 5s while moving (blinds broadcast status on their own)
-static const uint32_t ELERO_DEFAULT_SEND_DELAY = 10; // 10ms default send delay between consecutive dispatches per cover
+static const uint32_t ELERO_DEFAULT_SEND_DELAY = 0; // no default delay between repeated packets
 static const uint32_t ELERO_TIMEOUT_MOVEMENT = 120000; // poll for up to two minutes while moving
 static const uint32_t ELERO_POST_MOVEMENT_POLL_DELAY = 5000; // poll 5s after open/close duration elapses
 
 static const uint8_t ELERO_SEND_RETRIES = 3;
-static const uint8_t ELERO_DEFAULT_SEND_REPEATS = 1;  // RF packet repetitions per command (configurable via send_repeats)
+static const uint8_t ELERO_DEFAULT_SEND_REPEATS = 1;  // one RF packet per command; no repeats by default
 static const uint8_t ELERO_MAX_COMMAND_QUEUE = 10; // max commands per blind to prevent OOM
 static const uint32_t ELERO_COMMAND_QUEUE_MAX_AGE_MS = 30000; // clear stale queue after 30s without successful send
 
