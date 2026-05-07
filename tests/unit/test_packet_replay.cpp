@@ -109,6 +109,12 @@ TEST(PacketReplay, CounterLogicRejectsStaleValuesAndAllowsWrapForward) {
   EXPECT_TRUE(counter_logic::is_stale_counter(2, 250));
 }
 
+TEST(PacketReplay, CounterLogicAllowsResyncAfterLongGap) {
+  EXPECT_FALSE(counter_logic::should_resync_counter(1000, 1000 + counter_logic::COUNTER_RESYNC_GAP_MS - 1));
+  EXPECT_TRUE(counter_logic::should_resync_counter(1000, 1000 + counter_logic::COUNTER_RESYNC_GAP_MS));
+  EXPECT_TRUE(counter_logic::should_resync_counter(0xFFFF0000u, 100u));
+}
+
 TEST(PacketReplay, DropReasonsMapToStableDiagnosticBuckets) {
   using parser_diagnostics::DropBucket;
   EXPECT_EQ(parser_diagnostics::bucket_for_reject_reason("bad_crc"), DropBucket::CRC_FAIL);

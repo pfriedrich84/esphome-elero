@@ -745,9 +745,11 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   std::unordered_map<uint64_t, uint32_t> dedup_map_;
   uint32_t last_dedup_prune_ms_{0};
 
-  /// Per-source monotonic counter tracking: reject packets with counter values
-  /// older than the last seen counter for each source address.
+  /// Per-source counter tracking: reject old/replayed counters within the active
+  /// receive window, but allow resync after long gaps so lossy links or sender
+  /// restarts do not leave entities stale until the 8-bit counter wraps.
   std::map<uint32_t, uint8_t> last_seen_counter_;
+  std::map<uint32_t, uint32_t> last_seen_counter_ms_;
   bool is_duplicate_packet_(uint32_t src, uint8_t cnt);
   void prune_dedup_map_();
 

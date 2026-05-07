@@ -72,19 +72,31 @@ void Elero::interpret_msg() {
   }
 
   if (packet.is_status) {
+    const uint32_t now_ms = millis();
     auto counter_it = this->last_seen_counter_.find(packet.src);
     if (counter_it != this->last_seen_counter_.end() &&
         counter_logic::is_stale_counter(counter_it->second, packet.cnt)) {
-      ESP_LOGV(TAG, "Stale status counter from 0x%06x cnt=%d last=%d, dropping",
-               packet.src, packet.cnt, counter_it->second);
-      this->increment_parser_drop_count("stale_counter");
-      if (this->packet_dump_pending_update_) {
-        this->mark_last_raw_packet_(false, "stale_counter");
-        this->packet_dump_pending_update_ = false;
+      auto counter_ms_it = this->last_seen_counter_ms_.find(packet.src);
+      const bool can_resync = counter_ms_it == this->last_seen_counter_ms_.end() ||
+                              counter_logic::should_resync_counter(counter_ms_it->second, now_ms);
+      if (!can_resync) {
+        ESP_LOGV(TAG, "Stale status counter from 0x%06x cnt=%d last=%d, dropping",
+                 packet.src, packet.cnt, counter_it->second);
+        this->increment_parser_drop_count("stale_counter");
+        if (this->packet_dump_pending_update_) {
+          this->mark_last_raw_packet_(false, "stale_counter");
+          this->packet_dump_pending_update_ = false;
+        }
+        return;
       }
-      return;
+      ESP_LOGD(TAG, "Resyncing status counter from 0x%06x cnt=%d last=%d after %lums gap",
+               packet.src, packet.cnt, counter_it->second,
+               static_cast<unsigned long>(counter_ms_it == this->last_seen_counter_ms_.end()
+                                             ? 0u
+                                             : static_cast<uint32_t>(now_ms - counter_ms_it->second)));
     }
     this->last_seen_counter_[packet.src] = packet.cnt;
+    this->last_seen_counter_ms_[packet.src] = now_ms;
   }
 
   if (this->packet_dump_pending_update_) {
