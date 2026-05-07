@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, beta, devops, feature/web-ui-rewrite]
+    branches: [main, beta, dev, devops, feature/web-ui-rewrite]
   pull_request:
     branches: [main]
   workflow_dispatch:
