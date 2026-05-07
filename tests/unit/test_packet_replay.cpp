@@ -94,11 +94,11 @@ TEST(PacketReplay, ReplaysFixtureLinesThroughParser) {
 }
 
 TEST(PacketReplay, DedupWindowSuppressesRelayDuplicate) {
-  EXPECT_FALSE(dedup_logic::is_duplicate_within_window(1000, 0, 5000));
-  EXPECT_TRUE(dedup_logic::is_duplicate_within_window(6000, 2000, 5000));
-  EXPECT_FALSE(dedup_logic::is_duplicate_within_window(8001, 2000, 5000));
-  EXPECT_FALSE(dedup_logic::should_prune_entry(6000, 2000, 5000));
-  EXPECT_TRUE(dedup_logic::should_prune_entry(8001, 2000, 5000));
+  EXPECT_TRUE(dedup_logic::is_duplicate_within_window(1200, 1000, 500));
+  EXPECT_FALSE(dedup_logic::is_duplicate_within_window(1500, 1000, 500));
+  EXPECT_FALSE(dedup_logic::is_duplicate_within_window(1501, 1000, 500));
+  EXPECT_FALSE(dedup_logic::should_prune_entry(1499, 1000, 500));
+  EXPECT_TRUE(dedup_logic::should_prune_entry(1500, 1000, 500));
 }
 
 TEST(PacketReplay, CounterLogicRejectsStaleValuesAndAllowsWrapForward) {
