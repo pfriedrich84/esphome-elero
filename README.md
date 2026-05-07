@@ -180,6 +180,7 @@ elero:
   freq2: 0x21            # Optional: Frequenz-Register FREQ2 (Standard: 0x21)
   send_repeats: 1        # Optional: RF-Paketwiederholungen (1-20, Standard: 1)
   send_delay: 10ms       # Optional: Pause zwischen Wiederholungen (Standard: 10ms)
+  dedup_window: 500ms    # Optional: Duplikat-Unterdrückung für Statuspakete
 ```
 
 | Parameter | Typ | Pflicht | Standard | Beschreibung |
@@ -191,6 +192,7 @@ elero:
 | `freq2` | Hex (0x00-0xFF) | Nein | `0x21` | CC1101 FREQ2 Register |
 | `send_repeats` | Int (1-20) | Nein | `1` | RF-Paketwiederholungen pro Befehl |
 | `send_delay` | Zeitdauer | Nein | `10ms` | Pause zwischen Wiederholungen |
+| `dedup_window` | Zeitdauer | Nein | `500ms` | Statuspaket-Duplikate gleicher Quelle/Zähler unterdrücken; bei Doppelstatus auf `1s`-`2s` erhöhen |
 | `auto_sensors` | Boolean | Nein | `true` | Hub-Diagnose-Sensoren automatisch erstellen |
 
 ### Plattform `cover` (Rollladen)
@@ -457,7 +459,7 @@ elero_group:
 
 ### Hub-Diagnose-Sensoren
 
-Bei `auto_sensors: true` (Standard) erzeugt der Hub automatisch vier Diagnose-Sensoren:
+Bei `auto_sensors: true` (Standard) erzeugt der Hub Diagnose-Sensoren für Funkzustand und Latenz:
 
 | Sensor | Einheit | Beschreibung |
 |---|---|---|
@@ -465,8 +467,15 @@ Bei `auto_sensors: true` (Standard) erzeugt der Hub automatisch vier Diagnose-Se
 | Elero RX Count | - | Empfangene Pakete (gesamt) |
 | Elero TX Count | - | Gesendete Pakete (gesamt) |
 | Elero Watchdog Recovery Count | - | Radio-Watchdog-Wiederherstellungen |
+| Elero Drop CRC Fail | - | Verworfene RF-Pakete mit ungültigem CRC |
+| Elero Drop Too Many Destinations | - | Verworfene RF-Pakete mit zu vielen Zieladressen |
+| Elero Drop Bounds | - | Verworfene RF-Pakete mit ungültiger Länge/Grenze |
+| Elero TX Queue Latency | ms | Letzte Wartezeit vom Einreihen bis zum TX-Start |
+| Elero Dispatch Latency | ms | Letzte Verteilzeit vom RX-Decode bis zu Entity-Updates |
 
-Diese können mit `auto_sensors: false` am Hub deaktiviert oder individuell überschrieben werden (`frequency_sensor`, `rx_count_sensor`, `tx_count_sensor`, `watchdog_recovery_sensor`).
+Weitere Diagnosewerte wie `drop_stale_counter`, `tx_queue_latency_max_ms`, `tx_queue_depth_max` und `dispatch_latency_max_ms` stehen in `/elero/api/status`. Die Zähler gelten pro Boot und können mit `/elero/api/diagnostics/reset` zurückgesetzt werden.
+
+Diese können mit `auto_sensors: false` am Hub deaktiviert oder individuell überschrieben werden (`frequency_sensor`, `rx_count_sensor`, `tx_count_sensor`, `watchdog_recovery_sensor`, `drop_crc_fail_sensor`, `drop_too_many_dests_sensor`, `drop_bounds_sensor`, `tx_queue_latency_sensor`, `dispatch_latency_sensor`).
 
 ### Cover-/Light-Diagnose (auto_sensors)
 

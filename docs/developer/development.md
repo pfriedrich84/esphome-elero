@@ -307,7 +307,7 @@ Key constants (defined in `elero.h` unless noted):
 | `ELERO_MAX_RX_PER_LOOP` | 8 | Max packets drained per `dispatch_rx_result_()` cycle |
 | `ELERO_POLL_STAGGER_MS` | 5 000 ms | Stagger offset between cover poll timers |
 | `ELERO_IMMEDIATE_POLL_MIN_INTERVAL_MS` | 2 000 ms | Minimum interval between `schedule_immediate_poll()` calls per blind |
-| `ELERO_DEDUP_WINDOW_MS` | 5 000 ms | Legacy fallback constant; runtime default is `dedup_window: 500ms` and remains configurable |
+| `ELERO_DEDUP_WINDOW_MS` | 500 ms | Default packet deduplication time window (src, cnt pairs), configurable via `dedup_window` |
 | `ELERO_STOP_REPEAT_COUNT` | 2 | Stop commands queued on auto-stop (x2 RF packets each) |
 | `ELERO_TX_LATENCY_COMPENSATION_MS` | 300 ms | Position check lead time (accounts for multi-cover queue contention) |
 | `ELERO_STOP_VERIFY_DELAY_MS` | 2 000 ms | Delay before polling to verify motor stopped (give blind time to broadcast) |
@@ -412,6 +412,16 @@ Key behaviors:
 - URL parsing helper: `parse_addr_url()` extracts hex address from URLs like `/elero/api/covers/0xABCDEF/command` and `/elero/api/lights/0xABCDEF/command`
 - JSON fragment builders (`build_configured_json_()`, `build_discovered_array_json_()`, etc.) are reused by individual handlers and the combined status endpoint
 - Frontend uses a request serialization queue (max 1 in-flight request) to prevent ESP32 socket exhaustion (ENFILE error 23)
+
+### RF replay fixtures
+
+Parser regression fixtures live in `tests/fixtures/rf_replay/*.replay`. Each non-comment line uses:
+
+```text
+name|hex bytes from CC1101 FIFO|expectation tokens
+```
+
+The hex bytes include the CC1101 FIFO length byte plus appended RSSI/LQI status bytes. Expectations use `key=value` tokens such as `ok=1`, `typ=0xca`, `src=0xa831e5`, `state=0x01`, or `reason=bad_crc`. `tests/unit/test_packet_replay.cpp` replays these fixtures through the pure packet parser and also covers dedup, stale-counter, and drop-bucket helper logic.
 
 ### REST API Endpoints
 

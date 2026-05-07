@@ -60,9 +60,9 @@ enum class SendResult : uint8_t {
 /// Minimum interval between schedule_immediate_poll() calls per blind (ms).
 static const uint32_t ELERO_IMMEDIATE_POLL_MIN_INTERVAL_MS = 2000;
 
-/// Deduplication: time window in ms within which (src, cnt) duplicates are suppressed.
-/// 5 seconds balances duplicate suppression vs. allowing legitimate re-sent status updates.
-static const uint32_t ELERO_DEDUP_WINDOW_MS = 5000;
+/// Deduplication: default time window in ms within which (src, cnt) duplicates are suppressed.
+/// 500 ms catches immediate relay/FIFO duplicates without hiding later legitimate status updates.
+static const uint32_t ELERO_DEDUP_WINDOW_MS = 500;
 
 }  // namespace elero
 
