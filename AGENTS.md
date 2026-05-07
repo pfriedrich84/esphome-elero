@@ -23,4 +23,4 @@ Tool-neutral entry point for coding agents working in this repository. Keep this
 
 `esphome-elero` is an ESPHome external component for controlling Elero blinds and lights through an ESP32 with a CC1101 radio. The Python layer validates ESPHome YAML and generates C++; the C++ layer owns RF packet parsing, CC1101 state handling, cover/light entities, group covers, runtime adopted blinds, and the optional `/elero` web UI.
 
-Before finishing code changes, run the relevant checks from [`docs/agent/CHECKS.md`](docs/agent/CHECKS.md).
+Before finishing code changes, run the relevant checks from [`docs/agent/CHECKS.md`](docs/agent/CHECKS.md). Use branch names `feat/<short-topic>` or `fix/<short-topic>` for new work; `dev` is the shared development branch.

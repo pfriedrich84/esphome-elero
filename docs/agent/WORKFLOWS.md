@@ -2,6 +2,16 @@
 
 Reusable, tool-neutral workflows for common repository tasks.
 
+## Branch naming
+
+Use these branch names for new work so GitHub Actions CI runs predictably:
+
+- `dev` for the shared development branch.
+- `feat/<short-topic>` for feature work.
+- `fix/<short-topic>` for bug fixes.
+
+Avoid legacy prefixes such as `feature/`, `bugfix/`, ad-hoc names, or direct work on `main`. CI is configured for pushes to `main`, `dev`, `feat/**`, and `fix/**`, plus pull requests targeting `main` or `dev`.
+
 ## Standard change workflow
 
 1. Read [`RULES.md`](RULES.md), [`PROJECT.md`](PROJECT.md), and the relevant user/developer docs.

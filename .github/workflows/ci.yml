@@ -2,9 +2,15 @@ name: CI
 
 on:
   push:
-    branches: [main, beta, dev, devops, feature/web-ui-rewrite]
+    branches:
+      - main
+      - dev
+      - feat/**
+      - fix/**
   pull_request:
-    branches: [main]
+    branches:
+      - main
+      - dev
   workflow_dispatch:
 
 concurrency:
