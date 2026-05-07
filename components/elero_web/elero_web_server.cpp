@@ -1279,12 +1279,27 @@ void EleroWebServer::handle_get_status(AsyncWebServerRequest *request) {
   this->build_configured_json_(json);  // always: "covers":[...],"lights":[...]
 
   // Always include diagnostic counters for radio health monitoring
-  char diag_buf[128];
+  char diag_buf[512];
   snprintf(diag_buf, sizeof(diag_buf),
-    ",\"diagnostics\":{\"rx_count\":%lu,\"tx_count\":%lu,\"watchdog_recovery_count\":%lu}",
+    ",\"diagnostics\":{\"rx_count\":%lu,\"tx_count\":%lu,\"watchdog_recovery_count\":%lu,"
+    "\"tx_drop_count\":%lu,\"drop_crc_fail\":%lu,\"drop_stale_counter\":%lu,"
+    "\"drop_too_many_dests\":%lu,\"drop_bounds\":%lu,\"drop_other\":%lu,"
+    "\"tx_queue_latency_last_ms\":%lu,\"tx_queue_latency_max_ms\":%lu,\"tx_queue_depth_max\":%lu,"
+    "\"dispatch_latency_last_ms\":%lu,\"dispatch_latency_max_ms\":%lu}",
     (unsigned long)this->parent_->get_rx_count(),
     (unsigned long)this->parent_->get_tx_count(),
-    (unsigned long)this->parent_->get_watchdog_recovery_count());
+    (unsigned long)this->parent_->get_watchdog_recovery_count(),
+    (unsigned long)this->parent_->get_tx_drop_count(),
+    (unsigned long)this->parent_->get_drop_crc_fail_count(),
+    (unsigned long)this->parent_->get_drop_stale_counter_count(),
+    (unsigned long)this->parent_->get_drop_too_many_dests_count(),
+    (unsigned long)this->parent_->get_drop_bounds_count(),
+    (unsigned long)this->parent_->get_drop_other_count(),
+    (unsigned long)this->parent_->get_tx_queue_latency_last_ms(),
+    (unsigned long)this->parent_->get_tx_queue_latency_max_ms(),
+    (unsigned long)this->parent_->get_tx_queue_depth_max(),
+    (unsigned long)this->parent_->get_dispatch_latency_last_ms(),
+    (unsigned long)this->parent_->get_dispatch_latency_max_ms());
   json += diag_buf;
 
   if (tab == "discovery") {

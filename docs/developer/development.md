@@ -307,7 +307,7 @@ Key constants (defined in `elero.h` unless noted):
 | `ELERO_MAX_RX_PER_LOOP` | 8 | Max packets drained per `dispatch_rx_result_()` cycle |
 | `ELERO_POLL_STAGGER_MS` | 5 000 ms | Stagger offset between cover poll timers |
 | `ELERO_IMMEDIATE_POLL_MIN_INTERVAL_MS` | 2 000 ms | Minimum interval between `schedule_immediate_poll()` calls per blind |
-| `ELERO_DEDUP_WINDOW_MS` | 5 000 ms | Packet deduplication time window (src, cnt pairs) |
+| `ELERO_DEDUP_WINDOW_MS` | 5 000 ms | Legacy fallback constant; runtime default is `dedup_window: 500ms` and remains configurable |
 | `ELERO_STOP_REPEAT_COUNT` | 2 | Stop commands queued on auto-stop (x2 RF packets each) |
 | `ELERO_TX_LATENCY_COMPENSATION_MS` | 300 ms | Position check lead time (accounts for multi-cover queue contention) |
 | `ELERO_STOP_VERIFY_DELAY_MS` | 2 000 ms | Delay before polling to verify motor stopped (give blind time to broadcast) |
@@ -343,7 +343,7 @@ Thread-safety:
 - `scan_mode_`, `packet_dump_mode_`, `spi_failed_` are `std::atomic<bool>`
 - `rx_ready_`, `tx_done_` are `std::atomic<bool>` — ISR-set flags routed by `radio_mode_`
 - `radio_mode_` is `std::atomic<uint8_t>` with relaxed ordering — ISR may run on a different core than the radio task
-- `rx_count_`, `tx_count_`, `watchdog_recovery_count_`, `tx_drop_count_` are `std::atomic<uint32_t>`
+- `rx_count_`, `tx_count_`, `watchdog_recovery_count_`, `tx_drop_count_`, parser drop counters, and latency metrics are `std::atomic<uint32_t>`
 - `stop_urgent_count_` is `std::atomic<uint8_t>` (multi-cover auto-stop coordination)
 - `task_shutdown_`, `radio_fatal_error_` are `std::atomic<bool>` for radio task lifecycle
 - All `std::atomic` operations use explicit `std::memory_order_acquire`/`release` for correct multi-core ESP32 synchronization
@@ -427,7 +427,7 @@ All endpoints are served at `http://<device-ip>/elero`. CORS is restricted to sa
 | `/elero/api/scan/stop` | POST | Stop RF discovery scan |
 | `/elero/api/discovered` | GET | JSON array of discovered blinds |
 | `/elero/api/configured` | GET | JSON object with configured covers and lights |
-| `/elero/api/status` | GET | Combined status: covers, lights, runtime, diagnostics (single poll) |
+| `/elero/api/status` | GET | Combined status: covers, lights, runtime, diagnostics (single poll). Diagnostics include RX/TX/watchdog/drop counters plus TX queue and dispatch latency last/max metrics. |
 | `/elero/api/yaml` | GET | YAML snippet ready to paste into ESPHome config |
 | `/elero/api/info` | GET | Device info (version, discovery count, etc.) |
 | `/elero/api/runtime` | GET | JSON array of runtime-adopted blinds |
@@ -465,7 +465,7 @@ All endpoints are served at `http://<device-ip>/elero`. CORS is restricted to sa
 | `/elero/api/packets` | GET | Recent captured RF packets |
 | `/elero/api/packets/clear` | POST | Clear captured packets |
 | `/elero/api/packets/download` | GET | Download captured RF packets as file |
-| `/elero/api/diagnostics/reset` | POST | Reset diagnostic counters (rx, tx, watchdog recovery) |
+| `/elero/api/diagnostics/reset` | POST | Reset diagnostic counters and latency maxima (RX, TX, watchdog recovery, parser drops, TX drops, queue/dispatch latency) |
 
 **Web UI state (elero_web switch sub-platform):**
 

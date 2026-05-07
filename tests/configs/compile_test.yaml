@@ -24,6 +24,7 @@ elero:
   freq0: 0xc0
   freq1: 0x71
   freq2: 0x21
+  dedup_window: 4s
 
 cover:
   - platform: elero

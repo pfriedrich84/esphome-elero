@@ -26,7 +26,8 @@ elero:
 | `freq2` | Hex (0x00-0xFF) | Nein | `0x21` | CC1101 Frequenz-Register FREQ2 |
 | `send_repeats` | Integer (1-20) | Nein | `1` | Anzahl der RF-Paketwiederholungen pro Befehl |
 | `send_delay` | Zeitdauer | Nein | `10ms` | Verzögerung zwischen wiederholten Paketen |
-| `auto_sensors` | Boolean | Nein | `true` | Erstellt automatisch Hub-Diagnose-Sensoren (Frequenz, RX/TX-Zähler, Watchdog-Recovery) |
+| `dedup_window` | Zeitdauer (`100ms`-`60s`) | Nein | `500ms` | Zeitfenster, in dem doppelte Statuspakete gleicher Quelle/Zähler unterdrückt werden. Bei sichtbaren Doppelstatus ggf. auf `1s`-`2s` erhöhen. |
+| `auto_sensors` | Boolean | Nein | `true` | Erstellt automatisch Hub-Diagnose-Sensoren (Frequenz, Zähler, Drop- und Latenzmetriken) |
 
 > Der Hub erweitert die ESPHome SPI-Konfiguration. `spi:` muss separat mit `clk_pin`, `mosi_pin` und `miso_pin` konfiguriert sein.
 
@@ -42,8 +43,14 @@ Bei `auto_sensors: true` (Standard) werden folgende Sensoren automatisch erstell
 | Elero RX Count | - | Empfangene Pakete (gesamt) |
 | Elero TX Count | - | Gesendete Pakete (gesamt) |
 | Elero Watchdog Recovery Count | - | Radio-Watchdog-Wiederherstellungen |
+| Elero Drop CRC Fail | - | RF-Pakete mit ungültigem CRC |
+| Elero Drop Too Many Destinations | - | RF-Pakete mit zu vielen Zieladressen |
+| `/elero/api/status`: `drop_stale_counter` | - | Statuspakete mit altem oder wiederholtem Quell-Zähler (nur API-Feld) |
+| Elero Drop Bounds | - | RF-Pakete mit ungültiger Länge, Ziel- oder RSSI/LQI-Grenze |
+| Elero TX Queue Latency | ms | Letzte Latenz vom Einreihen eines TX-Befehls bis zum Start der Funkübertragung |
+| Elero Dispatch Latency | ms | Letzte Latenz vom Dekodieren eines RX-Pakets bis zum Abschluss der Zustandsverteilung |
 
-Diese können individuell überschrieben werden (`frequency_sensor`, `rx_count_sensor`, `tx_count_sensor`, `watchdog_recovery_sensor`) oder mit `auto_sensors: false` komplett deaktiviert werden.
+Diese können individuell überschrieben werden (`frequency_sensor`, `rx_count_sensor`, `tx_count_sensor`, `watchdog_recovery_sensor`, `drop_crc_fail_sensor`, `drop_too_many_dests_sensor`, `drop_bounds_sensor`, `tx_queue_latency_sensor`, `dispatch_latency_sensor`) oder mit `auto_sensors: false` komplett deaktiviert werden. Die Drop-/Zählerwerte sind monoton pro Boot und werden durch `/elero/api/diagnostics/reset` zurückgesetzt.
 
 ### Frequenz-Varianten
 
@@ -364,7 +371,7 @@ Alle Endpoints unterstuetzen CORS (Cross-Origin Resource Sharing).
 | `/elero/api/scan/stop` | POST | RF-Scan stoppen |
 | `/elero/api/discovered` | GET | Gefundene Geraete (JSON) |
 | `/elero/api/configured` | GET | Konfigurierte Covers und Lichter mit aktuellem Status (JSON) |
-| `/elero/api/status` | GET | Kombinierter Status: Covers, Lichter, Runtime, Diagnose (einzelner Poll) |
+| `/elero/api/status` | GET | Kombinierter Status: Covers, Lichter, Runtime, Diagnose (RX/TX/Watchdog, Parser-Drops, TX-Queue- und Dispatch-Latenz) |
 | `/elero/api/yaml` | GET | YAML-Export fuer entdeckte Blinds |
 | `/elero/api/info` | GET | Geraete-Informationen (Version, Entdeckungen, etc.) |
 | `/elero/api/runtime` | GET | Runtime-adoptierte Blinds (JSON Array) |
@@ -402,7 +409,7 @@ Alle Endpoints unterstuetzen CORS (Cross-Origin Resource Sharing).
 | `/elero/api/packets` | GET | Erfasste RF-Pakete |
 | `/elero/api/packets/clear` | POST | Erfasste Pakete loeschen |
 | `/elero/api/packets/download` | GET | Erfasste RF-Pakete als Datei herunterladen |
-| `/elero/api/diagnostics/reset` | POST | Diagnose-Zaehler zuruecksetzen (RX, TX, Watchdog Recovery) |
+| `/elero/api/diagnostics/reset` | POST | Diagnose-Zaehler und Latenz-Maxima zuruecksetzen (RX, TX, Watchdog, Parser-Drops, TX-Drops) |
 
 **Web-UI-Zustand (elero_web switch Sub-Plattform):**
 
