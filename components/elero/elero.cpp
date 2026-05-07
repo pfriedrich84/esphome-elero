@@ -531,11 +531,12 @@ void Elero::setup() {
     return;
   }
 
-  // Spawn radio task on Core 0
+  // Spawn radio task on Core 0. Use generous stack headroom because the task
+  // performs SPI I/O, RadioLib calls, packet parsing, and occasional log formatting.
   BaseType_t rc_task = xTaskCreatePinnedToCore(
     Elero::radio_task_func_,
     "elero_radio",
-    8192,
+    ELERO_RADIO_TASK_STACK_SIZE,
     this,
     19,
     &this->radio_task_handle_,
@@ -546,7 +547,8 @@ void Elero::setup() {
     this->mark_failed(LOG_STR("Failed to create radio task"));
     return;
   }
-  ESP_LOGI(TAG, "Radio task spawned on Core 0 (priority 19, stack 8192)");
+  ESP_LOGI(TAG, "Radio task spawned on Core 0 (priority 19, stack %lu)",
+           (unsigned long) ELERO_RADIO_TASK_STACK_SIZE);
 
   this->high_freq_.start();
 

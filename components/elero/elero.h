@@ -119,6 +119,7 @@ static const uint32_t ELERO_POST_MOVEMENT_POLL_DELAY = 5000; // poll 5s after op
 
 static const uint8_t ELERO_SEND_RETRIES = 3;
 static const uint8_t ELERO_DEFAULT_SEND_REPEATS = 1;  // one RF packet per command; no repeats by default
+static const uint32_t ELERO_RADIO_TASK_STACK_SIZE = 16384;  // bytes; RadioLib/SPI/log formatting need headroom on ESP-IDF
 static const uint8_t ELERO_MAX_COMMAND_QUEUE = 10; // max commands per blind to prevent OOM
 static const uint32_t ELERO_COMMAND_QUEUE_MAX_AGE_MS = 30000; // clear stale queue after 30s without successful send
 

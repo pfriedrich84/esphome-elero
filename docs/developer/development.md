@@ -298,6 +298,7 @@ Key constants (defined in `elero.h` unless noted):
 | `ELERO_SEND_RETRIES` | 3 | Command retry count |
 | `ELERO_DEFAULT_SEND_REPEATS` | 1 | RF packets per command (configurable 1–20); 1 means no repeats |
 | `ELERO_DEFAULT_SEND_DELAY` | 0 ms | Default delay between repeated packets (configurable) |
+| `ELERO_RADIO_TASK_STACK_SIZE` | 16 384 bytes | FreeRTOS stack for the Core 0 radio task |
 | `ELERO_MAX_COMMAND_QUEUE` | 10 | Max queued commands per blind (prevents OOM) |
 | `ELERO_COMMAND_QUEUE_MAX_AGE_MS` | 30 000 ms | Clear stale command queue after 30 s without successful send |
 | `ELERO_TX_QUEUE_DEPTH` | 16 | Normal TX FreeRTOS queue depth |
