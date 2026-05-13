@@ -2,6 +2,16 @@
 
 Reusable, tool-neutral workflows for common repository tasks.
 
+## Branch naming
+
+Use these branch names for new work so GitHub Actions CI runs predictably:
+
+- `dev` for the shared development branch.
+- `feat/<short-topic>` for feature work.
+- `fix/<short-topic>` for bug fixes.
+
+Avoid legacy prefixes such as `feature/`, `bugfix/`, ad-hoc names, or direct work on `main`. CI is configured for pushes to `main`, `dev`, `feat/**`, and `fix/**`, plus pull requests targeting `main` or `dev`.
+
 ## Standard change workflow
 
 1. Read [`RULES.md`](RULES.md), [`PROJECT.md`](PROJECT.md), and the relevant user/developer docs.
@@ -50,9 +60,18 @@ If one check fails, continue with independent checks where practical so the fina
 
 1. Edit source under `components/elero_web/frontend/` or REST API code under `components/elero_web/`.
 2. Preserve auth checks, same-origin/CORS behavior, JSON escaping, and disabled-UI HTTP 503 behavior.
-3. Run `npm install` if dependencies are not present, then `npm run build` from the frontend directory.
+3. Run `npm install`, then `npm run build` from the frontend directory. Prefer `npm ci` only after the frontend lockfile is confirmed in sync with `package.json`.
 4. Verify `components/elero_web/elero_web_ui.h` changed only through the build.
 5. Run relevant C++/ESPHome checks if backend handlers changed.
+
+## Dependency documentation workflow
+
+Use this before dependency-sensitive changes to ESPHome, RadioLib, Svelte, Vite, Flowbite, GitHub Actions, CMake, or generated-client/config formats.
+
+1. Check current official documentation. Use Context7 when available for public libraries/frameworks/CLIs.
+2. Verify version-specific behavior against the versions used by CI, lockfiles, or ESPHome.
+3. Keep dependency changes minimal and prefer existing packages.
+4. Summarize documentation sources and validation results in the final report.
 
 ## YAML parameter workflow
 

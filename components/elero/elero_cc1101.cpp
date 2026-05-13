@@ -237,7 +237,7 @@ bool Elero::is_duplicate_packet_(uint32_t src, uint8_t cnt) {
   uint64_t key = (static_cast<uint64_t>(src) << 8) | cnt;
   auto it = this->dedup_map_.find(key);
   if (it != this->dedup_map_.end() &&
-      dedup_logic::is_duplicate_within_window(now, it->second, ELERO_DEDUP_WINDOW_MS)) {
+      dedup_logic::is_duplicate_within_window(now, it->second, this->dedup_window_ms_)) {
     return true;  // already seen within window
   }
   this->dedup_map_[key] = now;
@@ -250,7 +250,7 @@ void Elero::prune_dedup_map_() {
     return;
   this->last_dedup_prune_ms_ = now;
   for (auto it = this->dedup_map_.begin(); it != this->dedup_map_.end();) {
-    if (dedup_logic::should_prune_entry(now, it->second, ELERO_DEDUP_WINDOW_MS))
+    if (dedup_logic::should_prune_entry(now, it->second, this->dedup_window_ms_))
       it = this->dedup_map_.erase(it);
     else
       ++it;
@@ -635,7 +635,7 @@ void Elero::read_buf(uint8_t addr, uint8_t *buf, uint8_t len) {
 // ---------------------------------------------------------------------------
 // send_command_internal_ — Core 0 only: execute TX via SPI
 // ---------------------------------------------------------------------------
-bool Elero::send_command_internal_(t_elero_command *cmd) {
+bool Elero::send_command_internal_(t_elero_command *cmd, uint32_t enqueued_at_ms) {
   if (this->spi_failed_.load(std::memory_order_acquire))
     return false;
   // Note: caller (radio_task_loop_) guarantees tx_state_ == IDLE before
@@ -743,9 +743,14 @@ bool Elero::send_command_internal_(t_elero_command *cmd) {
   this->enable();
   this->transfer_byte(CC1101_SFTX);
   this->disable();
-  this->enable();
-  this->transfer_byte(CC1101_SFRX);
-  this->disable();
+
+  uint8_t rxbytes_before_tx = this->read_status(CC1101_RXBYTES);
+  if (rxbytes_before_tx & 0x80) {
+    ESP_LOGW(TAG, "RX FIFO overflow before TX, flushing RX FIFO");
+    this->enable();
+    this->transfer_byte(CC1101_SFRX);
+    this->disable();
+  }
   delay_microseconds_safe(SPI_SETTLE_US);
 
   // Switch to TX mode BEFORE loading FIFO and strobing STX.
@@ -758,6 +763,30 @@ bool Elero::send_command_internal_(t_elero_command *cmd) {
   this->write_burst(CC1101_TXFIFO, this->msg_tx_, this->msg_tx_[0] + 1);
   this->write_cmd(CC1101_STX);
 
+  uint32_t stx_started = millis();
+  bool entered_tx = false;
+  while (millis() - stx_started < 5) {
+    uint8_t tx_marc = this->read_status(CC1101_MARCSTATE) & 0x1F;
+    if (radio_state_logic::is_tx_progress_state(tx_marc) || tx_marc == CC1101_MARCSTATE_TX_END) {
+      entered_tx = true;
+      break;
+    }
+    delay_microseconds_safe(200);
+  }
+  if (!entered_tx) {
+    uint8_t tx_marc = this->read_status(CC1101_MARCSTATE) & 0x1F;
+    uint8_t txbytes = this->read_status(CC1101_TXBYTES) & 0x7F;
+    if (txbytes > 0) {
+      ESP_LOGW(TAG, "STX did not enter TX within timeout (marc=%s, txbytes=%u), aborting",
+               marcstate_to_string(tx_marc), txbytes);
+      this->tx_abort_();
+      return false;
+    }
+    ESP_LOGV(TAG, "TX completed before STX validation observed TX state (marc=%s)",
+             marcstate_to_string(tx_marc));
+  }
+
+  this->observe_tx_queue_latency_(enqueued_at_ms);
   this->tx_state_.store(TxState::TRANSMITTING, std::memory_order_release);
   this->tx_state_entered_ms_ = millis();
   return true;

@@ -1,5 +1,7 @@
 #include "elero.h"
 #include "elero_dispatch_logic.h"
+#include "elero_latency_logic.h"
+#include "elero_parser_diagnostics.h"
 #include "esphome/core/log.h"
 #include "esphome/core/helpers.h"
 #ifdef USE_LOGGER
@@ -323,6 +325,16 @@ void Elero::loop() {
         this->tx_count_sensor_->publish_state((float) this->get_tx_count());
       if (this->watchdog_recovery_sensor_ != nullptr)
         this->watchdog_recovery_sensor_->publish_state((float) this->get_watchdog_recovery_count());
+      if (this->drop_crc_fail_sensor_ != nullptr)
+        this->drop_crc_fail_sensor_->publish_state((float) this->get_drop_crc_fail_count());
+      if (this->drop_too_many_dests_sensor_ != nullptr)
+        this->drop_too_many_dests_sensor_->publish_state((float) this->get_drop_too_many_dests_count());
+      if (this->drop_bounds_sensor_ != nullptr)
+        this->drop_bounds_sensor_->publish_state((float) this->get_drop_bounds_count());
+      if (this->tx_queue_latency_sensor_ != nullptr)
+        this->tx_queue_latency_sensor_->publish_state((float) this->get_tx_queue_latency_last_ms());
+      if (this->dispatch_latency_sensor_ != nullptr)
+        this->dispatch_latency_sensor_->publish_state((float) this->get_dispatch_latency_last_ms());
     }
   }
 #endif
@@ -386,7 +398,7 @@ void Elero::radio_task_loop_() {
   if (got_msg) {
     switch (msg.type) {
       case RadioControlType::TX_COMMAND:
-        this->send_command_internal_(&msg.tx.cmd);
+        this->send_command_internal_(&msg.tx.cmd, msg.tx.enqueued_at_ms);
         break;
       case RadioControlType::REINIT_FREQ: {
         bool ok = false;
@@ -451,7 +463,8 @@ void Elero::dump_config() {
   ESP_LOGCONFIG(TAG, "Elero CC1101:");
   LOG_PIN("  GDO0 Pin: ", this->gdo0_pin_);
   ESP_LOGCONFIG(TAG, "  freq2: 0x%02x, freq1: 0x%02x, freq0: 0x%02x", this->freq2_, this->freq1_, this->freq0_);
-  ESP_LOGCONFIG(TAG, "  Send repeats: %d, send delay: %d ms", this->send_repeats_, this->send_delay_);
+  ESP_LOGCONFIG(TAG, "  Send repeats: %d, send delay: %d ms, dedup window: %lu ms",
+                this->send_repeats_, this->send_delay_, (unsigned long) this->dedup_window_ms_);
   ESP_LOGCONFIG(TAG, "  RadioLib: begin() + standby() + setFrequency(); direct SPI for register access");
   if (this->spi_failed_.load(std::memory_order_acquire)) {
     ESP_LOGCONFIG(TAG, "  SPI Status: FAILED — CC1101 communication broken");
@@ -518,11 +531,12 @@ void Elero::setup() {
     return;
   }
 
-  // Spawn radio task on Core 0
+  // Spawn radio task on Core 0. Use generous stack headroom because the task
+  // performs SPI I/O, RadioLib calls, packet parsing, and occasional log formatting.
   BaseType_t rc_task = xTaskCreatePinnedToCore(
     Elero::radio_task_func_,
     "elero_radio",
-    8192,
+    ELERO_RADIO_TASK_STACK_SIZE,
     this,
     19,
     &this->radio_task_handle_,
@@ -533,7 +547,8 @@ void Elero::setup() {
     this->mark_failed(LOG_STR("Failed to create radio task"));
     return;
   }
-  ESP_LOGI(TAG, "Radio task spawned on Core 0 (priority 19, stack 8192)");
+  ESP_LOGI(TAG, "Radio task spawned on Core 0 (priority 19, stack %lu)",
+           (unsigned long) ELERO_RADIO_TASK_STACK_SIZE);
 
   this->high_freq_.start();
 
@@ -548,6 +563,16 @@ void Elero::setup() {
     this->tx_count_sensor_->publish_state(0.0f);
   if (this->watchdog_recovery_sensor_ != nullptr)
     this->watchdog_recovery_sensor_->publish_state(0.0f);
+  if (this->drop_crc_fail_sensor_ != nullptr)
+    this->drop_crc_fail_sensor_->publish_state(0.0f);
+  if (this->drop_too_many_dests_sensor_ != nullptr)
+    this->drop_too_many_dests_sensor_->publish_state(0.0f);
+  if (this->drop_bounds_sensor_ != nullptr)
+    this->drop_bounds_sensor_->publish_state(0.0f);
+  if (this->tx_queue_latency_sensor_ != nullptr)
+    this->tx_queue_latency_sensor_->publish_state(0.0f);
+  if (this->dispatch_latency_sensor_ != nullptr)
+    this->dispatch_latency_sensor_->publish_state(0.0f);
   this->last_hub_sensor_update_ms_ = millis();
 #endif
 }
@@ -570,7 +595,9 @@ SendResult Elero::send_command(t_elero_command *cmd) {
   RadioMessage msg{};
   msg.type = RadioControlType::TX_COMMAND;
   msg.tx.cmd = *cmd;
+  msg.tx.enqueued_at_ms = millis();
   if (xQueueSend(this->tx_queue_, &msg, pdMS_TO_TICKS(10)) == pdTRUE) {
+    this->observe_tx_queue_depth_();
     return SendResult::OK;
   }
   ESP_LOGV(TAG, "TX queue full, will retry for 0x%06x", cmd->blind_addr);
@@ -596,12 +623,63 @@ bool Elero::send_command_priority(t_elero_command *cmd) {
   RadioMessage msg{};
   msg.type = RadioControlType::TX_COMMAND;
   msg.tx.cmd = *cmd;
+  msg.tx.enqueued_at_ms = millis();
   if (xQueueSend(this->tx_priority_queue_, &msg, pdMS_TO_TICKS(10)) == pdTRUE) {
+    this->observe_tx_queue_depth_();
     return true;
   }
   ESP_LOGW(TAG, "Priority TX queue full, command to 0x%06x dropped", cmd->blind_addr);
   this->tx_drop_count_.fetch_add(1, std::memory_order_relaxed);
   return false;
+}
+
+void Elero::increment_parser_drop_count(const char *reason) {
+  using parser_diagnostics::DropBucket;
+  switch (parser_diagnostics::bucket_for_reject_reason(reason)) {
+    case DropBucket::CRC_FAIL:
+      this->drop_crc_fail_count_.fetch_add(1, std::memory_order_relaxed);
+      break;
+    case DropBucket::STALE_COUNTER:
+      this->drop_stale_counter_count_.fetch_add(1, std::memory_order_relaxed);
+      break;
+    case DropBucket::TOO_MANY_DESTS:
+      this->drop_too_many_dests_count_.fetch_add(1, std::memory_order_relaxed);
+      break;
+    case DropBucket::BOUNDS:
+      this->drop_bounds_count_.fetch_add(1, std::memory_order_relaxed);
+      break;
+    case DropBucket::OTHER:
+    default:
+      this->drop_other_count_.fetch_add(1, std::memory_order_relaxed);
+      break;
+  }
+}
+
+void Elero::observe_tx_queue_latency_(uint32_t enqueued_at_ms) {
+  if (enqueued_at_ms == 0)
+    return;
+  uint32_t sample = millis() - enqueued_at_ms;
+  auto observed = latency_logic::observe(this->tx_queue_latency_max_ms_.load(std::memory_order_acquire), sample);
+  this->tx_queue_latency_last_ms_.store(observed.last, std::memory_order_release);
+  this->tx_queue_latency_max_ms_.store(observed.max, std::memory_order_release);
+}
+
+void Elero::observe_tx_queue_depth_() {
+  uint32_t normal = this->tx_queue_ ? uxQueueMessagesWaiting(this->tx_queue_) : 0;
+  uint32_t priority = this->tx_priority_queue_ ? uxQueueMessagesWaiting(this->tx_priority_queue_) : 0;
+  uint32_t depth = normal + priority;
+  uint32_t prev = this->tx_queue_depth_max_.load(std::memory_order_acquire);
+  if (depth > prev)
+    this->tx_queue_depth_max_.store(depth, std::memory_order_release);
+}
+
+void Elero::observe_dispatch_latency_(uint32_t decoded_at_ms) {
+  if (decoded_at_ms == 0)
+    return;
+  uint32_t sample = millis() - decoded_at_ms;
+  auto observed = latency_logic::observe(this->dispatch_latency_max_ms_.load(std::memory_order_acquire), sample);
+  this->dispatch_latency_last_ms_.store(observed.last, std::memory_order_release);
+  this->dispatch_latency_max_ms_.store(observed.max, std::memory_order_release);
 }
 
 // ---------------------------------------------------------------------------

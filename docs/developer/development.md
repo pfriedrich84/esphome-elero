@@ -296,8 +296,9 @@ Key constants (defined in `elero.h` unless noted):
 | `ELERO_TIMEOUT_MOVEMENT` | 120 000 ms | Give up movement tracking after 2 min |
 | `ELERO_POST_MOVEMENT_POLL_DELAY` | 5 000 ms | Poll delay after open/close duration elapses |
 | `ELERO_SEND_RETRIES` | 3 | Command retry count |
-| `ELERO_DEFAULT_SEND_REPEATS` | 1 | RF packet repetitions per command (configurable 1–20) |
-| `ELERO_DEFAULT_SEND_DELAY` | 20 ms | Default delay between repeated packets (configurable) |
+| `ELERO_DEFAULT_SEND_REPEATS` | 1 | RF packets per command (configurable 1–20); 1 means no repeats |
+| `ELERO_DEFAULT_SEND_DELAY` | 0 ms | Default delay between repeated packets (configurable) |
+| `ELERO_RADIO_TASK_STACK_SIZE` | 16 384 bytes | FreeRTOS stack for the Core 0 radio task |
 | `ELERO_MAX_COMMAND_QUEUE` | 10 | Max queued commands per blind (prevents OOM) |
 | `ELERO_COMMAND_QUEUE_MAX_AGE_MS` | 30 000 ms | Clear stale command queue after 30 s without successful send |
 | `ELERO_TX_QUEUE_DEPTH` | 16 | Normal TX FreeRTOS queue depth |
@@ -307,7 +308,7 @@ Key constants (defined in `elero.h` unless noted):
 | `ELERO_MAX_RX_PER_LOOP` | 8 | Max packets drained per `dispatch_rx_result_()` cycle |
 | `ELERO_POLL_STAGGER_MS` | 5 000 ms | Stagger offset between cover poll timers |
 | `ELERO_IMMEDIATE_POLL_MIN_INTERVAL_MS` | 2 000 ms | Minimum interval between `schedule_immediate_poll()` calls per blind |
-| `ELERO_DEDUP_WINDOW_MS` | 5 000 ms | Packet deduplication time window (src, cnt pairs) |
+| `ELERO_DEDUP_WINDOW_MS` | 500 ms | Default packet deduplication time window (src, cnt pairs), configurable via `dedup_window` |
 | `ELERO_STOP_REPEAT_COUNT` | 2 | Stop commands queued on auto-stop (x2 RF packets each) |
 | `ELERO_TX_LATENCY_COMPENSATION_MS` | 300 ms | Position check lead time (accounts for multi-cover queue contention) |
 | `ELERO_STOP_VERIFY_DELAY_MS` | 2 000 ms | Delay before polling to verify motor stopped (give blind time to broadcast) |
@@ -343,7 +344,7 @@ Thread-safety:
 - `scan_mode_`, `packet_dump_mode_`, `spi_failed_` are `std::atomic<bool>`
 - `rx_ready_`, `tx_done_` are `std::atomic<bool>` — ISR-set flags routed by `radio_mode_`
 - `radio_mode_` is `std::atomic<uint8_t>` with relaxed ordering — ISR may run on a different core than the radio task
-- `rx_count_`, `tx_count_`, `watchdog_recovery_count_`, `tx_drop_count_` are `std::atomic<uint32_t>`
+- `rx_count_`, `tx_count_`, `watchdog_recovery_count_`, `tx_drop_count_`, parser drop counters, and latency metrics are `std::atomic<uint32_t>`
 - `stop_urgent_count_` is `std::atomic<uint8_t>` (multi-cover auto-stop coordination)
 - `task_shutdown_`, `radio_fatal_error_` are `std::atomic<bool>` for radio task lifecycle
 - All `std::atomic` operations use explicit `std::memory_order_acquire`/`release` for correct multi-core ESP32 synchronization
@@ -413,6 +414,16 @@ Key behaviors:
 - JSON fragment builders (`build_configured_json_()`, `build_discovered_array_json_()`, etc.) are reused by individual handlers and the combined status endpoint
 - Frontend uses a request serialization queue (max 1 in-flight request) to prevent ESP32 socket exhaustion (ENFILE error 23)
 
+### RF replay fixtures
+
+Parser regression fixtures live in `tests/fixtures/rf_replay/*.replay`. Each non-comment line uses:
+
+```text
+name|hex bytes from CC1101 FIFO|expectation tokens
+```
+
+The hex bytes include the CC1101 FIFO length byte plus appended RSSI/LQI status bytes. Expectations use `key=value` tokens such as `ok=1`, `typ=0xca`, `src=0xa831e5`, `state=0x01`, or `reason=bad_crc`. `tests/unit/test_packet_replay.cpp` replays these fixtures through the pure packet parser and also covers dedup, stale-counter, and drop-bucket helper logic.
+
 ### REST API Endpoints
 
 All endpoints are served at `http://<device-ip>/elero`. CORS is restricted to same-origin (no `Access-Control-Allow-Origin` header is set) to prevent CSRF attacks; local browser access via IP is unaffected. A 503 response is returned if the optional `elero_web` switch is disabled. All POST/DELETE endpoints also respond to OPTIONS for preflight.
@@ -427,7 +438,7 @@ All endpoints are served at `http://<device-ip>/elero`. CORS is restricted to sa
 | `/elero/api/scan/stop` | POST | Stop RF discovery scan |
 | `/elero/api/discovered` | GET | JSON array of discovered blinds |
 | `/elero/api/configured` | GET | JSON object with configured covers and lights |
-| `/elero/api/status` | GET | Combined status: covers, lights, runtime, diagnostics (single poll) |
+| `/elero/api/status` | GET | Combined status: covers, lights, runtime, diagnostics (single poll). Diagnostics include RX/TX/watchdog/drop counters plus TX queue and dispatch latency last/max metrics. |
 | `/elero/api/yaml` | GET | YAML snippet ready to paste into ESPHome config |
 | `/elero/api/info` | GET | Device info (version, discovery count, etc.) |
 | `/elero/api/runtime` | GET | JSON array of runtime-adopted blinds |
@@ -465,7 +476,7 @@ All endpoints are served at `http://<device-ip>/elero`. CORS is restricted to sa
 | `/elero/api/packets` | GET | Recent captured RF packets |
 | `/elero/api/packets/clear` | POST | Clear captured packets |
 | `/elero/api/packets/download` | GET | Download captured RF packets as file |
-| `/elero/api/diagnostics/reset` | POST | Reset diagnostic counters (rx, tx, watchdog recovery) |
+| `/elero/api/diagnostics/reset` | POST | Reset diagnostic counters and latency maxima (RX, TX, watchdog recovery, parser drops, TX drops, queue/dispatch latency) |
 
 **Web UI state (elero_web switch sub-platform):**
 
@@ -564,8 +575,8 @@ elero:
   freq0: 0x7a            # CC1101 FREQ0 register (optional, default 868.35 MHz)
   freq1: 0x71            # CC1101 FREQ1 register
   freq2: 0x21            # CC1101 FREQ2 register
-  send_repeats: 1        # RF packet repetitions per command (1–20, default 1)
-  send_delay: 10ms       # Delay between repeated packets (default 10ms)
+  send_repeats: 1        # RF packets per command (1–20, default 1 = no repeats)
+  send_delay: 0ms        # Delay between repeated packets (default 0ms)
   auto_sensors: true     # Auto-generate hub diagnostic sensors (default true)
 ```
 
@@ -754,7 +765,7 @@ When modifying frontend files in `components/elero_web/frontend/`:
 
 ```bash
 cd components/elero_web/frontend
-npm install          # First time only
+npm install          # Install/update frontend dependencies
 npm run build        # Vite build → generate_header.mjs → elero_web_ui.h
 ```
 

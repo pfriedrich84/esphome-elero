@@ -178,8 +178,9 @@ elero:
   freq0: 0x7a            # Optional: Frequenz-Register FREQ0 (Standard: 0x7a)
   freq1: 0x71            # Optional: Frequenz-Register FREQ1 (Standard: 0x71)
   freq2: 0x21            # Optional: Frequenz-Register FREQ2 (Standard: 0x21)
-  send_repeats: 1        # Optional: RF-Paketwiederholungen (1-20, Standard: 1)
-  send_delay: 10ms       # Optional: Pause zwischen Wiederholungen (Standard: 10ms)
+  send_repeats: 1        # Optional: RF-Pakete pro Befehl (1-20, Standard: 1 = keine Wiederholung)
+  send_delay: 0ms        # Optional: Pause zwischen Wiederholungen (Standard: 0ms)
+  dedup_window: 500ms    # Optional: Duplikat-Unterdrückung für Statuspakete
 ```
 
 | Parameter | Typ | Pflicht | Standard | Beschreibung |
@@ -189,8 +190,9 @@ elero:
 | `freq0` | Hex (0x00-0xFF) | Nein | `0x7a` | CC1101 FREQ0 Register |
 | `freq1` | Hex (0x00-0xFF) | Nein | `0x71` | CC1101 FREQ1 Register |
 | `freq2` | Hex (0x00-0xFF) | Nein | `0x21` | CC1101 FREQ2 Register |
-| `send_repeats` | Int (1-20) | Nein | `1` | RF-Paketwiederholungen pro Befehl |
-| `send_delay` | Zeitdauer | Nein | `10ms` | Pause zwischen Wiederholungen |
+| `send_repeats` | Int (1-20) | Nein | `1` | RF-Pakete pro Befehl; `1` bedeutet keine Wiederholung |
+| `send_delay` | Zeitdauer | Nein | `0ms` | Pause zwischen Wiederholungen |
+| `dedup_window` | Zeitdauer | Nein | `500ms` | Statuspaket-Duplikate gleicher Quelle/Zähler unterdrücken; bei Doppelstatus auf `1s`-`2s` erhöhen |
 | `auto_sensors` | Boolean | Nein | `true` | Hub-Diagnose-Sensoren automatisch erstellen |
 
 ### Plattform `cover` (Rollladen)
@@ -431,6 +433,21 @@ light:
 Mehrere Rollläden können zu einer Gruppe zusammengefasst werden. Die Gruppe erscheint in Home Assistant als eigenes Cover-Entity und steuert alle Mitglieder gleichzeitig.
 
 ```yaml
+cover:
+  - platform: elero
+    id: cover_schlafzimmer  # diese ESPHome-ID wird unten in members verwendet
+    name: "Schlafzimmer"
+    blind_address: 0xa831e5
+    channel: 4
+    remote_address: 0xf0d008
+
+  - platform: elero
+    id: cover_wohnzimmer
+    name: "Wohnzimmer"
+    blind_address: 0xb912f3
+    channel: 4
+    remote_address: 0xf0d008
+
 elero_group:
   - name: "Alle Rollläden"
     assumed_state: true
@@ -446,9 +463,12 @@ elero_group:
 | `assumed_state` | Boolean | Nein | `true` | `true` = Hoch/Runter-Buttons immer aktiv (keine Positionsrückmeldung von der Gruppe) |
 
 **Hinweise:**
+- Die Einträge unter `members` sind die ESPHome-IDs der einzelnen `cover: platform: elero`-Blöcke (`id:`), nicht `name`, `blind_address` oder die Home-Assistant-Entity-ID.
+- Vergib für jedes Gruppenmitglied am besten explizit eine stabile `id:` wie `cover_schlafzimmer`; diese ID wird dann unverändert in `members` referenziert.
 - Eine Gruppe benötigt mindestens 2 und maximal 10 Mitglieder.
 - Wenn alle Mitglieder dieselbe `remote_address` und denselben `channel` verwenden, wird ein einzelnes natives Multi-Destination-RF-Paket gesendet (effizienter).
 - Andernfalls werden die Befehle einzeln nacheinander an jedes Mitglied gesendet.
+- Wenn ESPHome beim Kompilieren meldet, dass ein Mitglied nicht aufgelöst werden kann, prüfe `id:` und Schreibweise in `members`.
 - Vollständige Parameterliste: [Konfigurationsreferenz](docs/user/configuration.md#plattform-elero_group-gruppensteuerung)
 
 ---
@@ -457,7 +477,7 @@ elero_group:
 
 ### Hub-Diagnose-Sensoren
 
-Bei `auto_sensors: true` (Standard) erzeugt der Hub automatisch vier Diagnose-Sensoren:
+Bei `auto_sensors: true` (Standard) erzeugt der Hub Diagnose-Sensoren für Funkzustand und Latenz:
 
 | Sensor | Einheit | Beschreibung |
 |---|---|---|
@@ -465,8 +485,15 @@ Bei `auto_sensors: true` (Standard) erzeugt der Hub automatisch vier Diagnose-Se
 | Elero RX Count | - | Empfangene Pakete (gesamt) |
 | Elero TX Count | - | Gesendete Pakete (gesamt) |
 | Elero Watchdog Recovery Count | - | Radio-Watchdog-Wiederherstellungen |
+| Elero Drop CRC Fail | - | Verworfene RF-Pakete mit ungültigem CRC |
+| Elero Drop Too Many Destinations | - | Verworfene RF-Pakete mit zu vielen Zieladressen |
+| Elero Drop Bounds | - | Verworfene RF-Pakete mit ungültiger Länge/Grenze |
+| Elero TX Queue Latency | ms | Letzte Wartezeit vom Einreihen bis zum TX-Start |
+| Elero Dispatch Latency | ms | Letzte Verteilzeit vom RX-Decode bis zu Entity-Updates |
 
-Diese können mit `auto_sensors: false` am Hub deaktiviert oder individuell überschrieben werden (`frequency_sensor`, `rx_count_sensor`, `tx_count_sensor`, `watchdog_recovery_sensor`).
+Weitere Diagnosewerte wie `drop_stale_counter`, `tx_queue_latency_max_ms`, `tx_queue_depth_max` und `dispatch_latency_max_ms` stehen in `/elero/api/status`. Die Zähler gelten pro Boot und können mit `/elero/api/diagnostics/reset` zurückgesetzt werden.
+
+Diese können mit `auto_sensors: false` am Hub deaktiviert oder individuell überschrieben werden (`frequency_sensor`, `rx_count_sensor`, `tx_count_sensor`, `watchdog_recovery_sensor`, `drop_crc_fail_sensor`, `drop_too_many_dests_sensor`, `drop_bounds_sensor`, `tx_queue_latency_sensor`, `dispatch_latency_sensor`).
 
 ### Cover-/Light-Diagnose (auto_sensors)
 

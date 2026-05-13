@@ -60,9 +60,9 @@ enum class SendResult : uint8_t {
 /// Minimum interval between schedule_immediate_poll() calls per blind (ms).
 static const uint32_t ELERO_IMMEDIATE_POLL_MIN_INTERVAL_MS = 2000;
 
-/// Deduplication: time window in ms within which (src, cnt) duplicates are suppressed.
-/// 5 seconds balances duplicate suppression vs. allowing legitimate re-sent status updates.
-static const uint32_t ELERO_DEDUP_WINDOW_MS = 5000;
+/// Deduplication: default time window in ms within which (src, cnt) duplicates are suppressed.
+/// 500 ms catches immediate relay/FIFO duplicates without hiding later legitimate status updates.
+static const uint32_t ELERO_DEDUP_WINDOW_MS = 500;
 
 }  // namespace elero
 
@@ -113,12 +113,13 @@ static const uint8_t ELERO_STATE_ON = 0x10;
 static const uint8_t ELERO_MAX_PACKET_SIZE = 57; // according to FCC documents
 
 static const uint32_t ELERO_POLL_INTERVAL_MOVING = 5000;  // poll every 5s while moving (blinds broadcast status on their own)
-static const uint32_t ELERO_DEFAULT_SEND_DELAY = 10; // 10ms default send delay between consecutive dispatches per cover
+static const uint32_t ELERO_DEFAULT_SEND_DELAY = 0; // no default delay between repeated packets
 static const uint32_t ELERO_TIMEOUT_MOVEMENT = 120000; // poll for up to two minutes while moving
 static const uint32_t ELERO_POST_MOVEMENT_POLL_DELAY = 5000; // poll 5s after open/close duration elapses
 
 static const uint8_t ELERO_SEND_RETRIES = 3;
-static const uint8_t ELERO_DEFAULT_SEND_REPEATS = 1;  // RF packet repetitions per command (configurable via send_repeats)
+static const uint8_t ELERO_DEFAULT_SEND_REPEATS = 1;  // one RF packet per command; no repeats by default
+static const uint32_t ELERO_RADIO_TASK_STACK_SIZE = 16384;  // bytes; RadioLib/SPI/log formatting need headroom on ESP-IDF
 static const uint8_t ELERO_MAX_COMMAND_QUEUE = 10; // max commands per blind to prevent OOM
 static const uint32_t ELERO_COMMAND_QUEUE_MAX_AGE_MS = 30000; // clear stale queue after 30s without successful send
 
@@ -253,6 +254,7 @@ struct RxResult {
 /// TX command request, sent from main loop (Core 1) → radio task (Core 0).
 struct TxRequest {
   t_elero_command cmd;
+  uint32_t enqueued_at_ms{0};
 };
 
 /// Control message types for the radio task.
@@ -502,6 +504,11 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void set_rx_count_sensor(sensor::Sensor *sensor) { rx_count_sensor_ = sensor; }
   void set_tx_count_sensor(sensor::Sensor *sensor) { tx_count_sensor_ = sensor; }
   void set_watchdog_recovery_sensor(sensor::Sensor *sensor) { watchdog_recovery_sensor_ = sensor; }
+  void set_drop_crc_fail_sensor(sensor::Sensor *sensor) { drop_crc_fail_sensor_ = sensor; }
+  void set_drop_too_many_dests_sensor(sensor::Sensor *sensor) { drop_too_many_dests_sensor_ = sensor; }
+  void set_drop_bounds_sensor(sensor::Sensor *sensor) { drop_bounds_sensor_ = sensor; }
+  void set_tx_queue_latency_sensor(sensor::Sensor *sensor) { tx_queue_latency_sensor_ = sensor; }
+  void set_dispatch_latency_sensor(sensor::Sensor *sensor) { dispatch_latency_sensor_ = sensor; }
 #endif
 #ifdef USE_TEXT_SENSOR
   void register_text_sensor(uint32_t address, text_sensor::TextSensor *sensor);
@@ -594,12 +601,33 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   uint32_t get_tx_count() const { return tx_count_.load(std::memory_order_acquire); }
   uint32_t get_watchdog_recovery_count() const { return watchdog_recovery_count_.load(std::memory_order_acquire); }
   uint32_t get_tx_drop_count() const { return tx_drop_count_.load(std::memory_order_acquire); }
+  uint32_t get_drop_crc_fail_count() const { return drop_crc_fail_count_.load(std::memory_order_acquire); }
+  uint32_t get_drop_stale_counter_count() const { return drop_stale_counter_count_.load(std::memory_order_acquire); }
+  uint32_t get_drop_too_many_dests_count() const { return drop_too_many_dests_count_.load(std::memory_order_acquire); }
+  uint32_t get_drop_bounds_count() const { return drop_bounds_count_.load(std::memory_order_acquire); }
+  uint32_t get_drop_other_count() const { return drop_other_count_.load(std::memory_order_acquire); }
+  uint32_t get_tx_queue_latency_last_ms() const { return tx_queue_latency_last_ms_.load(std::memory_order_acquire); }
+  uint32_t get_tx_queue_latency_max_ms() const { return tx_queue_latency_max_ms_.load(std::memory_order_acquire); }
+  uint32_t get_tx_queue_depth_max() const { return tx_queue_depth_max_.load(std::memory_order_acquire); }
+  uint32_t get_dispatch_latency_last_ms() const { return dispatch_latency_last_ms_.load(std::memory_order_acquire); }
+  uint32_t get_dispatch_latency_max_ms() const { return dispatch_latency_max_ms_.load(std::memory_order_acquire); }
   void increment_tx_drop_count() { tx_drop_count_.fetch_add(1, std::memory_order_relaxed); }
+  void increment_parser_drop_count(const char *reason);
   void reset_diagnostic_counters() {
     rx_count_.store(0, std::memory_order_release);
     tx_count_.store(0, std::memory_order_release);
     watchdog_recovery_count_.store(0, std::memory_order_release);
     tx_drop_count_.store(0, std::memory_order_release);
+    drop_crc_fail_count_.store(0, std::memory_order_release);
+    drop_stale_counter_count_.store(0, std::memory_order_release);
+    drop_too_many_dests_count_.store(0, std::memory_order_release);
+    drop_bounds_count_.store(0, std::memory_order_release);
+    drop_other_count_.store(0, std::memory_order_release);
+    tx_queue_latency_last_ms_.store(0, std::memory_order_release);
+    tx_queue_latency_max_ms_.store(0, std::memory_order_release);
+    tx_queue_depth_max_.store(0, std::memory_order_release);
+    dispatch_latency_last_ms_.store(0, std::memory_order_release);
+    dispatch_latency_max_ms_.store(0, std::memory_order_release);
   }
 
   void set_gdo0_pin(InternalGPIOPin *pin) { gdo0_pin_ = pin; }
@@ -608,8 +636,10 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void set_freq2(uint8_t freq) { freq2_ = freq; }
   void set_send_repeats(uint8_t repeats) { send_repeats_ = repeats; }
   void set_send_delay(uint32_t delay_ms) { send_delay_ = delay_ms; }
+  void set_dedup_window(uint32_t window_ms) { dedup_window_ms_ = window_ms; }
   uint8_t get_send_repeats() const { return send_repeats_; }
   uint32_t get_send_delay() const { return send_delay_; }
+  uint32_t get_dedup_window() const { return dedup_window_ms_; }
   bool reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0);
   bool reinit_frequency_mhz(float mhz);
   static float registers_to_mhz(uint8_t freq2, uint8_t freq1, uint8_t freq0);
@@ -621,7 +651,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   // Radio task (Core 0) — owns ALL SPI access after setup()
   static void radio_task_func_(void *param);
   void radio_task_loop_();
-  bool send_command_internal_(t_elero_command *cmd);  // actual SPI TX, Core 0 only
+  bool send_command_internal_(t_elero_command *cmd, uint32_t enqueued_at_ms = 0);  // actual SPI TX, Core 0 only
 
   // Non-blocking TX state machine (runs on Core 0 radio task)
   void process_rx();
@@ -632,6 +662,9 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void recompute_runtime_positions_();
   void update_runtime_blind_direction_(RuntimeBlind &rb, uint8_t state);
   void tx_abort_();
+  void observe_tx_queue_latency_(uint32_t enqueued_at_ms);
+  void observe_tx_queue_depth_();
+  void observe_dispatch_latency_(uint32_t decoded_at_ms);
 
   bool wait_rx();
 
@@ -678,6 +711,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   uint8_t freq2_{0x21};
   uint8_t send_repeats_{ELERO_DEFAULT_SEND_REPEATS};
   uint32_t send_delay_{ELERO_DEFAULT_SEND_DELAY};
+  uint32_t dedup_window_ms_{ELERO_DEDUP_WINDOW_MS};
   InternalGPIOPin *gdo0_pin_{nullptr};
   std::map<uint32_t, EleroBlindBase*> address_to_cover_mapping_;
   std::map<uint32_t, EleroLightBase*> address_to_light_mapping_;
@@ -688,6 +722,11 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   sensor::Sensor *rx_count_sensor_{nullptr};
   sensor::Sensor *tx_count_sensor_{nullptr};
   sensor::Sensor *watchdog_recovery_sensor_{nullptr};
+  sensor::Sensor *drop_crc_fail_sensor_{nullptr};
+  sensor::Sensor *drop_too_many_dests_sensor_{nullptr};
+  sensor::Sensor *drop_bounds_sensor_{nullptr};
+  sensor::Sensor *tx_queue_latency_sensor_{nullptr};
+  sensor::Sensor *dispatch_latency_sensor_{nullptr};
   uint32_t last_hub_sensor_update_ms_{0};
 #endif
 #ifdef USE_TEXT_SENSOR
@@ -706,9 +745,11 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   std::unordered_map<uint64_t, uint32_t> dedup_map_;
   uint32_t last_dedup_prune_ms_{0};
 
-  /// Per-source monotonic counter tracking: reject packets with counter values
-  /// older than the last seen counter for each source address.
+  /// Per-source counter tracking: reject old/replayed counters within the active
+  /// receive window, but allow resync after long gaps so lossy links or sender
+  /// restarts do not leave entities stale until the 8-bit counter wraps.
   std::map<uint32_t, uint8_t> last_seen_counter_;
+  std::map<uint32_t, uint32_t> last_seen_counter_ms_;
   bool is_duplicate_packet_(uint32_t src, uint8_t cnt);
   void prune_dedup_map_();
 
@@ -717,6 +758,16 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   std::atomic<uint32_t> tx_count_{0};
   std::atomic<uint32_t> watchdog_recovery_count_{0};
   std::atomic<uint32_t> tx_drop_count_{0};
+  std::atomic<uint32_t> drop_crc_fail_count_{0};
+  std::atomic<uint32_t> drop_stale_counter_count_{0};
+  std::atomic<uint32_t> drop_too_many_dests_count_{0};
+  std::atomic<uint32_t> drop_bounds_count_{0};
+  std::atomic<uint32_t> drop_other_count_{0};
+  std::atomic<uint32_t> tx_queue_latency_last_ms_{0};
+  std::atomic<uint32_t> tx_queue_latency_max_ms_{0};
+  std::atomic<uint32_t> tx_queue_depth_max_{0};
+  std::atomic<uint32_t> dispatch_latency_last_ms_{0};
+  std::atomic<uint32_t> dispatch_latency_max_ms_{0};
 
   // Request the main loop to skip its ~16ms sleep so loop() runs every pass.
   HighFrequencyLoopRequester high_freq_;

@@ -40,7 +40,14 @@ docs/agent/                        Tool-neutral agent instructions
 ## Agent docs
 
 - [`RULES.md`](RULES.md) — non-negotiable project rules.
+- [`CONSTRAINTS.md`](CONSTRAINTS.md) — hardware, RF, compatibility, and tooling constraints.
+- [`CODING.md`](CODING.md) — coding conventions and external-docs guidance.
+- [`REVIEW.md`](REVIEW.md) — PR/diff review priorities.
 - [`CHECKS.md`](CHECKS.md) — validation commands.
 - [`WORKFLOWS.md`](WORKFLOWS.md) — reusable maintenance workflows.
 - [`SAFETY.md`](SAFETY.md) — safe/unsafe operations.
+- [`SUPPLY_CHAIN.md`](SUPPLY_CHAIN.md) — dependency and external documentation safety guidance.
+- [`MEMORY.md`](MEMORY.md), [`DECISIONS.md`](DECISIONS.md), and [`ANTI_PATTERNS.md`](ANTI_PATTERNS.md) — durable agent memory.
+- [`DEFINITION_OF_DONE.md`](DEFINITION_OF_DONE.md) — completion criteria.
 - [`AUTORESEARCH.md`](AUTORESEARCH.md) — optional metric-driven experiment workflow.
+- [`ASSESSMENT.md`](ASSESSMENT.md) and [`CHANGELOG_AGENT.md`](CHANGELOG_AGENT.md) — governance status and change history.

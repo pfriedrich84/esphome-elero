@@ -24,9 +24,10 @@ elero:
 | `freq0` | Hex (0x00-0xFF) | Nein | `0x7a` | CC1101 Frequenz-Register FREQ0 |
 | `freq1` | Hex (0x00-0xFF) | Nein | `0x71` | CC1101 Frequenz-Register FREQ1 |
 | `freq2` | Hex (0x00-0xFF) | Nein | `0x21` | CC1101 Frequenz-Register FREQ2 |
-| `send_repeats` | Integer (1-20) | Nein | `1` | Anzahl der RF-Paketwiederholungen pro Befehl |
-| `send_delay` | Zeitdauer | Nein | `10ms` | Verzögerung zwischen wiederholten Paketen |
-| `auto_sensors` | Boolean | Nein | `true` | Erstellt automatisch Hub-Diagnose-Sensoren (Frequenz, RX/TX-Zähler, Watchdog-Recovery) |
+| `send_repeats` | Integer (1-20) | Nein | `1` | Anzahl der RF-Pakete pro Befehl; `1` bedeutet keine Wiederholung |
+| `send_delay` | Zeitdauer | Nein | `0ms` | Verzögerung zwischen wiederholten Paketen |
+| `dedup_window` | Zeitdauer (`100ms`-`60s`) | Nein | `500ms` | Zeitfenster, in dem doppelte Statuspakete gleicher Quelle/Zähler unterdrückt werden. Bei sichtbaren Doppelstatus ggf. auf `1s`-`2s` erhöhen. |
+| `auto_sensors` | Boolean | Nein | `true` | Erstellt automatisch Hub-Diagnose-Sensoren (Frequenz, Zähler, Drop- und Latenzmetriken) |
 
 > Der Hub erweitert die ESPHome SPI-Konfiguration. `spi:` muss separat mit `clk_pin`, `mosi_pin` und `miso_pin` konfiguriert sein.
 
@@ -42,8 +43,14 @@ Bei `auto_sensors: true` (Standard) werden folgende Sensoren automatisch erstell
 | Elero RX Count | - | Empfangene Pakete (gesamt) |
 | Elero TX Count | - | Gesendete Pakete (gesamt) |
 | Elero Watchdog Recovery Count | - | Radio-Watchdog-Wiederherstellungen |
+| Elero Drop CRC Fail | - | RF-Pakete mit ungültigem CRC |
+| Elero Drop Too Many Destinations | - | RF-Pakete mit zu vielen Zieladressen |
+| `/elero/api/status`: `drop_stale_counter` | - | Statuspakete mit altem oder wiederholtem Quell-Zähler (nur API-Feld) |
+| Elero Drop Bounds | - | RF-Pakete mit ungültiger Länge, Ziel- oder RSSI/LQI-Grenze |
+| Elero TX Queue Latency | ms | Letzte Latenz vom Einreihen eines TX-Befehls bis zum Start der Funkübertragung |
+| Elero Dispatch Latency | ms | Letzte Latenz vom Dekodieren eines RX-Pakets bis zum Abschluss der Zustandsverteilung |
 
-Diese können individuell überschrieben werden (`frequency_sensor`, `rx_count_sensor`, `tx_count_sensor`, `watchdog_recovery_sensor`) oder mit `auto_sensors: false` komplett deaktiviert werden.
+Diese können individuell überschrieben werden (`frequency_sensor`, `rx_count_sensor`, `tx_count_sensor`, `watchdog_recovery_sensor`, `drop_crc_fail_sensor`, `drop_too_many_dests_sensor`, `drop_bounds_sensor`, `tx_queue_latency_sensor`, `dispatch_latency_sensor`) oder mit `auto_sensors: false` komplett deaktiviert werden. Die Drop-/Zählerwerte sind monoton pro Boot und werden durch `/elero/api/diagnostics/reset` zurückgesetzt.
 
 ### Frequenz-Varianten
 
@@ -296,13 +303,27 @@ button:
 Fasst mehrere Rollläden zu einer Gruppe zusammen. Die Gruppe erscheint in Home Assistant als eigenes Cover-Entity und steuert alle Mitglieder gleichzeitig mit einem einzigen Befehl.
 
 ```yaml
+cover:
+  - platform: elero
+    id: cover_schlafzimmer  # diese ESPHome-ID wird unten in members verwendet
+    name: "Schlafzimmer"
+    blind_address: 0xa831e5
+    channel: 4
+    remote_address: 0xf0d008
+
+  - platform: elero
+    id: cover_wohnzimmer
+    name: "Wohnzimmer"
+    blind_address: 0xb912f3
+    channel: 4
+    remote_address: 0xf0d008
+
 elero_group:
   - name: "Alle Rollläden"
     assumed_state: true
     members:
       - cover_schlafzimmer
       - cover_wohnzimmer
-      - cover_kueche
 ```
 
 | Parameter | Typ | Pflicht | Standard | Beschreibung |
@@ -312,10 +333,14 @@ elero_group:
 | `assumed_state` | Boolean | Nein | `true` | `true` = Hoch/Runter-Buttons immer aktiv, da keine Positionsrückmeldung von der Gruppe erfolgt |
 
 **Hinweise:**
+- Die Einträge unter `members` sind die ESPHome-IDs der einzelnen `cover: platform: elero`-Blöcke (`id:`), nicht `name`, `blind_address` oder die Home-Assistant-Entity-ID.
+- Vergib für jedes Gruppenmitglied am besten explizit eine stabile `id:` wie `cover_schlafzimmer`; diese ID wird dann unverändert in `members` referenziert.
 - Es müssen mindestens 2 und maximal 10 Mitglieder angegeben werden (RF-Paketgrößenlimit).
 - Wenn alle Mitglieder dieselbe `remote_address` und denselben `channel` verwenden, wird ein einzelnes natives Multi-Destination-RF-Paket gesendet — dies ist effizienter als einzelne Befehle.
 - Andernfalls werden die Befehle einzeln nacheinander an jedes Mitglied gesendet.
 - Alle Mitglieder müssen als `cover: platform: elero` konfiguriert sein.
+
+**Fehlersuche:** Wenn ESPHome beim Kompilieren meldet, dass ein Mitglied nicht aufgelöst werden kann, prüfe ob das betreffende Cover eine `id:` hat und ob die Schreibweise in `members` exakt übereinstimmt.
 
 ---
 
@@ -364,7 +389,7 @@ Alle Endpoints unterstuetzen CORS (Cross-Origin Resource Sharing).
 | `/elero/api/scan/stop` | POST | RF-Scan stoppen |
 | `/elero/api/discovered` | GET | Gefundene Geraete (JSON) |
 | `/elero/api/configured` | GET | Konfigurierte Covers und Lichter mit aktuellem Status (JSON) |
-| `/elero/api/status` | GET | Kombinierter Status: Covers, Lichter, Runtime, Diagnose (einzelner Poll) |
+| `/elero/api/status` | GET | Kombinierter Status: Covers, Lichter, Runtime, Diagnose (RX/TX/Watchdog, Parser-Drops, TX-Queue- und Dispatch-Latenz) |
 | `/elero/api/yaml` | GET | YAML-Export fuer entdeckte Blinds |
 | `/elero/api/info` | GET | Geraete-Informationen (Version, Entdeckungen, etc.) |
 | `/elero/api/runtime` | GET | Runtime-adoptierte Blinds (JSON Array) |
@@ -402,7 +427,7 @@ Alle Endpoints unterstuetzen CORS (Cross-Origin Resource Sharing).
 | `/elero/api/packets` | GET | Erfasste RF-Pakete |
 | `/elero/api/packets/clear` | POST | Erfasste Pakete loeschen |
 | `/elero/api/packets/download` | GET | Erfasste RF-Pakete als Datei herunterladen |
-| `/elero/api/diagnostics/reset` | POST | Diagnose-Zaehler zuruecksetzen (RX, TX, Watchdog Recovery) |
+| `/elero/api/diagnostics/reset` | POST | Diagnose-Zaehler und Latenz-Maxima zuruecksetzen (RX, TX, Watchdog, Parser-Drops, TX-Drops) |
 
 **Web-UI-Zustand (elero_web switch Sub-Plattform):**
 
@@ -468,7 +493,7 @@ spi:
 elero:
   cs_pin: GPIO5
   gdo0_pin: GPIO26
-  # send_repeats: 1     # RF packet repetitions (1-20, default 1)
+  # send_repeats: 1     # RF packets per command (1-20, default 1 = no repeats)
   # auto_sensors: true  # Auto-generate hub diagnostic sensors (default true)
 
 cover:

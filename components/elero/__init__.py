@@ -36,11 +36,17 @@ CONF_FREQ1 = "freq1"
 CONF_FREQ2 = "freq2"
 CONF_SEND_REPEATS = "send_repeats"
 CONF_SEND_DELAY = "send_delay"
+CONF_DEDUP_WINDOW = "dedup_window"
 CONF_AUTO_SENSORS = "auto_sensors"
 CONF_FREQUENCY_SENSOR = "frequency_sensor"
 CONF_RX_COUNT_SENSOR = "rx_count_sensor"
 CONF_TX_COUNT_SENSOR = "tx_count_sensor"
 CONF_WATCHDOG_RECOVERY_SENSOR = "watchdog_recovery_sensor"
+CONF_DROP_CRC_FAIL_SENSOR = "drop_crc_fail_sensor"
+CONF_DROP_TOO_MANY_DESTS_SENSOR = "drop_too_many_dests_sensor"
+CONF_DROP_BOUNDS_SENSOR = "drop_bounds_sensor"
+CONF_TX_QUEUE_LATENCY_SENSOR = "tx_queue_latency_sensor"
+CONF_DISPATCH_LATENCY_SENSOR = "dispatch_latency_sensor"
 
 _FREQUENCY_SENSOR_SCHEMA = esphome_sensor.sensor_schema(
     unit_of_measurement="MHz",
@@ -63,6 +69,25 @@ _WATCHDOG_RECOVERY_SENSOR_SCHEMA = esphome_sensor.sensor_schema(
     state_class=STATE_CLASS_TOTAL_INCREASING,
     icon="mdi:alert-circle-outline",
 )
+_DROP_COUNTER_SENSOR_SCHEMA = esphome_sensor.sensor_schema(
+    accuracy_decimals=0,
+    state_class=STATE_CLASS_TOTAL_INCREASING,
+    icon="mdi:counter",
+)
+_LATENCY_SENSOR_SCHEMA = esphome_sensor.sensor_schema(
+    unit_of_measurement="ms",
+    accuracy_decimals=0,
+    state_class=STATE_CLASS_MEASUREMENT,
+    icon="mdi:timer-outline",
+)
+
+
+def _validate_dedup_window(config):
+    """Keep dedup tuning within safe operational bounds."""
+    window_ms = config[CONF_DEDUP_WINDOW].total_milliseconds
+    if window_ms < 100 or window_ms > 60000:
+        raise cv.Invalid("dedup_window must be between 100ms and 60s")
+    return config
 
 
 def _auto_sensor_validator(config):
@@ -81,6 +106,18 @@ def _auto_sensor_validator(config):
         result[CONF_WATCHDOG_RECOVERY_SENSOR] = _WATCHDOG_RECOVERY_SENSOR_SCHEMA(
             {"name": f"{prefix} Watchdog Recovery Count"}
         )
+    if CONF_DROP_CRC_FAIL_SENSOR not in result:
+        result[CONF_DROP_CRC_FAIL_SENSOR] = _DROP_COUNTER_SENSOR_SCHEMA({"name": f"{prefix} Drop CRC Fail"})
+    if CONF_DROP_TOO_MANY_DESTS_SENSOR not in result:
+        result[CONF_DROP_TOO_MANY_DESTS_SENSOR] = _DROP_COUNTER_SENSOR_SCHEMA(
+            {"name": f"{prefix} Drop Too Many Destinations"}
+        )
+    if CONF_DROP_BOUNDS_SENSOR not in result:
+        result[CONF_DROP_BOUNDS_SENSOR] = _DROP_COUNTER_SENSOR_SCHEMA({"name": f"{prefix} Drop Bounds"})
+    if CONF_TX_QUEUE_LATENCY_SENSOR not in result:
+        result[CONF_TX_QUEUE_LATENCY_SENSOR] = _LATENCY_SENSOR_SCHEMA({"name": f"{prefix} TX Queue Latency"})
+    if CONF_DISPATCH_LATENCY_SENSOR not in result:
+        result[CONF_DISPATCH_LATENCY_SENSOR] = _LATENCY_SENSOR_SCHEMA({"name": f"{prefix} Dispatch Latency"})
     return result
 
 
@@ -93,16 +130,23 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_FREQ1, default=0x71): cv.hex_int_range(min=0x0, max=0xFF),
             cv.Optional(CONF_FREQ2, default=0x21): cv.hex_int_range(min=0x0, max=0xFF),
             cv.Optional(CONF_SEND_REPEATS, default=1): cv.int_range(min=1, max=20),
-            cv.Optional(CONF_SEND_DELAY, default="10ms"): cv.positive_time_period_milliseconds,
+            cv.Optional(CONF_SEND_DELAY, default="0ms"): cv.positive_time_period_milliseconds,
+            cv.Optional(CONF_DEDUP_WINDOW, default="500ms"): cv.positive_time_period_milliseconds,
             cv.Optional(CONF_AUTO_SENSORS, default=True): cv.boolean,
             cv.Optional(CONF_FREQUENCY_SENSOR): _FREQUENCY_SENSOR_SCHEMA,
             cv.Optional(CONF_RX_COUNT_SENSOR): _RX_COUNT_SENSOR_SCHEMA,
             cv.Optional(CONF_TX_COUNT_SENSOR): _TX_COUNT_SENSOR_SCHEMA,
             cv.Optional(CONF_WATCHDOG_RECOVERY_SENSOR): _WATCHDOG_RECOVERY_SENSOR_SCHEMA,
+            cv.Optional(CONF_DROP_CRC_FAIL_SENSOR): _DROP_COUNTER_SENSOR_SCHEMA,
+            cv.Optional(CONF_DROP_TOO_MANY_DESTS_SENSOR): _DROP_COUNTER_SENSOR_SCHEMA,
+            cv.Optional(CONF_DROP_BOUNDS_SENSOR): _DROP_COUNTER_SENSOR_SCHEMA,
+            cv.Optional(CONF_TX_QUEUE_LATENCY_SENSOR): _LATENCY_SENSOR_SCHEMA,
+            cv.Optional(CONF_DISPATCH_LATENCY_SENSOR): _LATENCY_SENSOR_SCHEMA,
         }
     )
     .extend(cv.COMPONENT_SCHEMA)
     .extend(spi.spi_device_schema(cs_pin_required=True)),
+    _validate_dedup_window,
     _auto_sensor_validator,
 )
 
@@ -164,6 +208,7 @@ async def to_code(config):
     cg.add(var.set_freq2(config[CONF_FREQ2]))
     cg.add(var.set_send_repeats(config[CONF_SEND_REPEATS]))
     cg.add(var.set_send_delay(config[CONF_SEND_DELAY].total_milliseconds))
+    cg.add(var.set_dedup_window(config[CONF_DEDUP_WINDOW].total_milliseconds))
 
     # Hub-level diagnostic sensors (auto_sensors or explicitly configured)
     if CONF_FREQUENCY_SENSOR in config:
@@ -178,6 +223,21 @@ async def to_code(config):
     if CONF_WATCHDOG_RECOVERY_SENSOR in config:
         wd_sens = await esphome_sensor.new_sensor(config[CONF_WATCHDOG_RECOVERY_SENSOR])
         cg.add(var.set_watchdog_recovery_sensor(wd_sens))
+    if CONF_DROP_CRC_FAIL_SENSOR in config:
+        sens = await esphome_sensor.new_sensor(config[CONF_DROP_CRC_FAIL_SENSOR])
+        cg.add(var.set_drop_crc_fail_sensor(sens))
+    if CONF_DROP_TOO_MANY_DESTS_SENSOR in config:
+        sens = await esphome_sensor.new_sensor(config[CONF_DROP_TOO_MANY_DESTS_SENSOR])
+        cg.add(var.set_drop_too_many_dests_sensor(sens))
+    if CONF_DROP_BOUNDS_SENSOR in config:
+        sens = await esphome_sensor.new_sensor(config[CONF_DROP_BOUNDS_SENSOR])
+        cg.add(var.set_drop_bounds_sensor(sens))
+    if CONF_TX_QUEUE_LATENCY_SENSOR in config:
+        sens = await esphome_sensor.new_sensor(config[CONF_TX_QUEUE_LATENCY_SENSOR])
+        cg.add(var.set_tx_queue_latency_sensor(sens))
+    if CONF_DISPATCH_LATENCY_SENSOR in config:
+        sens = await esphome_sensor.new_sensor(config[CONF_DISPATCH_LATENCY_SENSOR])
+        cg.add(var.set_dispatch_latency_sensor(sens))
 
     # Add RadioLib as PlatformIO library dependency.
     # RadioLib's Module.h includes <SPI.h> when RADIOLIB_BUILD_ARDUINO is defined.

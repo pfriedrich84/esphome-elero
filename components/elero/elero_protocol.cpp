@@ -3,6 +3,7 @@
 #include "elero_utils.h"
 #include "elero_packet_validation.h"
 #include "elero_packet_parser.h"
+#include "elero_counter_logic.h"
 #include "esphome/core/log.h"
 #include "esphome/core/helpers.h"
 #include <cstring>
@@ -52,6 +53,8 @@ void Elero::interpret_msg() {
       ESP_LOGV(TAG, "Received packet with bad CRC, dropping");
     }
 
+    this->increment_parser_drop_count(reason);
+
     if (this->packet_dump_pending_update_) {
       this->mark_last_raw_packet_(false, reason);
       this->packet_dump_pending_update_ = false;
@@ -59,18 +62,55 @@ void Elero::interpret_msg() {
     return;
   }
 
+  if (packet.is_status && this->is_duplicate_packet_(packet.src, packet.cnt)) {
+    if (this->packet_dump_pending_update_) {
+      this->mark_last_raw_packet_(true, nullptr);
+      this->packet_dump_pending_update_ = false;
+    }
+    ESP_LOGV(TAG, "Duplicate status from 0x%06x cnt=%d (relay hop), skipping", packet.src, packet.cnt);
+    return;
+  }
+
+  if (packet.is_status) {
+    const uint32_t now_ms = millis();
+    auto counter_it = this->last_seen_counter_.find(packet.src);
+    if (counter_it != this->last_seen_counter_.end()) {
+      auto counter_ms_it = this->last_seen_counter_ms_.find(packet.src);
+      const bool has_counter_activity = counter_ms_it != this->last_seen_counter_ms_.end();
+      const uint32_t last_counter_activity_ms = has_counter_activity ? counter_ms_it->second : 0u;
+      const auto decision = counter_logic::evaluate_status_counter(
+          counter_it->second, packet.cnt, last_counter_activity_ms, now_ms, has_counter_activity);
+      if (!decision.accept) {
+        this->last_seen_counter_ms_[packet.src] = decision.next_activity_ms;
+        ESP_LOGV(TAG, "Stale status counter from 0x%06x cnt=%d last=%d, dropping",
+                 packet.src, packet.cnt, counter_it->second);
+        this->increment_parser_drop_count("stale_counter");
+        if (this->packet_dump_pending_update_) {
+          this->mark_last_raw_packet_(false, "stale_counter");
+          this->packet_dump_pending_update_ = false;
+        }
+        return;
+      }
+      if (counter_logic::is_stale_counter(counter_it->second, packet.cnt)) {
+        ESP_LOGD(TAG, "Resyncing status counter from 0x%06x cnt=%d last=%d after %lums gap",
+                 packet.src, packet.cnt, counter_it->second,
+                 static_cast<unsigned long>(has_counter_activity
+                                               ? static_cast<uint32_t>(now_ms - last_counter_activity_ms)
+                                               : 0u));
+      }
+    }
+    this->last_seen_counter_[packet.src] = packet.cnt;
+    this->last_seen_counter_ms_[packet.src] = now_ms;
+  }
+
   if (this->packet_dump_pending_update_) {
     this->mark_last_raw_packet_(true, nullptr);
     this->packet_dump_pending_update_ = false;
   }
+
   this->rx_count_.fetch_add(1, std::memory_order_relaxed);
   ESP_LOGD(TAG, "rcv'd from 0x%06x: state=0x%02x rssi=%.1f", packet.src, packet.payload[6], packet.rssi);
   ESP_LOGV(TAG, "rcv'd: len=%02d, cnt=%02d, typ=0x%02x, typ2=0x%02x, hop=0x%02x, syst=0x%02x, chl=%02d, src=0x%06x, bwd=0x%06x, fwd=0x%06x, #dst=%02d, dst=0x%06x, rssi=%2.1f, lqi=%2d, crc=%2d, payload=[0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x]", packet.length, packet.cnt, packet.typ, packet.typ2, packet.hop, packet.syst, packet.channel, packet.src, packet.bwd, packet.fwd, packet.num_dests, packet.first_dst, packet.rssi, packet.lqi, packet.crc, packet.payload_1, packet.payload_2, packet.payload[0], packet.payload[1], packet.payload[2], packet.payload[3], packet.payload[4], packet.payload[5], packet.payload[6], packet.payload[7]);
-
-  if (packet.is_status && this->is_duplicate_packet_(packet.src, packet.cnt)) {
-    ESP_LOGV(TAG, "Duplicate status from 0x%06x cnt=%d (relay hop), skipping", packet.src, packet.cnt);
-    return;
-  }
 
   RxResult rx{};
   rx.blind_address = packet.src;
@@ -207,6 +247,8 @@ void Elero::dispatch_rx_result_(const RxResult &rx) {
       }
     }
   }
+
+  this->observe_dispatch_latency_(rx.timestamp_ms);
 }
 
 // ---------------------------------------------------------------------------

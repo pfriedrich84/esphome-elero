@@ -5,11 +5,14 @@ Tool-neutral entry point for coding agents working in this repository. Keep this
 ## Read first
 
 1. [`docs/agent/RULES.md`](docs/agent/RULES.md) — non-negotiable project rules and domain invariants.
-2. [`docs/agent/PROJECT.md`](docs/agent/PROJECT.md) — project context, architecture notes, and important implementation details.
-3. [`docs/agent/CHECKS.md`](docs/agent/CHECKS.md) — validation commands to run before finishing code changes.
-4. [`docs/agent/WORKFLOWS.md`](docs/agent/WORKFLOWS.md) — reusable maintenance workflows.
-5. [`docs/agent/SAFETY.md`](docs/agent/SAFETY.md) — safe/unsafe operations for agents.
-6. [`docs/agent/AUTORESEARCH.md`](docs/agent/AUTORESEARCH.md) — optional metric-driven experiment workflow.
+2. [`docs/agent/CONSTRAINTS.md`](docs/agent/CONSTRAINTS.md) — hardware, RF, compatibility, and tooling constraints.
+3. [`docs/agent/PROJECT.md`](docs/agent/PROJECT.md) — project context, architecture notes, and important implementation details.
+4. [`docs/agent/CODING.md`](docs/agent/CODING.md) — coding conventions, implementation patterns, and external-docs guidance.
+5. [`docs/agent/CHECKS.md`](docs/agent/CHECKS.md) — validation commands to run before finishing code changes.
+6. [`docs/agent/WORKFLOWS.md`](docs/agent/WORKFLOWS.md) — reusable maintenance workflows.
+7. [`docs/agent/SAFETY.md`](docs/agent/SAFETY.md) — safe/unsafe operations for agents.
+8. [`docs/agent/DEFINITION_OF_DONE.md`](docs/agent/DEFINITION_OF_DONE.md) — completion criteria for changes.
+9. [`docs/agent/AUTORESEARCH.md`](docs/agent/AUTORESEARCH.md) — optional metric-driven experiment workflow.
 
 ## Project docs
 
@@ -23,4 +26,4 @@ Tool-neutral entry point for coding agents working in this repository. Keep this
 
 `esphome-elero` is an ESPHome external component for controlling Elero blinds and lights through an ESP32 with a CC1101 radio. The Python layer validates ESPHome YAML and generates C++; the C++ layer owns RF packet parsing, CC1101 state handling, cover/light entities, group covers, runtime adopted blinds, and the optional `/elero` web UI.
 
-Before finishing code changes, run the relevant checks from [`docs/agent/CHECKS.md`](docs/agent/CHECKS.md).
+Before finishing code changes, run the relevant checks from [`docs/agent/CHECKS.md`](docs/agent/CHECKS.md). Use branch names `feat/<short-topic>` or `fix/<short-topic>` for new work; `dev` is the shared development branch.
