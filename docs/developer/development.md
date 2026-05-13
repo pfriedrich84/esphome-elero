@@ -765,7 +765,7 @@ When modifying frontend files in `components/elero_web/frontend/`:
 
 ```bash
 cd components/elero_web/frontend
-npm install          # First time only
+npm install          # Install/update frontend dependencies
 npm run build        # Vite build → generate_header.mjs → elero_web_ui.h
 ```
 

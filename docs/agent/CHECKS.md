@@ -63,6 +63,10 @@ npm run build
 
 Use when changing frontend source, REST API assumptions visible in the UI, or generated `components/elero_web/elero_web_ui.h`. Commit the regenerated header with the source change.
 
+## Dependency-sensitive changes
+
+When changing code or configuration that depends on ESPHome, RadioLib, Svelte, Vite, Flowbite, GitHub Actions, or other third-party APIs, verify current external documentation first. Use Context7 when available for public library/framework docs; otherwise use official docs, release notes, repository READMEs, or source code. Summarize non-trivial documentation sources in the final report.
+
 ## Full local CI simulation
 
 From the repository root, run the relevant independent jobs from CI:

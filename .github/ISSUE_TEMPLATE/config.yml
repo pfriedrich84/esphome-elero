@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: ESPHome documentation
+    url: https://esphome.io/
+    about: For general ESPHome setup and platform questions not specific to esphome-elero.
+  - name: Home Assistant community
+    url: https://community.home-assistant.io/
+    about: For general Home Assistant integration and dashboard questions.
