@@ -74,12 +74,14 @@ void Elero::interpret_msg() {
   if (packet.is_status) {
     const uint32_t now_ms = millis();
     auto counter_it = this->last_seen_counter_.find(packet.src);
-    if (counter_it != this->last_seen_counter_.end() &&
-        counter_logic::is_stale_counter(counter_it->second, packet.cnt)) {
+    if (counter_it != this->last_seen_counter_.end()) {
       auto counter_ms_it = this->last_seen_counter_ms_.find(packet.src);
-      const bool can_resync = counter_ms_it == this->last_seen_counter_ms_.end() ||
-                              counter_logic::should_resync_counter(counter_ms_it->second, now_ms);
-      if (!can_resync) {
+      const bool has_counter_activity = counter_ms_it != this->last_seen_counter_ms_.end();
+      const uint32_t last_counter_activity_ms = has_counter_activity ? counter_ms_it->second : 0u;
+      const auto decision = counter_logic::evaluate_status_counter(
+          counter_it->second, packet.cnt, last_counter_activity_ms, now_ms, has_counter_activity);
+      if (!decision.accept) {
+        this->last_seen_counter_ms_[packet.src] = decision.next_activity_ms;
         ESP_LOGV(TAG, "Stale status counter from 0x%06x cnt=%d last=%d, dropping",
                  packet.src, packet.cnt, counter_it->second);
         this->increment_parser_drop_count("stale_counter");
@@ -89,11 +91,13 @@ void Elero::interpret_msg() {
         }
         return;
       }
-      ESP_LOGD(TAG, "Resyncing status counter from 0x%06x cnt=%d last=%d after %lums gap",
-               packet.src, packet.cnt, counter_it->second,
-               static_cast<unsigned long>(counter_ms_it == this->last_seen_counter_ms_.end()
-                                             ? 0u
-                                             : static_cast<uint32_t>(now_ms - counter_ms_it->second)));
+      if (counter_logic::is_stale_counter(counter_it->second, packet.cnt)) {
+        ESP_LOGD(TAG, "Resyncing status counter from 0x%06x cnt=%d last=%d after %lums gap",
+                 packet.src, packet.cnt, counter_it->second,
+                 static_cast<unsigned long>(has_counter_activity
+                                               ? static_cast<uint32_t>(now_ms - last_counter_activity_ms)
+                                               : 0u));
+      }
     }
     this->last_seen_counter_[packet.src] = packet.cnt;
     this->last_seen_counter_ms_[packet.src] = now_ms;

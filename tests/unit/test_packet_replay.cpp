@@ -115,6 +115,28 @@ TEST(PacketReplay, CounterLogicAllowsResyncAfterLongGap) {
   EXPECT_TRUE(counter_logic::should_resync_counter(0xFFFF0000u, 100u));
 }
 
+TEST(PacketReplay, CounterLogicRequiresQuietGapAfterStaleTraffic) {
+  const uint8_t last_counter = 8;
+  const uint8_t stale_counter = 7;
+  const uint32_t first_activity_ms = 1000;
+  const uint32_t stale_activity_ms = first_activity_ms + counter_logic::COUNTER_RESYNC_GAP_MS - 1;
+
+  auto first_stale = counter_logic::evaluate_status_counter(
+      last_counter, stale_counter, first_activity_ms, stale_activity_ms);
+  EXPECT_FALSE(first_stale.accept);
+  EXPECT_EQ(first_stale.next_activity_ms, stale_activity_ms);
+
+  auto repeated_stale = counter_logic::evaluate_status_counter(
+      last_counter, stale_counter, first_stale.next_activity_ms,
+      first_activity_ms + counter_logic::COUNTER_RESYNC_GAP_MS);
+  EXPECT_FALSE(repeated_stale.accept);
+
+  auto after_quiet_gap = counter_logic::evaluate_status_counter(
+      last_counter, stale_counter, repeated_stale.next_activity_ms,
+      repeated_stale.next_activity_ms + counter_logic::COUNTER_RESYNC_GAP_MS);
+  EXPECT_TRUE(after_quiet_gap.accept);
+}
+
 TEST(PacketReplay, DropReasonsMapToStableDiagnosticBuckets) {
   using parser_diagnostics::DropBucket;
   EXPECT_EQ(parser_diagnostics::bucket_for_reject_reason("bad_crc"), DropBucket::CRC_FAIL);
