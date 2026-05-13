@@ -303,13 +303,27 @@ button:
 Fasst mehrere Rollläden zu einer Gruppe zusammen. Die Gruppe erscheint in Home Assistant als eigenes Cover-Entity und steuert alle Mitglieder gleichzeitig mit einem einzigen Befehl.
 
 ```yaml
+cover:
+  - platform: elero
+    id: cover_schlafzimmer  # diese ESPHome-ID wird unten in members verwendet
+    name: "Schlafzimmer"
+    blind_address: 0xa831e5
+    channel: 4
+    remote_address: 0xf0d008
+
+  - platform: elero
+    id: cover_wohnzimmer
+    name: "Wohnzimmer"
+    blind_address: 0xb912f3
+    channel: 4
+    remote_address: 0xf0d008
+
 elero_group:
   - name: "Alle Rollläden"
     assumed_state: true
     members:
       - cover_schlafzimmer
       - cover_wohnzimmer
-      - cover_kueche
 ```
 
 | Parameter | Typ | Pflicht | Standard | Beschreibung |
@@ -319,10 +333,14 @@ elero_group:
 | `assumed_state` | Boolean | Nein | `true` | `true` = Hoch/Runter-Buttons immer aktiv, da keine Positionsrückmeldung von der Gruppe erfolgt |
 
 **Hinweise:**
+- Die Einträge unter `members` sind die ESPHome-IDs der einzelnen `cover: platform: elero`-Blöcke (`id:`), nicht `name`, `blind_address` oder die Home-Assistant-Entity-ID.
+- Vergib für jedes Gruppenmitglied am besten explizit eine stabile `id:` wie `cover_schlafzimmer`; diese ID wird dann unverändert in `members` referenziert.
 - Es müssen mindestens 2 und maximal 10 Mitglieder angegeben werden (RF-Paketgrößenlimit).
 - Wenn alle Mitglieder dieselbe `remote_address` und denselben `channel` verwenden, wird ein einzelnes natives Multi-Destination-RF-Paket gesendet — dies ist effizienter als einzelne Befehle.
 - Andernfalls werden die Befehle einzeln nacheinander an jedes Mitglied gesendet.
 - Alle Mitglieder müssen als `cover: platform: elero` konfiguriert sein.
+
+**Fehlersuche:** Wenn ESPHome beim Kompilieren meldet, dass ein Mitglied nicht aufgelöst werden kann, prüfe ob das betreffende Cover eine `id:` hat und ob die Schreibweise in `members` exakt übereinstimmt.
 
 ---
 

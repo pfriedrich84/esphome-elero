@@ -433,6 +433,21 @@ light:
 Mehrere Rollläden können zu einer Gruppe zusammengefasst werden. Die Gruppe erscheint in Home Assistant als eigenes Cover-Entity und steuert alle Mitglieder gleichzeitig.
 
 ```yaml
+cover:
+  - platform: elero
+    id: cover_schlafzimmer  # diese ESPHome-ID wird unten in members verwendet
+    name: "Schlafzimmer"
+    blind_address: 0xa831e5
+    channel: 4
+    remote_address: 0xf0d008
+
+  - platform: elero
+    id: cover_wohnzimmer
+    name: "Wohnzimmer"
+    blind_address: 0xb912f3
+    channel: 4
+    remote_address: 0xf0d008
+
 elero_group:
   - name: "Alle Rollläden"
     assumed_state: true
@@ -448,9 +463,12 @@ elero_group:
 | `assumed_state` | Boolean | Nein | `true` | `true` = Hoch/Runter-Buttons immer aktiv (keine Positionsrückmeldung von der Gruppe) |
 
 **Hinweise:**
+- Die Einträge unter `members` sind die ESPHome-IDs der einzelnen `cover: platform: elero`-Blöcke (`id:`), nicht `name`, `blind_address` oder die Home-Assistant-Entity-ID.
+- Vergib für jedes Gruppenmitglied am besten explizit eine stabile `id:` wie `cover_schlafzimmer`; diese ID wird dann unverändert in `members` referenziert.
 - Eine Gruppe benötigt mindestens 2 und maximal 10 Mitglieder.
 - Wenn alle Mitglieder dieselbe `remote_address` und denselben `channel` verwenden, wird ein einzelnes natives Multi-Destination-RF-Paket gesendet (effizienter).
 - Andernfalls werden die Befehle einzeln nacheinander an jedes Mitglied gesendet.
+- Wenn ESPHome beim Kompilieren meldet, dass ein Mitglied nicht aufgelöst werden kann, prüfe `id:` und Schreibweise in `members`.
 - Vollständige Parameterliste: [Konfigurationsreferenz](docs/user/configuration.md#plattform-elero_group-gruppensteuerung)
 
 ---
