@@ -2,6 +2,13 @@
 
 This changelog tracks changes to repository governance and agent instructions. It is not the user-facing release changelog.
 
+## 2026-05-17
+
+- Refreshed stale developer documentation references for user docs, active Svelte frontend source, CI triggers/jobs, and branch conventions.
+- Added `docs/**` as an officially supported CI branch pattern for documentation/governance work, with direct pushes limited to markdown validation and documented as documentation-only.
+- Documented release automation governance in `WORKFLOWS.md`.
+- Clarified that `frontend-legacy` is retained as reference/rollback source until a future cleanup decides its lifecycle.
+
 ## 2026-05-13
 
 - Added standard modular agent governance files:

@@ -17,7 +17,9 @@ Lightweight decision memory for future agents. For major architecture decisions,
 ### Use `dev` as the shared integration branch
 
 - `main` is the release/default branch and `dev` is the shared development branch.
-- CI is configured to run on `dev`, `main`, `feat/**`, and `fix/**`.
+- CI is configured to run on `dev`, `main`, `feat/**`, `fix/**`, and `docs/**`.
+- Direct pushes to `docs/**` run markdown validation only; full CI still runs when the branch is opened as a pull request to `main` or `dev`.
+- `docs/**` branches are documentation/governance-only and must not carry code, dependency, generated artifact, or runtime workflow changes.
 
 ### Prefer native group RF packets only when command profiles match
 
