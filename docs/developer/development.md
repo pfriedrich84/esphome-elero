@@ -57,9 +57,16 @@ esphome-elero/
 ├── example.yaml                       # Complete ESPHome config example
 ├── pyproject.toml                     # Ruff linting + pytest config
 ├── docs/
-│   ├── INSTALLATION.md                # Step-by-step hardware and software setup
-│   ├── CONFIGURATION.md               # Full parameter reference
-│   └── examples/                      # Additional YAML examples (.gitkeep)
+│   ├── README.md                      # Documentation index
+│   ├── user/
+│   │   ├── installation.md            # Step-by-step hardware and software setup
+│   │   ├── configuration.md           # Full parameter reference
+│   │   └── examples/                  # Additional YAML examples
+│   ├── developer/
+│   │   ├── architecture.md            # Module seams and architecture notes
+│   │   ├── development.md             # This developer guide
+│   │   └── adr/                       # Architecture decision records
+│   └── agent/                         # Tool-neutral agent operating docs
 ├── tests/
 │   └── configs/                       # ESPHome compile test variants (CI matrix)
 │       ├── compile_test.yaml          # Full features: hub + cover + light + web + monitoring sensors
@@ -103,16 +110,21 @@ esphome-elero/
         │   ├── __init__.py            # Switch schema (depends on elero_web)
         │   ├── elero_web_switch.h     # Switch class header
         │   └── elero_web_switch.cpp   # Switch logic (31 lines)
-        └── frontend/                  # Web UI source (Vite + Alpine.js build)
-            ├── package.json           # npm project (Vite + Alpine.js)
-            ├── package-lock.json      # Dependency lockfile
-            ├── vite.config.js         # Vite bundler config (single-file output)
-            ├── index.html             # HTML template (~383 lines)
-            ├── scripts/
-            │   └── generate_header.mjs  # Post-build: HTML → elero_web_ui.h
-            └── src/
-                ├── main.js            # Frontend application logic (~527 lines)
-                └── style.css          # Frontend styles (386 lines)
+        ├── frontend/                  # Active Web UI source (Svelte 5 + Vite + Flowbite/Tailwind)
+        │   ├── package.json           # npm project
+        │   ├── package-lock.json      # Dependency lockfile
+        │   ├── svelte.config.js       # Svelte configuration
+        │   ├── vite.config.js         # Vite bundler config (single-file output)
+        │   ├── index.html             # HTML template
+        │   ├── scripts/
+        │   │   └── generate_header.mjs  # Post-build: HTML → elero_web_ui.h
+        │   └── src/
+        │       ├── App.svelte         # Main Svelte application
+        │       ├── app.css            # App-level styles
+        │       ├── main.js            # Frontend entry point
+        │       ├── style.css          # Global styles
+        │       └── lib/               # API, stores, and utility helpers
+        └── frontend-legacy/           # Retained Alpine.js frontend reference/rollback source
 ```
 
 ---
@@ -496,12 +508,13 @@ All endpoints are served at `http://<device-ip>/elero`. CORS is restricted to sa
 
 ### Web UI Frontend Build System
 
-The web UI is built from source files in `components/elero_web/frontend/` using **Vite** with the `vite-plugin-singlefile` plugin and **Alpine.js** for reactivity:
+The active web UI is built from source files in `components/elero_web/frontend/` using **Svelte 5**, **Vite**, **Flowbite/Flowbite-Svelte**, **Tailwind CSS**, and the `vite-plugin-singlefile` plugin:
 
-- **Build command:** `cd components/elero_web/frontend && npm run build`
+- **Build command:** `cd components/elero_web/frontend && npm install && npm run build`
 - **Build pipeline:** `vite build` → produces `dist/index.html` (single file with inlined CSS/JS) → `scripts/generate_header.mjs` → writes `../elero_web_ui.h` (C++ raw string literal wrapped in `PROGMEM`)
 - **Output:** `elero_web_ui.h` is auto-generated and should not be edited by hand
 - **Dev server:** `npm run dev` starts Vite dev server for frontend development
+- **Legacy source:** `components/elero_web/frontend-legacy/` contains the previous Alpine.js implementation for reference/rollback only; do not build or edit it unless a maintenance task explicitly targets the legacy frontend.
 
 ---
 
@@ -799,15 +812,20 @@ The typical workflow for a new installation:
 
 ## CI Pipeline
 
-CI runs automatically on every push to `main`, `beta`, `devops` and on pull requests to `main`. Defined in `.github/workflows/ci.yml`.
+CI runs automatically on pushes to `main`, `dev`, `feat/**`, `fix/**`, and `docs/**`, and on pull requests targeting `main` or `dev`. Pushes to `docs/**` run markdown validation only; full CI runs on implementation branches and PRs to `main` or `dev`. `docs/**` branches are documentation/governance-only and must not carry code, dependency, generated artifact, or runtime workflow changes. Defined in `.github/workflows/ci.yml`.
 
 ### Jobs
 
 | Job | What it does | Trigger |
 |-----|-------------|---------|
-| **lint** | `ruff check components/` + `ruff format --check components/` | Every push/PR |
-| **esphome-compile** | `esphome compile` across 8 config variants (matrix, `fail-fast: false`) | Every push/PR |
-| **auto-issue creation** | Parses compile log for GCC warnings/errors, creates GitHub issues labeled `ci-detected` | After each compile (even on success) |
+| **markdown** | `python3 scripts/check_markdown_links.py` | Every push/PR |
+| **lint** | `ruff check components/` + `ruff format --check components/` | Every implementation push/PR; skipped on direct `docs/**` pushes |
+| **esphome-compile** | `esphome compile` across 8 config variants (matrix, `fail-fast: false`) | Every implementation push/PR; skipped on direct `docs/**` pushes |
+| **frontend-build** | `npm install` + `npm run build` from `components/elero_web/frontend/`, then verifies generated `elero_web_ui.h` | Every implementation push/PR; skipped on direct `docs/**` pushes |
+| **unit-tests** | CMake configure/build plus `ctest --output-on-failure -V` | Every implementation push/PR; skipped on direct `docs/**` pushes |
+| **python-tests** | `pytest tests/python/ -v --tb=short` with pinned ESPHome | Every implementation push/PR; skipped on direct `docs/**` pushes |
+| **ci-ok** | Verifies markdown and required heavy jobs passed; accepts intentional heavy-job skips for direct `docs/**` pushes | Every push/PR |
+| **auto-issue creation** | Parses compile log for GCC warnings/errors, creates GitHub issues labeled `ci-detected` on push events | After each compile job |
 
 ### Compile Test Matrix (8 configs)
 
@@ -972,10 +990,10 @@ The `tests/configs/compile_test.yaml` includes system monitoring sensors for Hom
 
 - Follow the existing naming conventions for C++ and Python code.
 - Keep the `EleroBlindBase` and `EleroLightBase` interfaces minimal — the hub should not depend on cover/light internals.
-- Test changes on real hardware before opening a pull request.
+- Test changes on real hardware when the change depends on RF/device behavior; otherwise state clearly which local/CI checks were run and that hardware validation was not performed.
 - Document new configuration parameters in both `README.md` and `docs/user/configuration.md`.
-- When modifying the web UI, rebuild `elero_web_ui.h` and commit it alongside the source changes.
-- The primary development branch convention used by automation is `claude/<session-id>`.
+- When modifying the active web UI, rebuild `elero_web_ui.h` and commit it alongside the source changes.
+- Use `dev` as the shared integration branch and prefer `feat/<short-topic>`, `fix/<short-topic>`, or `docs/<short-topic>` branches so push CI runs predictably. Use `docs/<short-topic>` only for documentation/governance changes because direct pushes there run markdown validation only; move to `feat/**` or `fix/**` if code, dependencies, generated artifacts, or runtime workflows need to change.
 
 ### Before merging
 

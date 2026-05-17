@@ -9,8 +9,9 @@ Use these branch names for new work so GitHub Actions CI runs predictably:
 - `dev` for the shared development branch.
 - `feat/<short-topic>` for feature work.
 - `fix/<short-topic>` for bug fixes.
+- `docs/<short-topic>` for documentation-only or governance cleanup work.
 
-Avoid legacy prefixes such as `feature/`, `bugfix/`, ad-hoc names, or direct work on `main`. CI is configured for pushes to `main`, `dev`, `feat/**`, and `fix/**`, plus pull requests targeting `main` or `dev`.
+Avoid legacy prefixes such as `feature/`, `bugfix/`, ad-hoc names, or direct work on `main` unless a maintainer explicitly requests a different branch. CI is configured for pushes to `main`, `dev`, `feat/**`, `fix/**`, and `docs/**`, plus pull requests targeting `main` or `dev`. Pushes to `docs/**` run markdown validation only; open a PR to `main` or `dev` when full CI is needed before merge. Do not carry code, dependency, generated artifact, or runtime workflow changes on `docs/**` branches. Other branch names are validated when opened as PRs to `main` or `dev`.
 
 ## Standard change workflow
 
@@ -63,6 +64,16 @@ If one check fails, continue with independent checks where practical so the fina
 3. Run `npm install`, then `npm run build` from the frontend directory. Prefer `npm ci` only after the frontend lockfile is confirmed in sync with `package.json`.
 4. Verify `components/elero_web/elero_web_ui.h` changed only through the build.
 5. Run relevant C++/ESPHome checks if backend handlers changed.
+
+## Release governance
+
+Release automation is defined in `.github/workflows/release.yml`.
+
+- Releases run weekly on Saturday at 06:00 UTC and can also be triggered manually with `workflow_dispatch`.
+- The workflow creates date-based tags in `YYYY-MM-NN` format only when non-merge commits exist since the previous date-based release tag.
+- Release notes are generated from conventional-commit-style prefixes (`feat`, `fix`, `perf`, `ci`/`devops`, `docs`, `refactor`/`test`).
+- The workflow needs `contents: write` and uses the repository `GITHUB_TOKEN` through the `gh` CLI to create tags and GitHub releases.
+- Do not change release permissions, tag format, or published artifact behavior without focused review and validation.
 
 ## Dependency documentation workflow
 

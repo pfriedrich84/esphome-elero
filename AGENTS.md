@@ -14,6 +14,8 @@ Tool-neutral entry point for coding agents working in this repository. Keep this
 8. [`docs/agent/DEFINITION_OF_DONE.md`](docs/agent/DEFINITION_OF_DONE.md) — completion criteria for changes.
 9. [`docs/agent/AUTORESEARCH.md`](docs/agent/AUTORESEARCH.md) — optional metric-driven experiment workflow.
 
+Supporting agent docs live in `docs/agent/` for review priorities, supply-chain guidance, durable memory, decision logs, anti-patterns, governance assessment, changelog, and domain vocabulary. Read the relevant supporting file before changing that area.
+
 ## Project docs
 
 - [`docs/developer/architecture.md`](docs/developer/architecture.md) — module seams and architecture notes.
@@ -26,4 +28,4 @@ Tool-neutral entry point for coding agents working in this repository. Keep this
 
 `esphome-elero` is an ESPHome external component for controlling Elero blinds and lights through an ESP32 with a CC1101 radio. The Python layer validates ESPHome YAML and generates C++; the C++ layer owns RF packet parsing, CC1101 state handling, cover/light entities, group covers, runtime adopted blinds, and the optional `/elero` web UI.
 
-Before finishing code changes, run the relevant checks from [`docs/agent/CHECKS.md`](docs/agent/CHECKS.md). Use branch names `feat/<short-topic>` or `fix/<short-topic>` for new work; `dev` is the shared development branch.
+Before finishing code changes, run the relevant checks from [`docs/agent/CHECKS.md`](docs/agent/CHECKS.md). Use branch names `feat/<short-topic>`, `fix/<short-topic>`, or `docs/<short-topic>` for new work; `dev` is the shared development branch. Use `docs/<short-topic>` only for documentation/governance changes because direct pushes there run markdown validation only. Do not carry code, dependency, generated artifact, or runtime workflow changes on `docs/**` branches.

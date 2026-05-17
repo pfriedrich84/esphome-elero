@@ -7,6 +7,7 @@ on:
       - dev
       - feat/**
       - fix/**
+      - docs/**
   pull_request:
     branches:
       - main
@@ -21,7 +22,14 @@ permissions:
   contents: read
 
 jobs:
+  markdown:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/check_markdown_links.py
+
   lint:
+    if: github.event_name != 'push' || !startsWith(github.ref, 'refs/heads/docs/')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -34,6 +42,7 @@ jobs:
       - run: ruff format --check components/
 
   esphome-compile:
+    if: github.event_name != 'push' || !startsWith(github.ref, 'refs/heads/docs/')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -136,6 +145,7 @@ jobs:
             }
 
   frontend-build:
+    if: github.event_name != 'push' || !startsWith(github.ref, 'refs/heads/docs/')
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -167,6 +177,7 @@ jobs:
           retention-days: 14
 
   unit-tests:
+    if: github.event_name != 'push' || !startsWith(github.ref, 'refs/heads/docs/')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -178,6 +189,7 @@ jobs:
         run: cd tests/build && ctest --output-on-failure -V
 
   python-tests:
+    if: github.event_name != 'push' || !startsWith(github.ref, 'refs/heads/docs/')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -190,11 +202,23 @@ jobs:
 
   ci-ok:
     if: always()
-    needs: [lint, esphome-compile, frontend-build, unit-tests, python-tests]
+    needs: [markdown, lint, esphome-compile, frontend-build, unit-tests, python-tests]
     runs-on: ubuntu-latest
+    env:
+      DOCS_PUSH: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/docs/') }}
     steps:
       - name: Verify all jobs passed
         run: |
+          if [[ "${{ needs.markdown.result }}" != "success" ]]; then
+            echo "::error::Markdown validation failed"
+            exit 1
+          fi
+
+          if [[ "$DOCS_PUSH" == "true" ]]; then
+            echo "docs/** push: markdown validation passed; heavier jobs intentionally skipped"
+            exit 0
+          fi
+
           if [[ "${{ needs.lint.result }}" != "success" ]] ||
              [[ "${{ needs.esphome-compile.result }}" != "success" ]] ||
              [[ "${{ needs.frontend-build.result }}" != "success" ]] ||

@@ -1,6 +1,6 @@
 # Repository Governance Assessment
 
-Last reviewed: 2026-05-13
+Last reviewed: 2026-05-17
 
 ## Maturity summary
 
@@ -26,18 +26,26 @@ Last reviewed: 2026-05-13
 - Documented external documentation/Context7 expectations for dependency-sensitive changes.
 - Documented frontend dependency workflow and noted lockfile drift risk.
 
+## Structure audit — 2026-05-17
+
+- Current topology is coherent: root `AGENTS.md` is the canonical agent operating contract; `docs/README.md` is the documentation index; `docs/agent/` contains modular governance; `docs/user/` contains user-facing setup/configuration; `docs/developer/` contains architecture and development guidance; `docs/developer/adr/` is reserved for significant architecture decision records.
+- No documentation files should be merged, moved, or deleted as part of the current cleanup. Apparent overlap is intentional: `README.md` is a user quickstart, `docs/user/configuration.md` is the full configuration reference, and `docs/developer/development.md` is the detailed maintainer guide.
+- Tool-specific files are shims or command references rather than competing governance: `CLAUDE.md` points to `AGENTS.md`, and `.claude/skills/*.md` documents Claude command workflows.
+- `components/elero_web/frontend-legacy/` is not duplicate active source; it is documented reference/rollback material until a future cleanup explicitly decides its lifecycle.
+- Preserve content when tightening structure: prefer links, ownership notes, and stale-status labels before moving or deleting files.
+
 ## Remaining governance debt
 
-- No formal ADRs exist yet under `docs/developer/adr/`; significant future architecture changes should add one.
+- No formal ADR records exist yet beyond `docs/developer/adr/README.md`; significant future architecture changes should add one.
 - Supply-chain scanning is optional and not wired into CI.
-- `frontend-legacy` remains in the repository; its lifecycle/status should be documented if it is still intentionally retained.
+- `frontend-legacy` remains in the repository as documented reference/rollback source; decide in a future cleanup whether to retain or remove it.
 - `components/elero_web/frontend/package-lock.json` is not currently compatible with `npm ci`; keep CI on `npm install` or deliberately refresh the lockfile in a focused dependency-maintenance change.
 - Hardware validation remains external/manual; docs correctly avoid implying automated RF hardware coverage.
 
 ## Recommended next steps
 
 1. Add ADRs for major RF/runtime design decisions when they next change.
-2. Decide whether `components/elero_web/frontend-legacy/` is retained for rollback/reference or should be removed in a future cleanup.
+2. Decide whether `components/elero_web/frontend-legacy/` should remain as rollback/reference material or be removed in a future cleanup.
 3. Refresh the active frontend lockfile in a focused dependency-maintenance change, then consider switching CI to `npm ci`.
 4. Consider optional `npm audit` or OSV scanning for periodic dependency reviews.
 5. Keep issue/PR templates lightweight; adjust after observing contributor friction.
