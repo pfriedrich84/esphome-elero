@@ -233,6 +233,8 @@ void Elero::tx_abort_() {
 // is_duplicate_packet_ — suppress relay-hop duplicates of the same packet
 // ---------------------------------------------------------------------------
 bool Elero::is_duplicate_packet_(uint32_t src, uint8_t cnt) {
+  if (this->dedup_window_ms_ == 0)
+    return false;
   uint32_t now = millis();
   uint64_t key = (static_cast<uint64_t>(src) << 8) | cnt;
   auto it = this->dedup_map_.find(key);
@@ -245,6 +247,10 @@ bool Elero::is_duplicate_packet_(uint32_t src, uint8_t cnt) {
 }
 
 void Elero::prune_dedup_map_() {
+  if (this->dedup_window_ms_ == 0) {
+    this->dedup_map_.clear();
+    return;
+  }
   uint32_t now = millis();
   if (now - this->last_dedup_prune_ms_ < RADIO_WATCHDOG_MS)
     return;

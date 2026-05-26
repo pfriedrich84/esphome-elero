@@ -180,7 +180,7 @@ elero:
   freq2: 0x21            # Optional: Frequenz-Register FREQ2 (Standard: 0x21)
   send_repeats: 1        # Optional: RF-Pakete pro Befehl (1-20, Standard: 1 = keine Wiederholung)
   send_delay: 0ms        # Optional: Pause zwischen Wiederholungen (Standard: 0ms)
-  dedup_window: 500ms    # Optional: Duplikat-Unterdrückung für Statuspakete
+  dedup_window: 0ms      # Optional: 0ms=aus (Default), sonst z.B. 500ms für Duplikat-Unterdrückung
 ```
 
 | Parameter | Typ | Pflicht | Standard | Beschreibung |
@@ -192,7 +192,7 @@ elero:
 | `freq2` | Hex (0x00-0xFF) | Nein | `0x21` | CC1101 FREQ2 Register |
 | `send_repeats` | Int (1-20) | Nein | `1` | RF-Pakete pro Befehl; `1` bedeutet keine Wiederholung |
 | `send_delay` | Zeitdauer | Nein | `0ms` | Pause zwischen Wiederholungen |
-| `dedup_window` | Zeitdauer | Nein | `500ms` | Statuspaket-Duplikate gleicher Quelle/Zähler unterdrücken; bei Doppelstatus auf `1s`-`2s` erhöhen |
+| `dedup_window` | Zeitdauer | Nein | `0ms` | `0ms` deaktiviert Deduplication (Default); zum Unterdrücken von Statuspaket-Duplikaten gleicher Quelle/Zähler z.B. `500ms` setzen |
 | `auto_sensors` | Boolean | Nein | `true` | Hub-Diagnose-Sensoren automatisch erstellen |
 
 ### Plattform `cover` (Rollladen)
