@@ -101,6 +101,11 @@ TEST(PacketReplay, DedupWindowSuppressesRelayDuplicate) {
   EXPECT_TRUE(dedup_logic::should_prune_entry(1500, 1000, 500));
 }
 
+TEST(PacketReplay, DedupDisabledWindowNeverSuppressesAndAlwaysPrunes) {
+  EXPECT_FALSE(dedup_logic::is_duplicate_within_window(1200, 1000, 0));
+  EXPECT_TRUE(dedup_logic::should_prune_entry(1200, 1000, 0));
+}
+
 TEST(PacketReplay, CounterLogicRejectsStaleValuesAndAllowsWrapForward) {
   EXPECT_FALSE(counter_logic::is_stale_counter(7, 8));
   EXPECT_TRUE(counter_logic::is_stale_counter(8, 8));

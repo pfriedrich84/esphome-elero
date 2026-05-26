@@ -85,8 +85,8 @@ _LATENCY_SENSOR_SCHEMA = esphome_sensor.sensor_schema(
 def _validate_dedup_window(config):
     """Keep dedup tuning within safe operational bounds."""
     window_ms = config[CONF_DEDUP_WINDOW].total_milliseconds
-    if window_ms < 100 or window_ms > 60000:
-        raise cv.Invalid("dedup_window must be between 100ms and 60s")
+    if window_ms != 0 and (window_ms < 100 or window_ms > 60000):
+        raise cv.Invalid("dedup_window must be 0ms (disabled) or between 100ms and 60s")
     return config
 
 
@@ -131,7 +131,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_FREQ2, default=0x21): cv.hex_int_range(min=0x0, max=0xFF),
             cv.Optional(CONF_SEND_REPEATS, default=1): cv.int_range(min=1, max=20),
             cv.Optional(CONF_SEND_DELAY, default="0ms"): cv.positive_time_period_milliseconds,
-            cv.Optional(CONF_DEDUP_WINDOW, default="500ms"): cv.positive_time_period_milliseconds,
+            cv.Optional(CONF_DEDUP_WINDOW, default="0ms"): cv.positive_time_period_milliseconds,
             cv.Optional(CONF_AUTO_SENSORS, default=True): cv.boolean,
             cv.Optional(CONF_FREQUENCY_SENSOR): _FREQUENCY_SENSOR_SCHEMA,
             cv.Optional(CONF_RX_COUNT_SENSOR): _RX_COUNT_SENSOR_SCHEMA,

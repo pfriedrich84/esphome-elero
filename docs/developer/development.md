@@ -320,7 +320,7 @@ Key constants (defined in `elero.h` unless noted):
 | `ELERO_MAX_RX_PER_LOOP` | 8 | Max packets drained per `dispatch_rx_result_()` cycle |
 | `ELERO_POLL_STAGGER_MS` | 5 000 ms | Stagger offset between cover poll timers |
 | `ELERO_IMMEDIATE_POLL_MIN_INTERVAL_MS` | 2 000 ms | Minimum interval between `schedule_immediate_poll()` calls per blind |
-| `ELERO_DEDUP_WINDOW_MS` | 500 ms | Default packet deduplication time window (src, cnt pairs), configurable via `dedup_window` |
+| `ELERO_DEDUP_WINDOW_MS` | 0 ms | Default packet deduplication window disabled (opt-in via `dedup_window`; src, cnt pairs) |
 | `ELERO_STOP_REPEAT_COUNT` | 2 | Stop commands queued on auto-stop (x2 RF packets each) |
 | `ELERO_TX_LATENCY_COMPENSATION_MS` | 300 ms | Position check lead time (accounts for multi-cover queue contention) |
 | `ELERO_STOP_VERIFY_DELAY_MS` | 2 000 ms | Delay before polling to verify motor stopped (give blind time to broadcast) |
