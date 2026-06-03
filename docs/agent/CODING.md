@@ -27,7 +27,7 @@ Project-specific coding guidance for implementation agents.
 
 - Edit frontend source under `components/elero_web/frontend/`, then rebuild the generated header.
 - Preserve backend REST behavior for auth, same-origin/CORS, JSON escaping, and disabled UI.
-- Prefer lockfile-based frontend installs once lockfiles are in sync; until then use the documented `npm install` workflow and avoid unrelated lockfile churn.
+- Use lockfile-based frontend installs with `npm ci`; refresh lockfiles only in focused dependency-maintenance changes and avoid unrelated lockfile churn.
 
 ## External documentation
 

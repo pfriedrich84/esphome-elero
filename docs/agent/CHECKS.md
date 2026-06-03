@@ -57,7 +57,7 @@ Use when changing ESPHome schemas, generated C++ wiring, component registration,
 From `components/elero_web/frontend/`:
 
 ```bash
-npm install
+npm ci
 npm run build
 ```
 

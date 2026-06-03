@@ -24,7 +24,7 @@ Run the smallest relevant checks from `CHECKS.md`:
 - Python/schema: Ruff + Python tests
 - C++ logic: CMake build + CTest
 - ESPHome integration: compile fixture(s)
-- Frontend: `npm install` + `npm run build` from `components/elero_web/frontend/`
+- Frontend: `npm ci` + `npm run build` from `components/elero_web/frontend/`
 
 If a check cannot run locally because tooling is missing, state that clearly and rely on CI where appropriate.
 
