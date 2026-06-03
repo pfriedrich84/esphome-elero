@@ -1,0 +1,25 @@
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    cooldown:
+      default-days: 3
+    open-pull-requests-limit: 3
+
+  - package-ecosystem: "npm"
+    directory: "/components/elero_web/frontend"
+    schedule:
+      interval: "monthly"
+    cooldown:
+      default-days: 3
+    open-pull-requests-limit: 3
+
+  - package-ecosystem: "npm"
+    directory: "/components/elero_web/frontend-legacy"
+    schedule:
+      interval: "monthly"
+    cooldown:
+      default-days: 3
+    open-pull-requests-limit: 1

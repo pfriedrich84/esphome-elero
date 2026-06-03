@@ -1,6 +1,6 @@
 # Repository Governance Assessment
 
-Last reviewed: 2026-05-17
+Last reviewed: 2026-06-03
 
 ## Maturity summary
 
@@ -10,6 +10,7 @@ Last reviewed: 2026-05-17
 - Supply-chain maturity: developing
 - Governance consistency: operational
 - Governance drift risk: low to medium
+- Platform governance maturity: developing
 
 ## Strengths
 
@@ -23,6 +24,8 @@ Last reviewed: 2026-05-17
 
 - Added missing standard agent governance files for constraints, coding, review, supply chain, memory, decisions, anti-patterns, definition of done, assessment, and governance changelog.
 - Added GitHub issue and PR templates.
+- Added root `LICENSE` to match the GPLv3 README badge/link and make repository licensing visible to GitHub.
+- Added root `SECURITY.md` with public guidance for sensitive reports, secrets, private RF captures, and security-sensitive contribution areas.
 - Documented external documentation/Context7 expectations for dependency-sensitive changes.
 - Documented frontend dependency workflow and noted lockfile drift risk.
 
@@ -33,6 +36,17 @@ Last reviewed: 2026-05-17
 - Tool-specific files are shims or command references rather than competing governance: `CLAUDE.md` points to `AGENTS.md`, and `.claude/skills/*.md` documents Claude command workflows.
 - `components/elero_web/frontend-legacy/` is not duplicate active source; it is documented reference/rollback material until a future cleanup explicitly decides its lifecycle.
 - Preserve content when tightening structure: prefer links, ownership notes, and stale-status labels before moving or deleting files.
+
+## Platform and governance observations — 2026-06-03
+
+- Markdown local-link validation passes with `python3 scripts/check_markdown_links.py`.
+- Repository is public and uses `main` as the default branch.
+- Secret scanning and push protection are enabled in GitHub repository settings.
+- Vulnerability alerts and Dependabot security updates are enabled.
+- `.github/dependabot.yml` defines monthly Dependabot version updates for GitHub Actions and npm frontend dependencies with a 3-day cooldown.
+- `main` branch protection is enabled through `.github/scripts/protect-main.sh`: `ci-ok` is required, strict status checks are enabled, force pushes are blocked, and branch deletion is blocked.
+- Code scanning/CodeQL status is not established from repository files; GitHub API returned no analysis.
+- GitHub Actions are enabled and currently allow all actions; workflow files pin common first-party actions by major version.
 
 ## Remaining governance debt
 
