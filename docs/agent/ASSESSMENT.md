@@ -42,16 +42,14 @@ Last reviewed: 2026-06-03
 - Markdown local-link validation passes with `python3 scripts/check_markdown_links.py`.
 - Repository is public and uses `main` as the default branch.
 - Secret scanning and push protection are enabled in GitHub repository settings.
-- Vulnerability alerts are enabled; Dependabot security updates were previously disabled and should be enabled as a platform setting.
-- `.github/dependabot.yml` now defines monthly Dependabot version updates for GitHub Actions and npm frontend dependencies with a 3-day cooldown.
-- `main` branch protection was not enabled when checked through the GitHub API; `.github/scripts/protect-main.sh` remains the intended idempotent setup path.
+- Vulnerability alerts and Dependabot security updates are enabled.
+- `.github/dependabot.yml` defines monthly Dependabot version updates for GitHub Actions and npm frontend dependencies with a 3-day cooldown.
+- `main` branch protection is enabled through `.github/scripts/protect-main.sh`: `ci-ok` is required, strict status checks are enabled, force pushes are blocked, and branch deletion is blocked.
 - Code scanning/CodeQL status is not established from repository files; GitHub API returned no analysis.
 - GitHub Actions are enabled and currently allow all actions; workflow files pin common first-party actions by major version.
 
 ## Remaining governance debt
 
-- `main` branch protection still needs to be applied as a platform setting using `.github/scripts/protect-main.sh`.
-- Dependabot security updates still need to be enabled as a GitHub platform setting if not already enabled after this assessment.
 - No formal ADR records exist yet beyond `docs/developer/adr/README.md`; significant future architecture changes should add one.
 - Supply-chain scanning is optional and not wired into CI.
 - `frontend-legacy` remains in the repository as documented reference/rollback source; decide in a future cleanup whether to retain or remove it.
@@ -60,10 +58,8 @@ Last reviewed: 2026-06-03
 
 ## Recommended next steps
 
-1. Apply `main` branch protection with `.github/scripts/protect-main.sh` and require the `ci-ok` status check.
-2. Enable Dependabot security updates as a GitHub platform setting.
-3. Add ADRs for major RF/runtime design decisions when they next change.
-4. Decide whether `components/elero_web/frontend-legacy/` should remain as rollback/reference material or be removed in a future cleanup.
-5. Refresh the active frontend lockfile in a focused dependency-maintenance change, then consider switching CI to `npm ci`.
-6. Consider optional `npm audit` or OSV scanning for periodic dependency reviews.
-7. Keep issue/PR templates lightweight; adjust after observing contributor friction.
+1. Add ADRs for major RF/runtime design decisions when they next change.
+2. Decide whether `components/elero_web/frontend-legacy/` should remain as rollback/reference material or be removed in a future cleanup.
+3. Refresh the active frontend lockfile in a focused dependency-maintenance change, then consider switching CI to `npm ci`.
+4. Consider optional `npm audit` or OSV scanning for periodic dependency reviews.
+5. Keep issue/PR templates lightweight; adjust after observing contributor friction.
