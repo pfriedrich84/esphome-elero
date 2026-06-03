@@ -1,25 +1,36 @@
 version: 2
+
+multi-ecosystem-groups:
+  monthly-dependencies:
+    schedule:
+      interval: "monthly"
+    labels:
+      - "dependencies"
+
 updates:
   - package-ecosystem: "github-actions"
     directory: "/"
-    schedule:
-      interval: "monthly"
+    patterns:
+      - "*"
+    multi-ecosystem-group: "monthly-dependencies"
     cooldown:
       default-days: 3
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 1
 
   - package-ecosystem: "npm"
     directory: "/components/elero_web/frontend"
-    schedule:
-      interval: "monthly"
+    patterns:
+      - "*"
+    multi-ecosystem-group: "monthly-dependencies"
     cooldown:
       default-days: 3
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 1
 
   - package-ecosystem: "npm"
     directory: "/components/elero_web/frontend-legacy"
-    schedule:
-      interval: "monthly"
+    patterns:
+      - "*"
+    multi-ecosystem-group: "monthly-dependencies"
     cooldown:
       default-days: 3
     open-pull-requests-limit: 1
