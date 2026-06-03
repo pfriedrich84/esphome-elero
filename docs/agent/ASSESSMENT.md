@@ -26,6 +26,7 @@ Last reviewed: 2026-06-03
 - Added GitHub issue and PR templates.
 - Added root `LICENSE` to match the GPLv3 README badge/link and make repository licensing visible to GitHub.
 - Added root `SECURITY.md` with public guidance for sensitive reports, secrets, private RF captures, and security-sensitive contribution areas.
+- Refreshed the active frontend lockfile, verified `npm ci`, and switched frontend CI to lockfile-based installs.
 - Documented external documentation/Context7 expectations for dependency-sensitive changes.
 - Documented frontend dependency workflow and noted lockfile drift risk.
 
@@ -53,13 +54,11 @@ Last reviewed: 2026-06-03
 - No formal ADR records exist yet beyond `docs/developer/adr/README.md`; significant future architecture changes should add one.
 - Supply-chain scanning is optional and not wired into CI.
 - `frontend-legacy` remains in the repository as documented reference/rollback source; decide in a future cleanup whether to retain or remove it.
-- `components/elero_web/frontend/package-lock.json` is not currently compatible with `npm ci`; keep CI on `npm install` or deliberately refresh the lockfile in a focused dependency-maintenance change.
 - Hardware validation remains external/manual; docs correctly avoid implying automated RF hardware coverage.
 
 ## Recommended next steps
 
 1. Add ADRs for major RF/runtime design decisions when they next change.
 2. Decide whether `components/elero_web/frontend-legacy/` should remain as rollback/reference material or be removed in a future cleanup.
-3. Refresh the active frontend lockfile in a focused dependency-maintenance change, then consider switching CI to `npm ci`.
-4. Consider optional `npm audit` or OSV scanning for periodic dependency reviews.
-5. Keep issue/PR templates lightweight; adjust after observing contributor friction.
+3. Consider optional `npm audit` or OSV scanning for periodic dependency reviews.
+4. Keep issue/PR templates lightweight; adjust after observing contributor friction.

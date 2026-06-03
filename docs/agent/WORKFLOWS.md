@@ -47,7 +47,7 @@ Use this when a change touches multiple subsystems or CI configuration.
 5. Web UI build when relevant:
    ```bash
    cd components/elero_web/frontend
-   npm install
+   npm ci
    npm run build
    ```
 6. Docs validation:
@@ -61,7 +61,7 @@ If one check fails, continue with independent checks where practical so the fina
 
 1. Edit source under `components/elero_web/frontend/` or REST API code under `components/elero_web/`.
 2. Preserve auth checks, same-origin/CORS behavior, JSON escaping, and disabled-UI HTTP 503 behavior.
-3. Run `npm install`, then `npm run build` from the frontend directory. Prefer `npm ci` only after the frontend lockfile is confirmed in sync with `package.json`.
+3. Run `npm ci`, then `npm run build` from the frontend directory. Refresh the lockfile only in focused dependency-maintenance changes.
 4. Verify `components/elero_web/elero_web_ui.h` changed only through the build.
 5. Run relevant C++/ESPHome checks if backend handlers changed.
 

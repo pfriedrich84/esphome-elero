@@ -510,7 +510,7 @@ All endpoints are served at `http://<device-ip>/elero`. CORS is restricted to sa
 
 The active web UI is built from source files in `components/elero_web/frontend/` using **Svelte 5**, **Vite**, **Flowbite/Flowbite-Svelte**, **Tailwind CSS**, and the `vite-plugin-singlefile` plugin:
 
-- **Build command:** `cd components/elero_web/frontend && npm install && npm run build`
+- **Build command:** `cd components/elero_web/frontend && npm ci && npm run build`
 - **Build pipeline:** `vite build` → produces `dist/index.html` (single file with inlined CSS/JS) → `scripts/generate_header.mjs` → writes `../elero_web_ui.h` (C++ raw string literal wrapped in `PROGMEM`)
 - **Output:** `elero_web_ui.h` is auto-generated and should not be edited by hand
 - **Dev server:** `npm run dev` starts Vite dev server for frontend development
@@ -778,7 +778,7 @@ When modifying frontend files in `components/elero_web/frontend/`:
 
 ```bash
 cd components/elero_web/frontend
-npm install          # Install/update frontend dependencies
+npm ci              # Install locked frontend dependencies
 npm run build        # Vite build → generate_header.mjs → elero_web_ui.h
 ```
 
@@ -821,7 +821,7 @@ CI runs automatically on pushes to `main`, `dev`, `feat/**`, `fix/**`, and `docs
 | **markdown** | `python3 scripts/check_markdown_links.py` | Every push/PR |
 | **lint** | `ruff check components/` + `ruff format --check components/` | Every implementation push/PR; skipped on direct `docs/**` pushes |
 | **esphome-compile** | `esphome compile` across 8 config variants (matrix, `fail-fast: false`) | Every implementation push/PR; skipped on direct `docs/**` pushes |
-| **frontend-build** | `npm install` + `npm run build` from `components/elero_web/frontend/`, then verifies generated `elero_web_ui.h` | Every implementation push/PR; skipped on direct `docs/**` pushes |
+| **frontend-build** | `npm ci` + `npm run build` from `components/elero_web/frontend/`, then verifies generated `elero_web_ui.h` | Every implementation push/PR; skipped on direct `docs/**` pushes |
 | **unit-tests** | CMake configure/build plus `ctest --output-on-failure -V` | Every implementation push/PR; skipped on direct `docs/**` pushes |
 | **python-tests** | `pytest tests/python/ -v --tb=short` with pinned ESPHome | Every implementation push/PR; skipped on direct `docs/**` pushes |
 | **ci-ok** | Verifies markdown and required heavy jobs passed; accepts intentional heavy-job skips for direct `docs/**` pushes | Every push/PR |
