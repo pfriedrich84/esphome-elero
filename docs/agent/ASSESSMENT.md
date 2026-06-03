@@ -1,6 +1,6 @@
 # Repository Governance Assessment
 
-Last reviewed: 2026-05-17
+Last reviewed: 2026-06-03
 
 ## Maturity summary
 
@@ -10,6 +10,7 @@ Last reviewed: 2026-05-17
 - Supply-chain maturity: developing
 - Governance consistency: operational
 - Governance drift risk: low to medium
+- Platform governance maturity: developing
 
 ## Strengths
 
@@ -23,6 +24,8 @@ Last reviewed: 2026-05-17
 
 - Added missing standard agent governance files for constraints, coding, review, supply chain, memory, decisions, anti-patterns, definition of done, assessment, and governance changelog.
 - Added GitHub issue and PR templates.
+- Added root `LICENSE` to match the GPLv3 README badge/link and make repository licensing visible to GitHub.
+- Added root `SECURITY.md` with public guidance for sensitive reports, secrets, private RF captures, and security-sensitive contribution areas.
 - Documented external documentation/Context7 expectations for dependency-sensitive changes.
 - Documented frontend dependency workflow and noted lockfile drift risk.
 
@@ -34,8 +37,20 @@ Last reviewed: 2026-05-17
 - `components/elero_web/frontend-legacy/` is not duplicate active source; it is documented reference/rollback material until a future cleanup explicitly decides its lifecycle.
 - Preserve content when tightening structure: prefer links, ownership notes, and stale-status labels before moving or deleting files.
 
+## Platform and governance observations — 2026-06-03
+
+- Markdown local-link validation passes with `python3 scripts/check_markdown_links.py`.
+- Repository is public and uses `main` as the default branch.
+- Secret scanning and push protection are enabled in GitHub repository settings.
+- Vulnerability alerts are enabled, but Dependabot security updates are disabled.
+- `main` branch protection was not enabled when checked through the GitHub API; `.github/scripts/protect-main.sh` remains the intended idempotent setup path.
+- Code scanning/CodeQL status is not established from repository files; GitHub API returned no analysis.
+- GitHub Actions are enabled and currently allow all actions; workflow files pin common first-party actions by major version.
+
 ## Remaining governance debt
 
+- `main` branch protection still needs to be applied as a platform setting using `.github/scripts/protect-main.sh`.
+- Dependabot security updates are disabled; decide whether to enable platform security updates and/or add a focused `.github/dependabot.yml`.
 - No formal ADR records exist yet beyond `docs/developer/adr/README.md`; significant future architecture changes should add one.
 - Supply-chain scanning is optional and not wired into CI.
 - `frontend-legacy` remains in the repository as documented reference/rollback source; decide in a future cleanup whether to retain or remove it.
@@ -44,8 +59,10 @@ Last reviewed: 2026-05-17
 
 ## Recommended next steps
 
-1. Add ADRs for major RF/runtime design decisions when they next change.
-2. Decide whether `components/elero_web/frontend-legacy/` should remain as rollback/reference material or be removed in a future cleanup.
-3. Refresh the active frontend lockfile in a focused dependency-maintenance change, then consider switching CI to `npm ci`.
-4. Consider optional `npm audit` or OSV scanning for periodic dependency reviews.
-5. Keep issue/PR templates lightweight; adjust after observing contributor friction.
+1. Apply `main` branch protection with `.github/scripts/protect-main.sh` and require the `ci-ok` status check.
+2. Enable Dependabot security updates and decide whether to add `.github/dependabot.yml` for GitHub Actions and npm ecosystems.
+3. Add ADRs for major RF/runtime design decisions when they next change.
+4. Decide whether `components/elero_web/frontend-legacy/` should remain as rollback/reference material or be removed in a future cleanup.
+5. Refresh the active frontend lockfile in a focused dependency-maintenance change, then consider switching CI to `npm ci`.
+6. Consider optional `npm audit` or OSV scanning for periodic dependency reviews.
+7. Keep issue/PR templates lightweight; adjust after observing contributor friction.
