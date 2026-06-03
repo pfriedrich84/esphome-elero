@@ -9,7 +9,7 @@
   },
   "devDependencies": {
     "vite": "^5.0.0",
-    "vite-plugin-singlefile": "^2.0.0"
+    "vite-plugin-singlefile": "^2.3.3"
   },
   "dependencies": {
     "alpinejs": "^3.13.0"
