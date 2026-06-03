@@ -25,14 +25,14 @@ jobs:
   markdown:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6.0.2
       - run: python3 scripts/check_markdown_links.py
 
   lint:
     if: github.event_name != 'push' || !startsWith(github.ref, 'refs/heads/docs/')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6.0.2
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -60,7 +60,7 @@ jobs:
           - tests/configs/custom_frequency.yaml
           - tests/configs/esp32s3-idf.yaml
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6.0.2
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -151,7 +151,7 @@ jobs:
       run:
         working-directory: components/elero_web/frontend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6.0.2
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -180,7 +180,7 @@ jobs:
     if: github.event_name != 'push' || !startsWith(github.ref, 'refs/heads/docs/')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6.0.2
       - name: Configure CMake
         run: cmake -S tests -B tests/build -DCMAKE_BUILD_TYPE=Debug
       - name: Build
@@ -192,7 +192,7 @@ jobs:
     if: github.event_name != 'push' || !startsWith(github.ref, 'refs/heads/docs/')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6.0.2
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
