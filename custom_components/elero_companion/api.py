@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
@@ -147,7 +146,7 @@ class EleroApiClient:
                 return await response.text()
         except EleroApiError:
             raise
-        except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+        except (aiohttp.ClientError, TimeoutError) as err:
             raise EleroCannotConnect(str(err)) from err
         except ValueError as err:
             raise EleroInvalidResponse(str(err)) from err
