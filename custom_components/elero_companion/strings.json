@@ -4,7 +4,7 @@
     "step": {
       "user": {
         "title": "Connect to Elero hub",
-        "description": "Connect to an existing esphome-elero hub through its /elero web API.",
+        "description": "Connect to an existing esphome-elero hub through its /elero web API. Enter the device origin, for example http://192.168.1.50. If you paste http://host/elero, the path is ignored.",
         "data": {
           "url": "Host or URL",
           "username": "Username",

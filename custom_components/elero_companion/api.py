@@ -94,7 +94,12 @@ class EleroHubData:
 
 
 def normalize_base_url(value: str) -> str:
-    """Normalize user input into a base URL without trailing slash."""
+    """Normalize user input into an origin URL without a path.
+
+    Users often paste the web UI URL (``http://host/elero``) or a concrete
+    endpoint (``http://host/elero/api/info``). The client appends API paths
+    itself, so keep only scheme and network location.
+    """
     raw = value.strip()
     if not raw:
         raise ValueError("empty host")
@@ -103,7 +108,7 @@ def normalize_base_url(value: str) -> str:
     parsed = urlparse(raw)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise ValueError("invalid URL")
-    return raw.rstrip("/")
+    return f"{parsed.scheme}://{parsed.netloc}"
 
 
 class EleroApiClient:
