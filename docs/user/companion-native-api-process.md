@@ -16,7 +16,7 @@ A user can configure everything in ESPHome YAML, flash the device, and use the n
 
 Companion-managed mode is a convenience mode.
 
-A user configures Elero covers/lights in the Companion UI and then manually pushes the complete managed configuration to the ESP32. The ESP32 stores the last accepted registry locally and uses it after reboot.
+A user configures Elero covers/lights in the Companion UI and then manually pushes the complete managed configuration to the ESP32. The ESP32 stores the last accepted registry locally, materializes managed entities where feasible, and uses the registry after reboot.
 
 ## Permanent rule: YAML-only must always work
 
@@ -45,7 +45,8 @@ Companion-managed mode
   Companion stores editable drafts in Home Assistant.
   User manually pushes the full registry to the ESP32.
   ESP32 stores the last accepted registry and performs RF execution.
-  Companion creates the dynamic Home Assistant cover/light entities.
+  ESP32 should expose managed covers/lights through the normal ESPHome Native API entity path where feasible.
+  Companion remains setup, diagnostics, and configuration UI, not the normal command path.
 
 ESPHome Elero component
   RF correctness, CC1101 access, counters, queues, retries, diagnostics,
@@ -72,7 +73,7 @@ The Companion is optional in this mode.
 5. Start the Elero Companion Config Flow.
 6. Select or link the existing ESPHome Elero hub.
 7. Companion validates that the hub exposes the expected Native API helper surface and managed-registry support.
-8. Companion creates one hub-level device with diagnostics and helper actions.
+8. Companion creates one hub-level setup/diagnostics entry.
 
 Example minimal YAML shape:
 
@@ -106,7 +107,8 @@ elero_managed:
 12. ESP32 validates the registry.
 13. If valid, ESP32 accepts and persists the registry atomically.
 14. If invalid, ESP32 rejects the update and keeps the previous registry active.
-15. Companion creates or updates dynamic Home Assistant cover/light entities for the accepted registry.
+15. ESP32 materializes the accepted managed devices as ESPHome Native API covers/lights where feasible.
+16. Home Assistant receives those entities through the normal ESPHome integration, possibly after an ESPHome reconnect or ESP restart if the entity list changed.
 
 ## Manual push rule
 
@@ -120,6 +122,7 @@ Required behaviour:
 - ESP32 validates the complete registry before accepting it.
 - ESP32 either accepts the whole registry or keeps the previous registry unchanged.
 - Companion shows whether local changes are pending and which registry revision is active on the ESP32.
+- If new or removed entities require reconnect/restart before Home Assistant sees them, the Companion must say so clearly.
 
 ## Control path
 
@@ -135,15 +138,20 @@ Normal control uses standard ESPHome entities exposed through the normal ESPHome
 
 ### Companion-managed mode
 
-Control uses dynamic Companion entities. The Companion sends commands to the ESP32 through ESPHome Native API, and the ESP32 performs RF execution:
+The preferred target is the same direct command path as YAML-only mode:
 
 ```text
-Home Assistant managed cover/light entity
-  -> Elero Companion
-    -> ESPHome Native API helper
-      -> ESP32 RF queue/counter/retry logic
-        -> CC1101 / Elero RF
+Home Assistant cover/light service
+  -> Home Assistant ESPHome integration
+    -> ESPHome Native API
+      -> ESP32 managed cover/light entity
+        -> ESP32 RF queue/counter/retry logic
+          -> CC1101 / Elero RF
 ```
+
+The Companion should not be in the normal control path after a managed registry has been accepted by the ESP32. It remains the configuration, discovery, diagnostics, and push UI.
+
+If direct ESPHome Native API entity materialization is not technically reliable, a thin Companion command adapter may be considered as a fallback, but it is not the preferred target.
 
 RF correctness remains inside the ESP firmware.
 
