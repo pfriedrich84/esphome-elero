@@ -188,16 +188,11 @@ class EleroApiClient:
         except EleroApiError:
             frequency = {}
 
-        try:
-            yaml_export = await self.async_get_text("/elero/api/yaml")
-        except EleroApiError:
-            yaml_export = None
-
         return EleroHubData(
             info=info,
             status=status,
             runtime=runtime,
             ui_status=ui_status,
             frequency=frequency,
-            yaml_export=yaml_export,
+            yaml_export=None,
         )
