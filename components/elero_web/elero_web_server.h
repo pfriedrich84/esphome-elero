@@ -4,6 +4,8 @@
 #include "esphome/components/web_server_base/web_server_base.h"
 #include "../elero/elero.h"
 #include <atomic>
+#include <map>
+#include <mutex>
 
 namespace esphome {
 namespace elero {
@@ -29,6 +31,9 @@ class EleroWebServer : public Component, public AsyncWebHandler {
 
   bool canHandle(AsyncWebServerRequest *request) const override;
   void handleRequest(AsyncWebServerRequest *request) override;
+  void handleBody(AsyncWebServerRequest *request, uint8_t *data, size_t len,
+                  size_t index, size_t total) override;
+  bool isRequestHandlerTrivial() const override { return false; }
 
  protected:
   // ── Existing handlers ──────────────────────────────────────────────────
@@ -87,6 +92,8 @@ class EleroWebServer : public Component, public AsyncWebHandler {
   void add_cors_headers(AsyncWebServerResponse *response);
   void send_json_error(AsyncWebServerRequest *request, int code, const char *message);
   void handle_options(AsyncWebServerRequest *request);
+  bool get_request_param_(AsyncWebServerRequest *request, const char *name, std::string &out);
+  bool request_body_present_(AsyncWebServerRequest *request);
 
 #ifdef USE_WEBSERVER_AUTH
   /// Returns true if authentication is required and the request is NOT authenticated.
@@ -99,6 +106,8 @@ class EleroWebServer : public Component, public AsyncWebHandler {
   Elero *parent_{nullptr};
   web_server_base::WebServerBase *base_{nullptr};
   std::atomic<bool> enabled_{true};
+  std::mutex request_bodies_mutex_;
+  std::map<AsyncWebServerRequest *, std::string> request_bodies_;
 };
 
 }  // namespace elero

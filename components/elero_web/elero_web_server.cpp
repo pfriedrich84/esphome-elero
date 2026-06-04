@@ -7,11 +7,13 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
+#include <cctype>
 
 namespace esphome {
 namespace elero {
 
 static const char *const TAG = "elero.web_server";
+static const size_t ELERO_WEB_MAX_REQUEST_BODY = 2048;
 
 // json_escape() and parse_addr_url() are in elero_web_utils.h (extracted for testability)
 using web_utils::json_escape;
@@ -41,6 +43,110 @@ void EleroWebServer::handle_options(AsyncWebServerRequest *request) {
   AsyncWebServerResponse *response = request->beginResponse(204, "text/plain", "");
   this->add_cors_headers(response);
   request->send(response);
+}
+
+void EleroWebServer::handleBody(AsyncWebServerRequest *request, uint8_t *data,
+                                size_t len, size_t index, size_t total) {
+  if (total == 0 || total > ELERO_WEB_MAX_REQUEST_BODY)
+    return;
+  std::lock_guard<std::mutex> lock(this->request_bodies_mutex_);
+  auto &body = this->request_bodies_[request];
+  if (index == 0) {
+    body.clear();
+    body.reserve(total);
+  }
+  body.append(reinterpret_cast<const char *>(data), len);
+}
+
+static bool json_unescape_string_(const std::string &in, std::string &out) {
+  out.clear();
+  for (size_t i = 0; i < in.size(); i++) {
+    char c = in[i];
+    if (c != '\\') {
+      out += c;
+      continue;
+    }
+    if (++i >= in.size())
+      return false;
+    switch (in[i]) {
+      case '"': out += '"'; break;
+      case '\\': out += '\\'; break;
+      case '/': out += '/'; break;
+      case 'b': out += '\b'; break;
+      case 'f': out += '\f'; break;
+      case 'n': out += '\n'; break;
+      case 'r': out += '\r'; break;
+      case 't': out += '\t'; break;
+      default: return false;
+    }
+  }
+  return true;
+}
+
+static bool extract_json_value_(const std::string &body, const char *name,
+                                std::string &out, bool &found) {
+  found = false;
+  std::string key = std::string("\"") + name + "\"";
+  size_t pos = 0;
+  while ((pos = body.find(key, pos)) != std::string::npos) {
+    size_t i = pos + key.size();
+    while (i < body.size() && std::isspace(static_cast<unsigned char>(body[i]))) i++;
+    if (i >= body.size() || body[i] != ':') {
+      pos += key.size();
+      continue;
+    }
+    i++;
+    while (i < body.size() && std::isspace(static_cast<unsigned char>(body[i]))) i++;
+    if (i >= body.size())
+      return false;
+    found = true;
+    if (body[i] == '"') {
+      i++;
+      std::string raw;
+      bool escaped = false;
+      for (; i < body.size(); i++) {
+        char c = body[i];
+        if (!escaped && c == '"')
+          return json_unescape_string_(raw, out);
+        raw += c;
+        escaped = (!escaped && c == '\\');
+        if (escaped)
+          continue;
+      }
+      return false;
+    }
+    size_t start = i;
+    while (i < body.size() && body[i] != ',' && body[i] != '}') i++;
+    size_t end = i;
+    while (end > start && std::isspace(static_cast<unsigned char>(body[end - 1]))) end--;
+    out.assign(body, start, end - start);
+    return !out.empty();
+  }
+  return true;
+}
+
+bool EleroWebServer::request_body_present_(AsyncWebServerRequest *request) {
+  std::lock_guard<std::mutex> lock(this->request_bodies_mutex_);
+  auto it = this->request_bodies_.find(request);
+  return it != this->request_bodies_.end() && !it->second.empty();
+}
+
+bool EleroWebServer::get_request_param_(AsyncWebServerRequest *request, const char *name, std::string &out) {
+  if (request->hasParam(name)) {
+    auto *param = request->getParam(name);
+    if (param != nullptr) {
+      out = param->value().c_str();
+      return true;
+    }
+  }
+  std::lock_guard<std::mutex> lock(this->request_bodies_mutex_);
+  auto it = this->request_bodies_.find(request);
+  if (it == this->request_bodies_.end() || it->second.empty())
+    return false;
+  bool found = false;
+  if (!extract_json_value_(it->second, name, out, found))
+    return false;
+  return found;
 }
 
 bool EleroWebServer::parse_addr_url(const std::string &url, const char *prefix,
@@ -102,7 +208,6 @@ void EleroWebServer::dump_config() {
 // ─── Routing ──────────────────────────────────────────────────────────────────
 
 bool EleroWebServer::canHandle(AsyncWebServerRequest *request) const {
-  if (!this->enabled_.load(std::memory_order_acquire)) return false;
 #if ESPHOME_VERSION_CODE >= VERSION_CODE(2026, 3, 0)
   char url_buf[AsyncWebServerRequest::URL_BUF_SIZE];
   const std::string url(request->url_to(url_buf));
@@ -113,6 +218,15 @@ bool EleroWebServer::canHandle(AsyncWebServerRequest *request) const {
 }
 
 void EleroWebServer::handleRequest(AsyncWebServerRequest *request) {
+  struct RequestBodyCleanup {
+    EleroWebServer *server;
+    AsyncWebServerRequest *request;
+    ~RequestBodyCleanup() {
+      std::lock_guard<std::mutex> lock(server->request_bodies_mutex_);
+      server->request_bodies_.erase(request);
+    }
+  } cleanup{this, request};
+
 #if ESPHOME_VERSION_CODE >= VERSION_CODE(2026, 3, 0)
   char url_buf[AsyncWebServerRequest::URL_BUF_SIZE];
   const std::string url(request->url_to(url_buf));
@@ -127,6 +241,11 @@ void EleroWebServer::handleRequest(AsyncWebServerRequest *request) {
   // ── Authentication check (all non-OPTIONS requests) ──
   if (this->check_auth_(request)) return;
 #endif
+
+  if (!this->enabled_.load(std::memory_order_acquire)) {
+    this->send_json_error(request, 503, "Elero Web UI disabled");
+    return;
+  }
 
   // ── Redirect root to /elero ──
   if (url == "/" && method == HTTP_GET) { request->redirect("/elero"); return; }
@@ -509,16 +628,11 @@ void EleroWebServer::handle_get_configured(AsyncWebServerRequest *request) {
 // ─── Cover command ────────────────────────────────────────────────────────────
 
 void EleroWebServer::handle_cover_command(AsyncWebServerRequest *request, uint32_t addr) {
-  if (!request->hasParam("cmd")) {
+  std::string cmd_str;
+  if (!this->get_request_param_(request, "cmd", cmd_str)) {
     this->send_json_error(request, 400, "Missing cmd parameter");
     return;
   }
-  auto cmd_param = request->getParam("cmd");
-  if (cmd_param == nullptr) {
-    this->send_json_error(request, 400, "Missing cmd parameter");
-    return;
-  }
-  const std::string cmd_str = cmd_param->value().c_str();
 
   // Map command string to byte — use configured values for covers, defaults for runtime blinds
   auto get_cmd_byte_for_cover = [&](EleroBlindBase *blind) -> int {
@@ -594,13 +708,12 @@ void EleroWebServer::handle_cover_settings(AsyncWebServerRequest *request, uint3
   static const uint32_t MAX_DURATION_MS = 300000;  // 5 minutes max for open/close
   static const uint32_t MIN_POLL_INTERVAL_MS = 1000;  // 1 second minimum poll interval
 
-  auto parse_u32 = [](AsyncWebServerRequest *req, const char *name, uint32_t &out) -> bool {
-    if (!req->hasParam(name)) return false;
-    auto param = req->getParam(name);
-    if (param == nullptr) return false;
+  auto parse_u32 = [this](AsyncWebServerRequest *req, const char *name, uint32_t &out) -> bool {
+    std::string value;
+    if (!this->get_request_param_(req, name, value)) return false;
     char *end;
-    unsigned long v = strtoul(param->value().c_str(), &end, 10);
-    if (end == param->value().c_str()) return false;
+    unsigned long v = strtoul(value.c_str(), &end, 10);
+    if (end == value.c_str()) return false;
     // Guard against silent truncation on platforms where unsigned long > 32 bits
     if (v > 0xFFFFFFFFUL) return false;
     out = static_cast<uint32_t>(v);
@@ -614,9 +727,13 @@ void EleroWebServer::handle_cover_settings(AsyncWebServerRequest *request, uint3
     uint32_t open_dur = it->second->get_open_duration_ms();
     uint32_t close_dur = it->second->get_close_duration_ms();
     uint32_t poll_intvl = it->second->get_poll_interval_ms();
-    parse_u32(request, "open_duration", open_dur);
-    parse_u32(request, "close_duration", close_dur);
-    parse_u32(request, "poll_interval", poll_intvl);
+    bool parsed_open = parse_u32(request, "open_duration", open_dur);
+    bool parsed_close = parse_u32(request, "close_duration", close_dur);
+    bool parsed_poll = parse_u32(request, "poll_interval", poll_intvl);
+    if (this->request_body_present_(request) && !parsed_open && !parsed_close && !parsed_poll) {
+      this->send_json_error(request, 400, "Missing settings parameters");
+      return;
+    }
 
     // Validate duration values
     if (open_dur > MAX_DURATION_MS) {
@@ -649,9 +766,13 @@ void EleroWebServer::handle_cover_settings(AsyncWebServerRequest *request, uint3
 
   // Try runtime blind
   uint32_t open_dur = 0, close_dur = 0, poll_intvl = 300000;
-  parse_u32(request, "open_duration", open_dur);
-  parse_u32(request, "close_duration", close_dur);
-  parse_u32(request, "poll_interval", poll_intvl);
+  bool parsed_open = parse_u32(request, "open_duration", open_dur);
+  bool parsed_close = parse_u32(request, "close_duration", close_dur);
+  bool parsed_poll = parse_u32(request, "poll_interval", poll_intvl);
+  if (this->request_body_present_(request) && !parsed_open && !parsed_close && !parsed_poll) {
+    this->send_json_error(request, 400, "Missing settings parameters");
+    return;
+  }
 
   // Validate duration values
   if (open_dur > MAX_DURATION_MS) {
@@ -688,20 +809,12 @@ void EleroWebServer::handle_cover_settings(AsyncWebServerRequest *request, uint3
 
 void EleroWebServer::handle_adopt_discovered(AsyncWebServerRequest *request, uint32_t addr) {
   std::string name;
-  if (request->hasParam("name")) {
-    auto name_param = request->getParam("name");
-    if (name_param != nullptr)
-      name = name_param->value().c_str();
-  }
+  this->get_request_param_(request, "name", name);
 
   DeviceType dtype = DeviceType::COVER;
-  if (request->hasParam("type")) {
-    auto type_param = request->getParam("type");
-    if (type_param != nullptr) {
-      std::string type_str = type_param->value().c_str();
-      if (type_str == "light") dtype = DeviceType::LIGHT;
-    }
-  }
+  std::string type_str;
+  if (this->get_request_param_(request, "type", type_str) && type_str == "light")
+    dtype = DeviceType::LIGHT;
 
   const auto blinds = this->parent_->get_discovered_blinds();
   for (const auto &blind : blinds) {
@@ -1070,25 +1183,24 @@ void EleroWebServer::handle_get_frequency(AsyncWebServerRequest *request) {
 }
 
 void EleroWebServer::handle_set_frequency(AsyncWebServerRequest *request) {
-  if (!request->hasParam("freq2") || !request->hasParam("freq1") || !request->hasParam("freq0")) {
+  std::string freq2_value, freq1_value, freq0_value;
+  if (!this->get_request_param_(request, "freq2", freq2_value) ||
+      !this->get_request_param_(request, "freq1", freq1_value) ||
+      !this->get_request_param_(request, "freq0", freq0_value)) {
     this->send_json_error(request, 400, "Missing freq2, freq1 or freq0 parameters");
     return;
   }
-  auto parse_byte = [](const char *s, uint8_t &out) -> bool {
+  auto parse_byte = [](const std::string &s, uint8_t &out) -> bool {
     char *end;
-    unsigned long v = strtoul(s, &end, 0);
-    if (end == s || v > 0xFF) return false;
+    unsigned long v = strtoul(s.c_str(), &end, 0);
+    if (end == s.c_str() || v > 0xFF) return false;
     out = (uint8_t)v;
     return true;
   };
   uint8_t f2, f1, f0;
-  auto freq2_param = request->getParam("freq2");
-  auto freq1_param = request->getParam("freq1");
-  auto freq0_param = request->getParam("freq0");
-  if (freq2_param == nullptr || freq1_param == nullptr || freq0_param == nullptr ||
-      !parse_byte(freq2_param->value().c_str(), f2) ||
-      !parse_byte(freq1_param->value().c_str(), f1) ||
-      !parse_byte(freq0_param->value().c_str(), f0)) {
+  if (!parse_byte(freq2_value, f2) ||
+      !parse_byte(freq1_value, f1) ||
+      !parse_byte(freq0_value, f0)) {
     this->send_json_error(request, 400, "Invalid frequency value (0x00-0xFF)");
     return;
   }
@@ -1107,18 +1219,14 @@ void EleroWebServer::handle_set_frequency(AsyncWebServerRequest *request) {
 }
 
 void EleroWebServer::handle_set_frequency_mhz(AsyncWebServerRequest *request) {
-  if (!request->hasParam("mhz")) {
-    this->send_json_error(request, 400, "Missing mhz parameter");
-    return;
-  }
-  auto mhz_param = request->getParam("mhz");
-  if (mhz_param == nullptr) {
+  std::string mhz_value;
+  if (!this->get_request_param_(request, "mhz", mhz_value)) {
     this->send_json_error(request, 400, "Missing mhz parameter");
     return;
   }
   char *end;
-  float mhz = strtof(mhz_param->value().c_str(), &end);
-  if (end == mhz_param->value().c_str() || mhz < 300.0f || mhz > 928.0f) {
+  float mhz = strtof(mhz_value.c_str(), &end);
+  if (end == mhz_value.c_str() || mhz < 300.0f || mhz > 928.0f) {
     this->send_json_error(request, 400, "Invalid MHz value (300.0-928.0)");
     return;
   }
@@ -1222,12 +1330,12 @@ void EleroWebServer::handle_webui_status(AsyncWebServerRequest *request) {
 
 void EleroWebServer::handle_webui_enable(AsyncWebServerRequest *request) {
   bool en = true;
-  if (request->hasParam("enabled")) {
-    auto enabled_param = request->getParam("enabled");
-    if (enabled_param != nullptr) {
-      const std::string val = enabled_param->value().c_str();
-      en = (val != "false" && val != "0");
-    }
+  std::string val;
+  if (this->get_request_param_(request, "enabled", val)) {
+    en = (val != "false" && val != "0");
+  } else if (this->request_body_present_(request)) {
+    this->send_json_error(request, 400, "Missing enabled parameter");
+    return;
   }
   this->enabled_.store(en, std::memory_order_release);
   char buf[32];

@@ -26,8 +26,12 @@ class EleroGroupCover : public cover::Cover, public Component {
 
  protected:
   void control(const cover::CoverCall &call) override;
-  /// Send a command byte to all group members via native multi-dest or sequential fallback.
-  void send_group_command_(uint8_t cmd_byte);
+  enum class GroupCommandAction : uint8_t { OPEN, CLOSE, STOP, TILT };
+
+  /// Send an action to all group members via native multi-dest or sequential fallback.
+  void send_group_command_(GroupCommandAction action);
+  uint8_t command_byte_for_(EleroBlindBase *member, GroupCommandAction action) const;
+  bool members_share_command_byte_(GroupCommandAction action, uint8_t &cmd_byte) const;
   /// True if all members share remote_address and channel (native multi-dest possible).
   bool can_use_native_group_() const;
   /// Build a multi-dest t_elero_command from the first member's RF params.
