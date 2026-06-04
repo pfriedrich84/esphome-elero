@@ -98,4 +98,4 @@ Use this before dependency-sensitive changes to ESPHome, RadioLib, Svelte, Vite,
 2. Add C++ unit tests for edge cases before or alongside behavior changes.
 3. Preserve queue bounds, packet length/bounds checks, watchdog escalation, and counter-advance semantics.
 4. Run C++ unit tests and relevant compile fixtures.
-5. If the change is experimental, record failed ideas or follow-ups in the autoresearch notes.
+5. If the change is experimental, record failed ideas or follow-ups in the relevant issue, PR, or developer notes.

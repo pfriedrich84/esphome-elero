@@ -3,5 +3,3 @@ __pycache__/
 .esphome/
 tests/build/
 
-# Autoresearch generated artifacts
-.autoresearch/

@@ -10,6 +10,7 @@
 
 - [`developer/architecture.md`](developer/architecture.md) — module seams and architecture/deepening notes.
 - [`developer/development.md`](developer/development.md) — detailed project structure, conventions, CI, testing, REST API, and common pitfalls.
+- [`developer/home-assistant-rf-platform.md`](developer/home-assistant-rf-platform.md) — HACS companion implementation plan and Home Assistant RF platform research RFC.
 - [`developer/adr/`](developer/adr/) — architecture decision records for significant long-term decisions.
 
 ## Agent docs
@@ -27,7 +28,6 @@
 - [`agent/DECISIONS.md`](agent/DECISIONS.md) — lightweight decision log for future agents.
 - [`agent/ANTI_PATTERNS.md`](agent/ANTI_PATTERNS.md) — repo-specific patterns to avoid.
 - [`agent/DEFINITION_OF_DONE.md`](agent/DEFINITION_OF_DONE.md) — completion criteria for implementation tasks.
-- [`agent/AUTORESEARCH.md`](agent/AUTORESEARCH.md) — optional metric-driven experiment guidance.
 - [`agent/ASSESSMENT.md`](agent/ASSESSMENT.md) — governance maturity, debt, and follow-up assessment.
 - [`agent/CHANGELOG_AGENT.md`](agent/CHANGELOG_AGENT.md) — changelog for agent governance updates.
 - [`agent/CONTEXT.md`](agent/CONTEXT.md) — Elero RF domain vocabulary.
