@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import voluptuous as vol
@@ -18,6 +19,8 @@ from .api import (
     normalize_base_url,
 )
 from .const import CONF_URL, DOMAIN
+
+_LOGGER = logging.getLogger(__name__)
 
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {
@@ -41,15 +44,20 @@ class EleroCompanionConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             try:
                 base_url = normalize_base_url(user_input[CONF_URL])
                 info = await self._async_validate_input(base_url, user_input)
-            except ValueError:
+            except ValueError as err:
+                _LOGGER.warning("Invalid Elero hub URL %r: %s", user_input.get(CONF_URL), err)
                 errors[CONF_URL] = "invalid_url"
-            except EleroAuthError:
+            except EleroAuthError as err:
+                _LOGGER.warning("Authentication failed for Elero hub %s: %s", base_url, err)
                 errors["base"] = "invalid_auth"
-            except EleroWebUiDisabled:
+            except EleroWebUiDisabled as err:
+                _LOGGER.warning("Elero web UI/API disabled for %s: %s", base_url, err)
                 errors["base"] = "web_ui_disabled"
-            except EleroCannotConnect:
+            except EleroCannotConnect as err:
+                _LOGGER.warning("Cannot connect to Elero hub %s: %s", base_url, err)
                 errors["base"] = "cannot_connect"
-            except EleroInvalidResponse:
+            except EleroInvalidResponse as err:
+                _LOGGER.warning("Invalid response from Elero hub %s: %s", base_url, err)
                 errors["base"] = "invalid_response"
             else:
                 await self.async_set_unique_id(base_url)
