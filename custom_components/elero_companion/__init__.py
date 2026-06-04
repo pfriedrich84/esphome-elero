@@ -27,9 +27,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await coordinator.async_config_entry_first_refresh()
 
     entry.runtime_data = coordinator
-    entry.async_on_unload(
-        coordinator.async_add_listener(lambda: async_update_issues(hass, entry, coordinator))
-    )
+    entry.async_on_unload(coordinator.async_add_listener(lambda: async_update_issues(hass, entry, coordinator)))
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     async_update_issues(hass, entry, coordinator)

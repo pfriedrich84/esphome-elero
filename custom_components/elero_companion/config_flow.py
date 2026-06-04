@@ -19,7 +19,6 @@ from .api import (
 )
 from .const import CONF_URL, DOMAIN
 
-
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_URL): str,

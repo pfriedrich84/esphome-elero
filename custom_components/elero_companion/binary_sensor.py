@@ -15,7 +15,6 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from . import device_info
 from .coordinator import EleroDataUpdateCoordinator
 
-
 WEB_UI_DESCRIPTION = BinarySensorEntityDescription(
     key="web_ui_enabled",
     translation_key="web_ui_enabled",
