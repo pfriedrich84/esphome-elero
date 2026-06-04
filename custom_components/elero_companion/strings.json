@@ -1,0 +1,67 @@
+{
+  "title": "Elero Companion",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Elero hub",
+        "description": "Connect to an existing esphome-elero hub through its /elero web API.",
+        "data": {
+          "url": "Host or URL",
+          "username": "Username",
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to the Elero hub.",
+      "invalid_auth": "Authentication failed.",
+      "invalid_response": "The device did not return the expected Elero API response.",
+      "invalid_url": "Enter a valid host or URL.",
+      "web_ui_disabled": "The Elero web UI/API is disabled on the device. Enable it before adding the companion integration."
+    },
+    "abort": {
+      "already_configured": "This Elero hub is already configured."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "frequency_mhz": { "name": "Frequency" },
+      "configured_covers": { "name": "Configured covers" },
+      "configured_lights": { "name": "Configured lights" },
+      "runtime_covers": { "name": "Runtime covers" },
+      "runtime_lights": { "name": "Runtime lights" },
+      "rx_count": { "name": "RX count" },
+      "tx_count": { "name": "TX count" },
+      "watchdog_recovery_count": { "name": "Watchdog recovery count" },
+      "tx_drop_count": { "name": "TX drop count" },
+      "drop_crc_fail": { "name": "Drop CRC fail" },
+      "drop_bounds": { "name": "Drop bounds" },
+      "tx_queue_latency_last_ms": { "name": "TX queue latency" }
+    },
+    "binary_sensor": {
+      "web_ui_enabled": { "name": "Web UI enabled" }
+    }
+  },
+  "issues": {
+    "web_ui_disabled": {
+      "title": "Elero web UI/API is disabled",
+      "description": "The Elero companion integration for {name} needs the /elero API. Enable the Elero web UI/API on the ESPHome device."
+    },
+    "no_devices_configured": {
+      "title": "No Elero covers or lights are configured",
+      "description": "The Elero hub {name} reports no configured covers or lights. Use the ESP /elero web UI to run RF discovery, then add the generated YAML to your ESPHome configuration."
+    },
+    "runtime_devices_not_persisted": {
+      "title": "Runtime adopted Elero devices are not persisted",
+      "description": "The Elero hub {name} has runtime adopted devices. Export YAML from the Elero web UI or companion diagnostics and add it to ESPHome for persistent Home Assistant entities."
+    },
+    "radio_watchdog_recoveries": {
+      "title": "Elero radio watchdog recoveries detected",
+      "description": "The Elero hub {name} reports CC1101 radio watchdog recoveries. Check wiring, power supply, antenna placement, SPI pin choices, and RF environment."
+    },
+    "tx_drops": {
+      "title": "Elero transmit drops detected",
+      "description": "The Elero hub {name} reports dropped TX commands. Check queue pressure, signal quality, and whether commands are being sent too frequently."
+    }
+  }
+}

@@ -10,6 +10,7 @@
 
 - [`developer/architecture.md`](developer/architecture.md) — module seams and architecture/deepening notes.
 - [`developer/development.md`](developer/development.md) — detailed project structure, conventions, CI, testing, REST API, and common pitfalls.
+- [`developer/home-assistant-rf-platform.md`](developer/home-assistant-rf-platform.md) — HACS companion implementation plan and Home Assistant RF platform research RFC.
 - [`developer/adr/`](developer/adr/) — architecture decision records for significant long-term decisions.
 
 ## Agent docs
