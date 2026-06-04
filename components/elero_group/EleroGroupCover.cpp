@@ -67,24 +67,25 @@ cover::CoverTraits EleroGroupCover::get_traits() {
 
 void EleroGroupCover::control(const cover::CoverCall &call) {
   if (call.get_stop()) {
-    this->send_group_command_(0x10);  // STOP
+    this->send_group_command_(GroupCommandAction::STOP);
     this->current_operation = cover::COVER_OPERATION_IDLE;
     this->publish_state();
   }
   if (call.get_position().has_value()) {
     auto pos = *call.get_position();
     if (pos == cover::COVER_OPEN) {
-      this->send_group_command_(0x20);  // UP
+      this->send_group_command_(GroupCommandAction::OPEN);
       this->current_operation = cover::COVER_OPERATION_OPENING;
     } else if (pos == cover::COVER_CLOSED) {
-      this->send_group_command_(0x40);  // DOWN
+      this->send_group_command_(GroupCommandAction::CLOSE);
       this->current_operation = cover::COVER_OPERATION_CLOSING;
     } else {
       // Intermediate positions: delegate to each member individually
       // (each member has its own open/close duration for dead-reckoning)
       for (auto *member : this->members_) {
-        uint8_t cmd = (pos > member->get_cover_position()) ? 0x20 : 0x40;
-        member->enqueue_command(cmd);
+        auto action = (pos > member->get_cover_position()) ? GroupCommandAction::OPEN
+                                                            : GroupCommandAction::CLOSE;
+        member->enqueue_command(this->command_byte_for_(member, action));
       }
       this->current_operation = cover::COVER_OPERATION_OPENING;
     }
@@ -93,38 +94,66 @@ void EleroGroupCover::control(const cover::CoverCall &call) {
   if (call.get_tilt().has_value()) {
     auto tilt = *call.get_tilt();
     if (tilt > 0) {
-      this->send_group_command_(0x24);  // TILT
+      this->send_group_command_(GroupCommandAction::TILT);
     }
   }
   if (call.get_toggle().has_value()) {
     if (this->current_operation != cover::COVER_OPERATION_IDLE) {
-      this->send_group_command_(0x10);  // STOP
+      this->send_group_command_(GroupCommandAction::STOP);
       this->current_operation = cover::COVER_OPERATION_IDLE;
     } else {
-      this->send_group_command_(0x20);  // UP
+      this->send_group_command_(GroupCommandAction::OPEN);
       this->current_operation = cover::COVER_OPERATION_OPENING;
     }
     this->publish_state();
   }
 }
 
-void EleroGroupCover::send_group_command_(uint8_t cmd_byte) {
-  if (this->native_group_ && this->parent_ != nullptr) {
-    // Native multi-dest: single RF packet to all members (same channel/remote).
+uint8_t EleroGroupCover::command_byte_for_(EleroBlindBase *member, GroupCommandAction action) const {
+  switch (action) {
+    case GroupCommandAction::OPEN:
+      return member->get_command_up();
+    case GroupCommandAction::CLOSE:
+      return member->get_command_down();
+    case GroupCommandAction::STOP:
+      return member->get_command_stop();
+    case GroupCommandAction::TILT:
+      return member->get_command_tilt();
+  }
+  return member->get_command_stop();
+}
+
+bool EleroGroupCover::members_share_command_byte_(GroupCommandAction action, uint8_t &cmd_byte) const {
+  if (this->members_.empty())
+    return false;
+  cmd_byte = this->command_byte_for_(this->members_[0], action);
+  for (size_t i = 1; i < this->members_.size(); i++) {
+    if (this->command_byte_for_(this->members_[i], action) != cmd_byte)
+      return false;
+  }
+  return true;
+}
+
+void EleroGroupCover::send_group_command_(GroupCommandAction action) {
+  uint8_t native_cmd_byte = 0;
+  const bool can_send_native = this->native_group_ &&
+                               this->members_share_command_byte_(action, native_cmd_byte);
+  if (can_send_native && this->parent_ != nullptr) {
+    // Native multi-dest: single RF packet to all members (same channel/remote/command byte).
     // If the hub cannot accept it, fall back to member queues so normal cover
     // dispatch retry/aging semantics take over instead of silently dropping it.
     t_elero_command cmd{};
-    this->build_group_command_(cmd, cmd_byte);
+    this->build_group_command_(cmd, native_cmd_byte);
     auto result = to_group_submit_result(this->parent_->send_command(&cmd));
     if (group_command_logic::should_increment_group_counter(result)) {
       this->group_counter_ = group_command_logic::next_group_counter(this->group_counter_);
-      ESP_LOGD(TAG, "Sent native group command 0x%02x to %d dests", cmd_byte, (int) this->members_.size());
+      ESP_LOGD(TAG, "Sent native group command 0x%02x to %d dests", native_cmd_byte, (int) this->members_.size());
       return;
     }
     ESP_LOGW(TAG, "Native group command 0x%02x was not accepted by hub, queueing %d member commands",
-             cmd_byte, (int) this->members_.size());
+             native_cmd_byte, (int) this->members_.size());
     for (auto *member : this->members_) {
-      member->enqueue_command(cmd_byte);
+      member->enqueue_command(this->command_byte_for_(member, action));
     }
   } else if (this->parent_ != nullptr) {
     // Direct TX: enqueue each member's command directly to the hub's TX queue.
@@ -133,20 +162,21 @@ void EleroGroupCover::send_group_command_(uint8_t cmd_byte) {
     uint8_t sent = 0;
     uint8_t queued = 0;
     for (auto *member : this->members_) {
-      t_elero_command cmd = member->build_tx_command(cmd_byte);
+      uint8_t member_cmd_byte = this->command_byte_for_(member, action);
+      t_elero_command cmd = member->build_tx_command(member_cmd_byte);
       auto result = to_group_submit_result(this->parent_->send_command(&cmd));
       if (group_command_logic::should_fallback_to_member_queues(result)) {
-        member->enqueue_command(cmd_byte);
+        member->enqueue_command(member_cmd_byte);
         queued++;
       } else {
         sent++;
       }
     }
-    ESP_LOGD(TAG, "Direct group command 0x%02x: sent=%d queued=%d", cmd_byte, sent, queued);
+    ESP_LOGD(TAG, "Direct group command: sent=%d queued=%d", sent, queued);
   } else {
     // Last resort fallback: use per-cover command queues.
     for (auto *member : this->members_) {
-      member->enqueue_command(cmd_byte);
+      member->enqueue_command(this->command_byte_for_(member, action));
     }
   }
 }
