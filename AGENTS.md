@@ -12,7 +12,6 @@ Tool-neutral entry point for coding agents working in this repository. Keep this
 6. [`docs/agent/WORKFLOWS.md`](docs/agent/WORKFLOWS.md) — reusable maintenance workflows.
 7. [`docs/agent/SAFETY.md`](docs/agent/SAFETY.md) — safe/unsafe operations for agents.
 8. [`docs/agent/DEFINITION_OF_DONE.md`](docs/agent/DEFINITION_OF_DONE.md) — completion criteria for changes.
-9. [`docs/agent/AUTORESEARCH.md`](docs/agent/AUTORESEARCH.md) — optional metric-driven experiment workflow.
 
 Supporting agent docs live in `docs/agent/` for review priorities, supply-chain guidance, durable memory, decision logs, anti-patterns, governance assessment, changelog, and domain vocabulary. Read the relevant supporting file before changing that area.
 
