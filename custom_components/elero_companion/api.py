@@ -50,30 +50,35 @@ class EleroHubData:
     @property
     def configured_covers(self) -> int:
         """Return configured cover count."""
-        return int(self.info.get("configured_covers") or len(self.status.get("covers", [])))
+        value = self.info.get("configured_covers")
+        if value is not None:
+            return int(value)
+        return len(self.status.get("covers", []))
 
     @property
     def configured_lights(self) -> int:
         """Return configured light count."""
-        return int(self.info.get("configured_lights") or len(self.status.get("lights", [])))
+        value = self.info.get("configured_lights")
+        if value is not None:
+            return int(value)
+        return len(self.status.get("lights", []))
 
     @property
     def runtime_covers(self) -> int:
         """Return runtime adopted cover count."""
-        covers = self.runtime.get("covers", [])
-        if isinstance(covers, list):
-            return len(covers)
-        runtime = self.runtime.get("runtime", [])
-        return len([item for item in runtime if item.get("device_type") == "cover"]) if isinstance(runtime, list) else 0
+        return self._runtime_device_count("cover")
 
     @property
     def runtime_lights(self) -> int:
         """Return runtime adopted light count."""
-        lights = self.runtime.get("lights", [])
-        if isinstance(lights, list):
-            return len(lights)
-        runtime = self.runtime.get("runtime", [])
-        return len([item for item in runtime if item.get("device_type") == "light"]) if isinstance(runtime, list) else 0
+        return self._runtime_device_count("light")
+
+    def _runtime_device_count(self, device_type: str) -> int:
+        """Return runtime adopted device count for a type."""
+        blinds = self.runtime.get("blinds", [])
+        if not isinstance(blinds, list):
+            return 0
+        return len([item for item in blinds if item.get("device_type") == device_type])
 
     @property
     def diagnostics(self) -> dict[str, Any]:
