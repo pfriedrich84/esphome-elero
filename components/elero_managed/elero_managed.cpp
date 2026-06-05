@@ -65,8 +65,7 @@ static const char *const LIGHT_SLOT_TAG = "elero_managed.light";
 
 void EleroManagedCoverSlot::setup() {
   if (!this->active_) {
-    ESP_LOGCONFIG(COVER_SLOT_TAG, "Managed cover slot '%s' is unbound", this->get_name().c_str());
-    this->mark_failed();
+    ESP_LOGCONFIG(COVER_SLOT_TAG, "Managed cover slot '%s' is unbound; ignoring commands until a registry entry is bound at boot", this->get_name().c_str());
     return;
   }
   if (this->parent_ == nullptr) {
@@ -112,6 +111,8 @@ void EleroManagedCoverSlot::apply_managed_device(const elero::ManagedDevice &dev
 }
 
 void EleroManagedCoverSlot::loop() {
+  if (!this->active_ || this->parent_ == nullptr)
+    return;
   const uint32_t now = millis();
   if (this->poll_intvl_ != 0 && this->poll_intvl_ != UINT32_MAX && now - this->last_poll_ > this->poll_intvl_) {
     this->enqueue_command(this->command_check_);
@@ -121,6 +122,10 @@ void EleroManagedCoverSlot::loop() {
 }
 
 void EleroManagedCoverSlot::control(const cover::CoverCall &call) {
+  if (!this->active_ || this->parent_ == nullptr) {
+    ESP_LOGD(COVER_SLOT_TAG, "Ignoring command for unbound managed cover slot '%s'", this->get_name().c_str());
+    return;
+  }
   if (call.get_stop()) {
     this->enqueue_command(this->command_stop_);
     this->current_operation = cover::COVER_OPERATION_IDLE;
@@ -178,6 +183,10 @@ elero::t_elero_command EleroManagedCoverSlot::build_tx_command(uint8_t cmd_byte)
 }
 
 void EleroManagedCoverSlot::enqueue_command(uint8_t cmd_byte) {
+  if (!this->active_ || this->parent_ == nullptr) {
+    ESP_LOGD(COVER_SLOT_TAG, "Ignoring queued command for unbound managed cover slot '%s'", this->get_name().c_str());
+    return;
+  }
   if (this->commands_to_send_.size() < elero::ELERO_MAX_COMMAND_QUEUE) {
     this->commands_to_send_.push(cmd_byte);
   } else {
@@ -210,8 +219,7 @@ void EleroManagedCoverSlot::increase_counter_() {
 
 void EleroManagedLightSlot::setup() {
   if (!this->active_) {
-    ESP_LOGCONFIG(LIGHT_SLOT_TAG, "Managed light slot '%s' is unbound", this->get_light_name().c_str());
-    this->mark_failed();
+    ESP_LOGCONFIG(LIGHT_SLOT_TAG, "Managed light slot '%s' is unbound; ignoring commands until a registry entry is bound at boot", this->get_light_name().c_str());
     return;
   }
   if (this->parent_ == nullptr) {
@@ -225,7 +233,7 @@ void EleroManagedLightSlot::setup() {
 }
 
 void EleroManagedLightSlot::dump_config() {
-  ESP_LOGCONFIG(LIGHT_SLOT_TAG, "Elero Managed Light Slot:");
+  ESP_LOGCONFIG(LIGHT_SLOT_TAG, "Elero Managed Light Slot '%s':", this->get_light_name().c_str());
   ESP_LOGCONFIG(LIGHT_SLOT_TAG, "  Active: %s", YESNO(this->active_));
   ESP_LOGCONFIG(LIGHT_SLOT_TAG, "  Blind Address: 0x%06lx", (unsigned long) this->command_.blind_addr);
 }
@@ -254,7 +262,7 @@ void EleroManagedLightSlot::apply_managed_device(const elero::ManagedDevice &dev
 void EleroManagedLightSlot::write_state(light::LightState *state) {
   this->state_ = state;
   if (!this->active_ || this->parent_ == nullptr) {
-    ESP_LOGW(LIGHT_SLOT_TAG, "Ignoring command for unbound managed light slot");
+    ESP_LOGD(LIGHT_SLOT_TAG, "Ignoring command for unbound managed light slot '%s'", this->get_light_name().c_str());
     return;
   }
 
@@ -271,7 +279,11 @@ void EleroManagedLightSlot::write_state(light::LightState *state) {
   this->state_initialized_ = true;
 }
 
-void EleroManagedLightSlot::loop() { this->handle_commands_(millis()); }
+void EleroManagedLightSlot::loop() {
+  if (!this->active_ || this->parent_ == nullptr)
+    return;
+  this->handle_commands_(millis());
+}
 
 void EleroManagedLightSlot::set_rx_state(uint8_t state) {
   if (state == elero::ELERO_STATE_ON) {
@@ -286,6 +298,10 @@ void EleroManagedLightSlot::set_rx_state(uint8_t state) {
 }
 
 void EleroManagedLightSlot::enqueue_command(uint8_t cmd_byte) {
+  if (!this->active_ || this->parent_ == nullptr) {
+    ESP_LOGD(LIGHT_SLOT_TAG, "Ignoring queued command for unbound managed light slot '%s'", this->get_light_name().c_str());
+    return;
+  }
   if (this->commands_to_send_.size() < elero::ELERO_MAX_COMMAND_QUEUE) {
     this->commands_to_send_.push(cmd_byte);
   } else {
