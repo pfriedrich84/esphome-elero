@@ -13,6 +13,8 @@ static const char *const TAG = "elero_managed";
 static const uint8_t STORED_NAME_LEN = 64;
 static const uint32_t STORED_MAGIC = 0x454d5247;  // EMRG
 static const uint32_t PREF_HASH = 0x9d08f4b5;
+static const char *const COMPONENT_VERSION = "spike-1";
+static const char *const ENTITY_MATERIALIZATION = "not_hot_addable_in_spike_restart_required";
 
 uint32_t hash_bytes_(const uint8_t *value, size_t len) {
   uint32_t hash = 2166136261UL;
@@ -105,13 +107,13 @@ void EleroManaged::dump_config() {
 std::string EleroManaged::get_elero_info() const {
   char buffer[256];
   snprintf(buffer, sizeof(buffer),
-           "{\"managed_enabled\":%s,\"schema_version\":%u,\"component_version\":\"spike-1\","
+           "{\"managed_enabled\":%s,\"schema_version\":%u,\"component_version\":\"%s\","
            "\"hub_id\":%lu,\"hub_mac\":\"%s\",\"max_devices\":%u,\"registry_revision\":%lu,\"device_count\":%u,"
-           "\"entity_materialization\":\"not_hot_addable_in_spike_restart_required\"}",
-           this->enabled_ ? "true" : "false", elero::ELERO_MANAGED_SCHEMA_VERSION,
+           "\"entity_materialization\":\"%s\"}",
+           this->enabled_ ? "true" : "false", elero::ELERO_MANAGED_SCHEMA_VERSION, COMPONENT_VERSION,
            (unsigned long) this->hub_id_, this->hub_mac_.c_str(), this->max_devices_,
            (unsigned long) this->registry_.registry_revision,
-           (unsigned) this->registry_.devices.size());
+           (unsigned) this->registry_.devices.size(), ENTITY_MATERIALIZATION);
   return std::string(buffer);
 }
 
@@ -239,12 +241,24 @@ void EleroManaged::publish_diagnostic_fields_(const std::string &request, bool o
     this->last_ok_text_sensor_->publish_state(ok ? "true" : "false");
   if (this->last_error_text_sensor_ != nullptr)
     this->last_error_text_sensor_->publish_state(error);
+  if (this->managed_enabled_text_sensor_ != nullptr)
+    this->managed_enabled_text_sensor_->publish_state(this->enabled_ ? "true" : "false");
+  if (this->schema_version_text_sensor_ != nullptr)
+    this->schema_version_text_sensor_->publish_state(std::to_string(elero::ELERO_MANAGED_SCHEMA_VERSION));
+  if (this->component_version_text_sensor_ != nullptr)
+    this->component_version_text_sensor_->publish_state(COMPONENT_VERSION);
   if (this->hub_id_text_sensor_ != nullptr)
     this->hub_id_text_sensor_->publish_state(std::to_string(this->hub_id_));
+  if (this->hub_mac_text_sensor_ != nullptr)
+    this->hub_mac_text_sensor_->publish_state(this->hub_mac_);
+  if (this->max_devices_text_sensor_ != nullptr)
+    this->max_devices_text_sensor_->publish_state(std::to_string(this->max_devices_));
   if (this->registry_revision_text_sensor_ != nullptr)
     this->registry_revision_text_sensor_->publish_state(std::to_string(this->registry_.registry_revision));
   if (this->device_count_text_sensor_ != nullptr)
     this->device_count_text_sensor_->publish_state(std::to_string(this->registry_.devices.size()));
+  if (this->entity_materialization_text_sensor_ != nullptr)
+    this->entity_materialization_text_sensor_->publish_state(ENTITY_MATERIALIZATION);
 #endif
 }
 

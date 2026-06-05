@@ -33,9 +33,17 @@ class EleroManaged : public Component
   void set_last_call_text_sensor(text_sensor::TextSensor *sensor) { this->last_call_text_sensor_ = sensor; }
   void set_last_ok_text_sensor(text_sensor::TextSensor *sensor) { this->last_ok_text_sensor_ = sensor; }
   void set_last_error_text_sensor(text_sensor::TextSensor *sensor) { this->last_error_text_sensor_ = sensor; }
+  void set_managed_enabled_text_sensor(text_sensor::TextSensor *sensor) { this->managed_enabled_text_sensor_ = sensor; }
+  void set_schema_version_text_sensor(text_sensor::TextSensor *sensor) { this->schema_version_text_sensor_ = sensor; }
+  void set_component_version_text_sensor(text_sensor::TextSensor *sensor) { this->component_version_text_sensor_ = sensor; }
   void set_hub_id_text_sensor(text_sensor::TextSensor *sensor) { this->hub_id_text_sensor_ = sensor; }
+  void set_hub_mac_text_sensor(text_sensor::TextSensor *sensor) { this->hub_mac_text_sensor_ = sensor; }
+  void set_max_devices_text_sensor(text_sensor::TextSensor *sensor) { this->max_devices_text_sensor_ = sensor; }
   void set_registry_revision_text_sensor(text_sensor::TextSensor *sensor) { this->registry_revision_text_sensor_ = sensor; }
   void set_device_count_text_sensor(text_sensor::TextSensor *sensor) { this->device_count_text_sensor_ = sensor; }
+  void set_entity_materialization_text_sensor(text_sensor::TextSensor *sensor) {
+    this->entity_materialization_text_sensor_ = sensor;
+  }
 #endif
 
   bool is_enabled() const { return this->enabled_; }
@@ -78,9 +86,15 @@ class EleroManaged : public Component
   text_sensor::TextSensor *last_call_text_sensor_{nullptr};
   text_sensor::TextSensor *last_ok_text_sensor_{nullptr};
   text_sensor::TextSensor *last_error_text_sensor_{nullptr};
+  text_sensor::TextSensor *managed_enabled_text_sensor_{nullptr};
+  text_sensor::TextSensor *schema_version_text_sensor_{nullptr};
+  text_sensor::TextSensor *component_version_text_sensor_{nullptr};
   text_sensor::TextSensor *hub_id_text_sensor_{nullptr};
+  text_sensor::TextSensor *hub_mac_text_sensor_{nullptr};
+  text_sensor::TextSensor *max_devices_text_sensor_{nullptr};
   text_sensor::TextSensor *registry_revision_text_sensor_{nullptr};
   text_sensor::TextSensor *device_count_text_sensor_{nullptr};
+  text_sensor::TextSensor *entity_materialization_text_sensor_{nullptr};
 #endif
   ESPPreferenceObject pref_{};
 };

@@ -43,18 +43,24 @@ The helpers are exposed as ESPHome Native API user services in this pass:
 - `validate_elero_managed_registry(registry_json)`
 - `push_elero_managed_registry(registry_json)`
 
-Because ESPHome user-defined API services are command-style calls rather than direct request/response RPCs, responses are published to an auto-created diagnostic text sensor named `Elero Managed API Result`. Payloads are JSON strings. ESPHome requires `api.custom_services: true` for these services.
+ESPHome requires `api.custom_services: true` for these services. Because ESPHome user-defined API services are command-style calls rather than direct request/response RPCs, `elero_managed` publishes command status and hub metadata to enabled diagnostic text sensors by default instead of exposing one large JSON response entity.
 
-Additional diagnostic text sensors are auto-created with `disabled_by_default: true` so they are hidden unless the user explicitly enables them in Home Assistant:
+Diagnostic text sensors are auto-created with `entity_category: diagnostic` and remain enabled by default:
 
 - `Elero Managed Last Call`
 - `Elero Managed Last OK`
 - `Elero Managed Last Error`
+- `Elero Managed Enabled`
+- `Elero Managed Schema Version`
+- `Elero Managed Component Version`
 - `Elero Managed Hub ID`
+- `Elero Managed Hub MAC`
+- `Elero Managed Max Devices`
 - `Elero Managed Registry Revision`
 - `Elero Managed Device Count`
+- `Elero Managed Entity Materialization`
 
-Implementation note: ESPHome 2026.5.3 did not link the string-argument user-service template specializations for this external-component-only custom API service path, so `elero_managed` provides the required `std::string` specializations locally.
+An optional raw response mailbox can still be configured with `response_text_sensor` for debugging full JSON payloads, but it is no longer auto-created.
 
 `hub_id` is ESP32-owned. The Companion should discover it with `get_elero_info()`, keep it with the draft registry, and echo it in pushes. The ESP32 rejects registries whose `hub_id` does not match the local eFuse-MAC-derived ID.
 
