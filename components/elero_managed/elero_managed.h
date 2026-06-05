@@ -22,6 +22,7 @@ class EleroManaged : public Component {
   bool is_enabled() const { return this->enabled_; }
   uint8_t get_max_devices() const { return this->max_devices_; }
   uint32_t get_hub_id() const { return this->hub_id_; }
+  std::string get_hub_mac() const { return this->hub_mac_; }
 
   std::string get_elero_info() const;
   elero::ManagedRegistry get_elero_managed_registry() const;
@@ -33,11 +34,13 @@ class EleroManaged : public Component {
   void load_registry_();
   bool save_registry_();
   static uint32_t preference_hash_();
+  static uint32_t hub_id_from_mac_(const uint8_t mac[6]);
 
   elero::Elero *parent_{nullptr};
   bool enabled_{false};
   uint8_t max_devices_{elero::ELERO_MANAGED_MAX_DEVICES_LIMIT};
   uint32_t hub_id_{0};
+  std::string hub_mac_;
   elero::ManagedRegistry registry_{};
   ESPPreferenceObject pref_{};
 };

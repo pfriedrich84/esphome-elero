@@ -3,6 +3,7 @@
 #include "esphome/core/defines.h"
 #include "esphome/core/log.h"
 #include <cstring>
+#include <esp_mac.h>
 
 namespace esphome {
 namespace elero_managed {
@@ -12,10 +13,10 @@ static const uint8_t STORED_NAME_LEN = 64;
 static const uint32_t STORED_MAGIC = 0x454d5247;  // EMRG
 static const uint32_t PREF_HASH = 0x9d08f4b5;
 
-uint32_t hash_string_(const char *value) {
+uint32_t hash_bytes_(const uint8_t *value, size_t len) {
   uint32_t hash = 2166136261UL;
-  while (value != nullptr && *value != '\0') {
-    hash ^= static_cast<uint8_t>(*value++);
+  for (size_t i = 0; i < len; i++) {
+    hash ^= value[i];
     hash *= 16777619UL;
   }
   return hash == 0 ? 1 : hash;
@@ -58,8 +59,22 @@ struct StoredManagedRegistry {
 
 uint32_t EleroManaged::preference_hash_() { return PREF_HASH; }
 
+uint32_t EleroManaged::hub_id_from_mac_(const uint8_t mac[6]) { return hash_bytes_(mac, 6); }
+
 void EleroManaged::setup() {
-  this->hub_id_ = hash_string_(App.get_name().c_str()) ^ preference_hash_();
+  uint8_t mac[6]{};
+  if (esp_efuse_mac_get_default(mac) == ESP_OK) {
+    char mac_buffer[18];
+    snprintf(mac_buffer, sizeof(mac_buffer), "%02x:%02x:%02x:%02x:%02x:%02x",
+             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    this->hub_mac_ = mac_buffer;
+    this->hub_id_ = hub_id_from_mac_(mac);
+  } else {
+    ESP_LOGW(TAG, "Could not read ESP32 eFuse MAC; using configured node-name hash as fallback hub_id");
+    this->hub_mac_ = "unknown";
+    const auto *name = App.get_name().c_str();
+    this->hub_id_ = hash_bytes_(reinterpret_cast<const uint8_t *>(name), strlen(name));
+  }
   this->registry_.schema_version = elero::ELERO_MANAGED_SCHEMA_VERSION;
   this->registry_.hub_id = this->hub_id_;
   this->pref_ = global_preferences->make_preference<StoredManagedRegistry>(preference_hash_());
@@ -71,6 +86,7 @@ void EleroManaged::dump_config() {
   ESP_LOGCONFIG(TAG, "  Enabled: %s", YESNO(this->enabled_));
   ESP_LOGCONFIG(TAG, "  Max devices: %u", this->max_devices_);
   ESP_LOGCONFIG(TAG, "  Hub ID: 0x%08lx", (unsigned long) this->hub_id_);
+  ESP_LOGCONFIG(TAG, "  Hub MAC: %s", this->hub_mac_.c_str());
   ESP_LOGCONFIG(TAG, "  Registry revision: %lu", (unsigned long) this->registry_.registry_revision);
   ESP_LOGCONFIG(TAG, "  Registry devices: %u", (unsigned) this->registry_.devices.size());
   ESP_LOGCONFIG(TAG, "  Entity materialization: static ESPHome codegen only; restart/recompile spike pending");
@@ -80,10 +96,10 @@ std::string EleroManaged::get_elero_info() const {
   char buffer[256];
   snprintf(buffer, sizeof(buffer),
            "{\"managed_enabled\":%s,\"schema_version\":%u,\"component_version\":\"spike-1\","
-           "\"hub_id\":%lu,\"max_devices\":%u,\"registry_revision\":%lu,\"device_count\":%u,"
+           "\"hub_id\":%lu,\"hub_mac\":\"%s\",\"max_devices\":%u,\"registry_revision\":%lu,\"device_count\":%u,"
            "\"entity_materialization\":\"not_hot_addable_in_spike_restart_required\"}",
            this->enabled_ ? "true" : "false", elero::ELERO_MANAGED_SCHEMA_VERSION,
-           (unsigned long) this->hub_id_, this->max_devices_,
+           (unsigned long) this->hub_id_, this->hub_mac_.c_str(), this->max_devices_,
            (unsigned long) this->registry_.registry_revision,
            (unsigned) this->registry_.devices.size());
   return std::string(buffer);

@@ -24,7 +24,7 @@ This spike adds the first firmware-side surface for a future Home Assistant Comp
 - Minimal managed registry model in firmware with:
   - `schema_version`
   - `registry_revision`
-  - `hub_id`
+  - `hub_id` derived from the ESP32 eFuse MAC address
   - `devices[]`
   - FNV-1a checksum integrity field
 - Device records are prepared for cover/light type, name, Elero RF addresses/channel, pck/hop/payload fields, durations, poll interval, capabilities, and enabled state.
@@ -36,6 +36,8 @@ This spike adds the first firmware-side surface for a future Home Assistant Comp
 - Accepted registries are saved with ESPHome preferences and loaded at boot. Invalid pushes are rejected before replacing the active registry.
 
 The helpers are firmware-side C++ entry points in this pass. The actual ESPHome Native API protobuf/custom-message binding for a HACS Companion is still pending.
+
+`hub_id` is ESP32-owned. The Companion should discover it with `get_elero_info()`, keep it with the draft registry, and echo it in pushes. The ESP32 rejects registries whose `hub_id` does not match the local eFuse-MAC-derived ID.
 
 ## Still a spike / blocker
 
