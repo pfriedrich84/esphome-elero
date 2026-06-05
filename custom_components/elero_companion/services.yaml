@@ -1,5 +1,4 @@
 get_info:
-  target:
   fields:
     entry_id:
       required: false
@@ -9,7 +8,6 @@ get_info:
       description: Required when multiple Elero Companion entries are loaded.
 
 validate_managed_registry:
-  target:
   fields:
     entry_id:
       required: false
@@ -26,7 +24,6 @@ validate_managed_registry:
       description: Registry JSON to validate through the ESPHome Native API.
 
 push_managed_registry:
-  target:
   fields:
     entry_id:
       required: false
@@ -43,7 +40,6 @@ push_managed_registry:
       description: Registry JSON to push through the ESPHome Native API.
 
 clear_managed_registry:
-  target:
   fields:
     entry_id:
       required: false
