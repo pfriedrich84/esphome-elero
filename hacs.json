@@ -1,5 +1,6 @@
 {
   "name": "Elero Companion",
+  "domain": "elero_companion",
   "render_readme": true,
   "homeassistant": "2026.3.0",
   "domains": ["sensor", "binary_sensor"],
