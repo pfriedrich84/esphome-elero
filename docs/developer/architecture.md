@@ -10,6 +10,7 @@ This document tracks the intended deep Modules and seams for the ESPHome Elero i
 4. **CC1101 radio orchestration** — in progress: pure state predicates now cover RX drain limits, FIFO completeness, TX progress states, and watchdog state classification.
 5. **Runtime adopted blind behaviour** — in progress: pure polling, counter, direction, and position rules are extracted.
 6. **Elero hub split** — in progress: runtime adopted blind management and discovery/packet-dump management moved out of protocol dispatch into their own translation units.
+7. **Managed entity materialization** — spike: persisted managed registries now have a pure preallocated-slot planning seam before any ESPHome entity registration experiment.
 
 ## Module status
 
@@ -55,6 +56,13 @@ This document tracks the intended deep Modules and seams for the ESPHome Elero i
 - **Interface**: existing Elero hub methods for adopt/remove/update/send runtime blinds.
 - **Implementation owns**: runtime adopted blind storage loops, queue draining, polling, and position recompute orchestration.
 - **Depth**: low-to-medium — the public hub Interface is unchanged, but locality improves because RF packet dispatch and runtime adopted blind management no longer share one file.
+
+### Managed entity materialization planning
+
+- **Files**: `components/elero/elero_managed_materialization.h`, `components/elero/elero_managed_registry.h`, `tests/unit/test_managed_materialization.cpp`
+- **Interface**: `managed_materialization::build_preallocated_slot_plan(registry, cover_slots, light_slots)`.
+- **Implementation owns**: deterministic assignment of enabled managed registry devices to type-specific preallocated cover/light slots and reporting unbound devices when capacity is insufficient.
+- **Depth**: early spike — this does not register ESPHome entities yet, but it gives the next materialization experiment a pure, tested planning seam.
 
 ### Discovery and packet dump management
 

@@ -52,6 +52,13 @@ TEST(ManagedRegistryTests, RejectsWrongHub) {
   EXPECT_EQ(result.error, "hub_id does not match this ESP32");
 }
 
+TEST(ManagedRegistryTests, RejectsStaleRegistryRevisionWhenExpected) {
+  auto registry = make_valid_registry();
+  auto result = managed_registry::validate(registry, 32, 0x12345678, 2);
+  EXPECT_FALSE(result.ok);
+  EXPECT_EQ(result.error, "registry_revision is stale");
+}
+
 TEST(ManagedRegistryTests, RejectsDuplicateBlindAddress) {
   auto registry = make_valid_registry();
   auto duplicate = registry.devices[0];

@@ -9,6 +9,7 @@
 #include "esphome/components/text_sensor/text_sensor.h"
 #endif
 #include "../elero/elero.h"
+#include "../elero/elero_managed_materialization.h"
 #include "../elero/elero_managed_registry.h"
 #include <string>
 
@@ -28,6 +29,8 @@ class EleroManaged : public Component
   void set_parent(elero::Elero *parent) { this->parent_ = parent; }
   void set_enabled(bool enabled) { this->enabled_ = enabled; }
   void set_max_devices(uint8_t max_devices) { this->max_devices_ = max_devices; }
+  void set_preallocated_cover_slots(uint8_t slots) { this->preallocated_cover_slots_ = slots; }
+  void set_preallocated_light_slots(uint8_t slots) { this->preallocated_light_slots_ = slots; }
 #ifdef USE_TEXT_SENSOR
   void set_response_text_sensor(text_sensor::TextSensor *sensor) { this->response_text_sensor_ = sensor; }
   void set_last_call_text_sensor(text_sensor::TextSensor *sensor) { this->last_call_text_sensor_ = sensor; }
@@ -56,12 +59,14 @@ class EleroManaged : public Component
   elero::ManagedRegistryValidation validate_elero_managed_registry(
       const elero::ManagedRegistry &registry) const;
   bool push_elero_managed_registry(const elero::ManagedRegistry &registry, std::string *error = nullptr);
+  bool clear_elero_managed_registry(uint32_t expected_registry_revision, std::string *error = nullptr);
 
 #ifdef USE_API
   void api_get_elero_info();
   void api_get_elero_managed_registry();
   void api_validate_elero_managed_registry(std::string registry_json);
   void api_push_elero_managed_registry(std::string registry_json);
+  void api_clear_elero_managed_registry(std::string registry_revision, std::string confirm);
 #endif
 
  protected:
@@ -71,6 +76,8 @@ class EleroManaged : public Component
                          const std::string &error = "");
   void publish_diagnostic_fields_(const std::string &request, bool ok, const std::string &error);
   std::string registry_to_json_(const elero::ManagedRegistry &registry) const;
+  elero::managed_materialization::Plan materialization_plan_() const;
+  std::string entity_materialization_status_() const;
   bool registry_from_json_(const std::string &json, elero::ManagedRegistry *registry, std::string *error) const;
   static uint32_t preference_hash_();
   static uint32_t hub_id_from_mac_(const uint8_t mac[6]);
@@ -80,6 +87,8 @@ class EleroManaged : public Component
   uint8_t max_devices_{elero::ELERO_MANAGED_MAX_DEVICES_LIMIT};
   uint32_t hub_id_{0};
   std::string hub_mac_;
+  uint8_t preallocated_cover_slots_{0};
+  uint8_t preallocated_light_slots_{0};
   elero::ManagedRegistry registry_{};
 #ifdef USE_TEXT_SENSOR
   text_sensor::TextSensor *response_text_sensor_{nullptr};

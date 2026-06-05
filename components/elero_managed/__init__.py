@@ -13,6 +13,8 @@ EleroManaged = elero_managed_ns.class_("EleroManaged", cg.Component)
 
 CONF_ENABLED = "enabled"
 CONF_MAX_DEVICES = "max_devices"
+CONF_PREALLOCATED_COVER_SLOTS = "preallocated_cover_slots"
+CONF_PREALLOCATED_LIGHT_SLOTS = "preallocated_light_slots"
 CONF_RESPONSE_TEXT_SENSOR = "response_text_sensor"
 CONF_LAST_CALL_TEXT_SENSOR = "last_call_text_sensor"
 CONF_LAST_OK_TEXT_SENSOR = "last_ok_text_sensor"
@@ -64,6 +66,15 @@ def _auto_diagnostic_text_sensors(config):
     return result
 
 
+def _validate_preallocated_slots(config):
+    slot_count = config.get(CONF_PREALLOCATED_COVER_SLOTS, 0) + config.get(CONF_PREALLOCATED_LIGHT_SLOTS, 0)
+    if slot_count > config.get(CONF_MAX_DEVICES, 32):
+        raise cv.Invalid(
+            "preallocated_cover_slots + preallocated_light_slots must be less than or equal to max_devices"
+        )
+    return config
+
+
 CONFIG_SCHEMA = cv.All(
     cv.Schema(
         {
@@ -71,6 +82,8 @@ CONFIG_SCHEMA = cv.All(
             cv.GenerateID(CONF_ELERO_ID): cv.use_id(elero),
             cv.Optional(CONF_ENABLED, default=False): cv.boolean,
             cv.Optional(CONF_MAX_DEVICES, default=32): cv.int_range(min=0, max=32),
+            cv.Optional(CONF_PREALLOCATED_COVER_SLOTS, default=0): cv.int_range(min=0, max=32),
+            cv.Optional(CONF_PREALLOCATED_LIGHT_SLOTS, default=0): cv.int_range(min=0, max=32),
             cv.Optional(CONF_RESPONSE_TEXT_SENSOR): _RESPONSE_TEXT_SENSOR_SCHEMA,
             cv.Optional(CONF_LAST_CALL_TEXT_SENSOR): _RESPONSE_TEXT_SENSOR_SCHEMA,
             cv.Optional(CONF_LAST_OK_TEXT_SENSOR): _RESPONSE_TEXT_SENSOR_SCHEMA,
@@ -86,6 +99,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_ENTITY_MATERIALIZATION_TEXT_SENSOR): _RESPONSE_TEXT_SENSOR_SCHEMA,
         }
     ).extend(cv.COMPONENT_SCHEMA),
+    _validate_preallocated_slots,
     _auto_diagnostic_text_sensors,
 )
 
@@ -98,6 +112,8 @@ async def to_code(config):
     cg.add(var.set_parent(hub))
     cg.add(var.set_enabled(config[CONF_ENABLED]))
     cg.add(var.set_max_devices(config[CONF_MAX_DEVICES]))
+    cg.add(var.set_preallocated_cover_slots(config[CONF_PREALLOCATED_COVER_SLOTS]))
+    cg.add(var.set_preallocated_light_slots(config[CONF_PREALLOCATED_LIGHT_SLOTS]))
 
     if CONF_RESPONSE_TEXT_SENSOR in config:
         response_sensor = await text_sensor.new_text_sensor(config[CONF_RESPONSE_TEXT_SENSOR])

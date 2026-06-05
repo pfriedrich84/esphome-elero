@@ -30,3 +30,9 @@ Lightweight decision memory for future agents. For major architecture decisions,
 
 - Short `dedup_window` remains for immediate duplicate suppression.
 - Stale status counter resync uses a separate longer quiet-gap threshold so lossy links/restarts can recover without accepting repeated stale traffic.
+
+### Materialize managed entities through preallocated ESPHome slots
+
+- Accepted ADR: [`../developer/adr/2026-06-05-managed-entity-materialization.md`](../developer/adr/2026-06-05-managed-entity-materialization.md).
+- Use compile-time preallocated managed cover/light slots as the primary materialization strategy.
+- Dynamic boot-time C++ entity registration remains exploratory only unless it proves normal ESPHome lifecycle, Native API listing, command routing, and light state wiring.

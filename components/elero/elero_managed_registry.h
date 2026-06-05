@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -96,11 +97,16 @@ inline uint32_t calculate_checksum(const ManagedRegistry &registry) {
   return hash == 0 ? 1 : hash;
 }
 
-inline ManagedRegistryValidation validate(const ManagedRegistry &registry, uint8_t max_devices, uint32_t expected_hub_id) {
+inline ManagedRegistryValidation validate(
+    const ManagedRegistry &registry, uint8_t max_devices, uint32_t expected_hub_id,
+    uint32_t expected_registry_revision = std::numeric_limits<uint32_t>::max()) {
   if (registry.schema_version != ELERO_MANAGED_SCHEMA_VERSION)
     return {false, "unsupported schema_version"};
   if (registry.hub_id != expected_hub_id)
     return {false, "hub_id does not match this ESP32"};
+  if (expected_registry_revision != std::numeric_limits<uint32_t>::max() &&
+      registry.registry_revision != expected_registry_revision)
+    return {false, "registry_revision is stale"};
   if (registry.devices.size() > max_devices)
     return {false, "too many devices"};
   if (registry.checksum != calculate_checksum(registry))

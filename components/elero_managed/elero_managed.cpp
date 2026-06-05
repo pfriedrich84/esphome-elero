@@ -2,6 +2,7 @@
 #include "esphome/core/application.h"
 #include "esphome/core/defines.h"
 #include "esphome/core/log.h"
+#include <cstdlib>
 #include <cstring>
 #include <esp_mac.h>
 #include <cJSON.h>
@@ -14,7 +15,6 @@ static const uint8_t STORED_NAME_LEN = 64;
 static const uint32_t STORED_MAGIC = 0x454d5247;  // EMRG
 static const uint32_t PREF_HASH = 0x9d08f4b5;
 static const char *const COMPONENT_VERSION = "spike-1";
-static const char *const ENTITY_MATERIALIZATION = "not_hot_addable_in_spike_restart_required";
 
 uint32_t hash_bytes_(const uint8_t *value, size_t len) {
   uint32_t hash = 2166136261UL;
@@ -89,6 +89,8 @@ void EleroManaged::setup() {
                          "validate_elero_managed_registry", {"registry_json"});
   this->register_service(&EleroManaged::api_push_elero_managed_registry,
                          "push_elero_managed_registry", {"registry_json"});
+  this->register_service(&EleroManaged::api_clear_elero_managed_registry,
+                         "clear_elero_managed_registry", {"registry_revision", "confirm"});
 #endif
 }
 
@@ -100,30 +102,62 @@ void EleroManaged::dump_config() {
   ESP_LOGCONFIG(TAG, "  Hub MAC: %s", this->hub_mac_.c_str());
   ESP_LOGCONFIG(TAG, "  Registry revision: %lu", (unsigned long) this->registry_.registry_revision);
   ESP_LOGCONFIG(TAG, "  Registry devices: %u", (unsigned) this->registry_.devices.size());
-  ESP_LOGCONFIG(TAG, "  Entity materialization: static ESPHome codegen only; restart/recompile spike pending");
+  ESP_LOGCONFIG(TAG, "  Preallocated cover slots: %u", this->preallocated_cover_slots_);
+  ESP_LOGCONFIG(TAG, "  Preallocated light slots: %u", this->preallocated_light_slots_);
+  ESP_LOGCONFIG(TAG, "  Entity materialization: %s", this->entity_materialization_status_().c_str());
   this->publish_diagnostic_fields_("boot", true, "");
 }
 
 std::string EleroManaged::get_elero_info() const {
-  char buffer[256];
+  auto plan = this->materialization_plan_();
+  char buffer[512];
   snprintf(buffer, sizeof(buffer),
            "{\"managed_enabled\":%s,\"schema_version\":%u,\"component_version\":\"%s\","
            "\"hub_id\":%lu,\"hub_mac\":\"%s\",\"max_devices\":%u,\"registry_revision\":%lu,\"device_count\":%u,"
-           "\"entity_materialization\":\"%s\"}",
+           "\"entity_materialization\":\"%s\",\"preallocated_cover_slots\":%u,\"preallocated_light_slots\":%u,"
+           "\"materialized_cover_count\":%u,\"materialized_light_count\":%u,"
+           "\"unbound_cover_count\":%u,\"unbound_light_count\":%u}",
            this->enabled_ ? "true" : "false", elero::ELERO_MANAGED_SCHEMA_VERSION, COMPONENT_VERSION,
            (unsigned long) this->hub_id_, this->hub_mac_.c_str(), this->max_devices_,
            (unsigned long) this->registry_.registry_revision,
-           (unsigned) this->registry_.devices.size(), ENTITY_MATERIALIZATION);
+           (unsigned) this->registry_.devices.size(), this->entity_materialization_status_().c_str(),
+           this->preallocated_cover_slots_, this->preallocated_light_slots_,
+           (unsigned) plan.enabled_cover_count, (unsigned) plan.enabled_light_count,
+           (unsigned) plan.unbound_cover_count, (unsigned) plan.unbound_light_count);
   return std::string(buffer);
 }
 
 elero::ManagedRegistry EleroManaged::get_elero_managed_registry() const { return this->registry_; }
 
+elero::managed_materialization::Plan EleroManaged::materialization_plan_() const {
+  return elero::managed_materialization::build_preallocated_slot_plan(
+      this->registry_, this->preallocated_cover_slots_, this->preallocated_light_slots_);
+}
+
+std::string EleroManaged::entity_materialization_status_() const {
+  if (this->preallocated_cover_slots_ == 0 && this->preallocated_light_slots_ == 0)
+    return "static_codegen_only_preallocated_slots_disabled";
+  auto plan = this->materialization_plan_();
+  if (!plan.fits())
+    return "preallocated_slots_insufficient_capacity";
+  return "preallocated_slots_planned_restart_required";
+}
+
 elero::ManagedRegistryValidation EleroManaged::validate_elero_managed_registry(
     const elero::ManagedRegistry &registry) const {
   if (!this->enabled_)
     return {false, "managed mode is disabled"};
-  return elero::managed_registry::validate(registry, this->max_devices_, this->hub_id_);
+  auto validation = elero::managed_registry::validate(registry, this->max_devices_, this->hub_id_,
+                                                      this->registry_.registry_revision);
+  if (!validation.ok)
+    return validation;
+  if (this->preallocated_cover_slots_ != 0 || this->preallocated_light_slots_ != 0) {
+    auto plan = elero::managed_materialization::build_preallocated_slot_plan(
+        registry, this->preallocated_cover_slots_, this->preallocated_light_slots_);
+    if (!plan.fits())
+      return {false, "managed registry exceeds preallocated entity slots"};
+  }
+  return validation;
 }
 
 bool EleroManaged::push_elero_managed_registry(const elero::ManagedRegistry &registry, std::string *error) {
@@ -149,6 +183,37 @@ bool EleroManaged::push_elero_managed_registry(const elero::ManagedRegistry &reg
   }
   ESP_LOGI(TAG, "Accepted managed registry revision %lu with %u devices; restart/reconnect required for entity changes",
            (unsigned long) this->registry_.registry_revision, (unsigned) this->registry_.devices.size());
+  return true;
+}
+
+bool EleroManaged::clear_elero_managed_registry(uint32_t expected_registry_revision, std::string *error) {
+  if (!this->enabled_) {
+    if (error != nullptr)
+      *error = "managed mode is disabled";
+    return false;
+  }
+  if (expected_registry_revision != this->registry_.registry_revision) {
+    if (error != nullptr)
+      *error = "registry_revision is stale";
+    ESP_LOGW(TAG, "Rejected managed registry clear: stale revision %lu (active %lu)",
+             (unsigned long) expected_registry_revision, (unsigned long) this->registry_.registry_revision);
+    return false;
+  }
+
+  auto previous = this->registry_;
+  elero::ManagedRegistry cleared{};
+  cleared.schema_version = elero::ELERO_MANAGED_SCHEMA_VERSION;
+  cleared.registry_revision = this->registry_.registry_revision + 1;
+  cleared.hub_id = this->hub_id_;
+  elero::managed_registry::refresh_checksum(cleared);
+  this->registry_ = cleared;
+  if (!this->save_registry_()) {
+    this->registry_ = previous;
+    if (error != nullptr)
+      *error = "failed to persist registry";
+    return false;
+  }
+  ESP_LOGI(TAG, "Cleared managed registry; new revision %lu", (unsigned long) this->registry_.registry_revision);
   return true;
 }
 
@@ -258,7 +323,7 @@ void EleroManaged::publish_diagnostic_fields_(const std::string &request, bool o
   if (this->device_count_text_sensor_ != nullptr)
     this->device_count_text_sensor_->publish_state(std::to_string(this->registry_.devices.size()));
   if (this->entity_materialization_text_sensor_ != nullptr)
-    this->entity_materialization_text_sensor_->publish_state(ENTITY_MATERIALIZATION);
+    this->entity_materialization_text_sensor_->publish_state(this->entity_materialization_status_());
 #endif
 }
 
@@ -468,6 +533,36 @@ void EleroManaged::api_push_elero_managed_registry(std::string registry_json) {
   this->publish_response_("push_elero_managed_registry",
                           "{\"ok\":" + std::string(ok ? "true" : "false") +
                               ",\"request\":\"push_elero_managed_registry\",\"error\":\"" +
+                              escape_json_string_(error) + "\",\"registry_revision\":" +
+                              std::to_string(this->registry_.registry_revision) + "}",
+                          ok, error);
+}
+
+void EleroManaged::api_clear_elero_managed_registry(std::string registry_revision, std::string confirm) {
+  std::string error;
+  if (confirm != "CLEAR") {
+    error = "confirm must be CLEAR";
+    this->publish_response_("clear_elero_managed_registry",
+                            "{\"ok\":false,\"request\":\"clear_elero_managed_registry\",\"error\":\"" +
+                                escape_json_string_(error) + "\"}",
+                            false, error);
+    return;
+  }
+
+  char *end = nullptr;
+  uint32_t expected_revision = static_cast<uint32_t>(strtoul(registry_revision.c_str(), &end, 10));
+  if (end == registry_revision.c_str() || (end != nullptr && *end != '\0')) {
+    error = "registry_revision must be an integer";
+    this->publish_response_("clear_elero_managed_registry",
+                            "{\"ok\":false,\"request\":\"clear_elero_managed_registry\",\"error\":\"" +
+                                escape_json_string_(error) + "\"}",
+                            false, error);
+    return;
+  }
+  bool ok = this->clear_elero_managed_registry(expected_revision, &error);
+  this->publish_response_("clear_elero_managed_registry",
+                          "{\"ok\":" + std::string(ok ? "true" : "false") +
+                              ",\"request\":\"clear_elero_managed_registry\",\"error\":\"" +
                               escape_json_string_(error) + "\",\"registry_revision\":" +
                               std::to_string(this->registry_.registry_revision) + "}",
                           ok, error);

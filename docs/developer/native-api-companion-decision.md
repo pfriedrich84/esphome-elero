@@ -108,9 +108,9 @@ Home Assistant cover/light service
 
 The Companion should not be in the normal command path after a managed registry has been accepted by the ESP32.
 
-Implementation note: managed entities should preferably be materialized on the ESP32 from the last accepted registry at boot. If hot-adding or removing Native API entities after a push is not reliable, the push flow may require an ESP restart/reconnect so Home Assistant receives a fresh entity list from the ESPHome integration.
+Implementation note: managed entities should be materialized through compile-time preallocated ESPHome cover/light slots bound from the last accepted registry at boot; see [`adr/2026-06-05-managed-entity-materialization.md`](adr/2026-06-05-managed-entity-materialization.md). If hot-adding or removing Native API entities after a push is not reliable, the push flow may require an ESP restart/reconnect so Home Assistant receives a fresh entity list from the ESPHome integration.
 
-Fallback note: a thin Companion command adapter may be considered only if direct ESPHome Native API entity materialization proves infeasible, but it is not the preferred target architecture.
+Fallback note: boot-time dynamic C++ entity registration may be kept as an exploratory proof spike, and a thin Companion command adapter may be considered only if direct ESPHome Native API entity materialization proves infeasible. Neither is the preferred target architecture.
 
 ## Managed registry requirements
 
@@ -135,7 +135,7 @@ Each device entry should include:
 - poll interval
 - disabled/enabled state
 
-Registry updates must be validated before acceptance. Invalid updates must leave the previous accepted registry active.
+Registry updates must be validated before acceptance. Invalid updates must leave the previous accepted registry active. Pushes and clears are revision-guarded: the Companion must send the ESP32's active `registry_revision` in the draft and compute the checksum over that revision; clear also requires explicit confirmation. The ESP32 accepts a valid push or clear as the next revision and rejects stale drafts.
 
 ## Companion Native API helper surface
 

@@ -37,3 +37,5 @@ elero:
 elero_managed:
   enabled: true
   max_devices: 32
+  preallocated_cover_slots: 16
+  preallocated_light_slots: 16

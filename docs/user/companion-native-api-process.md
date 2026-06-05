@@ -120,7 +120,10 @@ Required behaviour:
 - The user explicitly presses **Push to ESP32**.
 - Companion shows what will change before pushing.
 - ESP32 validates the complete registry before accepting it.
-- ESP32 either accepts the whole registry or keeps the previous registry unchanged.
+- Companion includes the active ESP32 `registry_revision` in the pushed draft and computes the checksum over that revision.
+- ESP32 rejects stale drafts or clear requests whose `registry_revision` no longer matches the active registry.
+- Clear requests also require explicit confirmation.
+- ESP32 accepts the whole registry or confirmed clear request as the next revision, or keeps the previous registry unchanged.
 - Companion shows whether local changes are pending and which registry revision is active on the ESP32.
 - If new or removed entities require reconnect/restart before Home Assistant sees them, the Companion must say so clearly.
 
