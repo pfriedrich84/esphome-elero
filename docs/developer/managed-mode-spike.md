@@ -36,19 +36,16 @@ This spike adds the first firmware-side surface for a future Home Assistant Comp
   - `push_elero_managed_registry()`
 - Accepted registries are saved with ESPHome preferences and loaded at boot. Invalid pushes are rejected before replacing the active registry.
 
-The read helpers are exposed as ESPHome Native API user services in this pass:
+The helpers are exposed as ESPHome Native API user services in this pass:
 
 - `get_elero_info`
 - `get_elero_managed_registry`
-
-Because ESPHome user-defined API services are command-style calls rather than direct request/response RPCs, responses are published to an auto-created diagnostic text sensor named `Elero Managed API Result`. Payloads are JSON strings. ESPHome requires `api.custom_services: true` for these services.
-
-The intended JSON write helpers remain firmware-side C++ helpers for now:
-
 - `validate_elero_managed_registry(registry_json)`
 - `push_elero_managed_registry(registry_json)`
 
-Blocker found: ESPHome 2026.5.3 custom API services compile for no-argument services in this external component, but linking fails for `std::string` service arguments. The write path therefore needs a supported Native API transport, likely custom protobuf/native messages, before Companion push can be completed without REST.
+Because ESPHome user-defined API services are command-style calls rather than direct request/response RPCs, responses are published to an auto-created diagnostic text sensor named `Elero Managed API Result`. Payloads are JSON strings. ESPHome requires `api.custom_services: true` for these services.
+
+Implementation note: ESPHome 2026.5.3 did not link the string-argument user-service template specializations for this external-component-only custom API service path, so `elero_managed` provides the required `std::string` specializations locally.
 
 `hub_id` is ESP32-owned. The Companion should discover it with `get_elero_info()`, keep it with the draft registry, and echo it in pushes. The ESP32 rejects registries whose `hub_id` does not match the local eFuse-MAC-derived ID.
 

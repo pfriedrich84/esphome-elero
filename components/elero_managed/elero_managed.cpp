@@ -6,6 +6,16 @@
 #include <esp_mac.h>
 #include <cJSON.h>
 
+#ifdef USE_API_USER_DEFINED_ACTIONS
+namespace esphome::api {
+// ESPHome 2026.5.3 may not link user_services.cpp for external-component-only
+// custom API services. Provide the string specializations used by this component
+// so JSON payload services link when api.custom_services is enabled.
+template<> std::string get_execute_arg_value<std::string>(const ExecuteServiceArgument &arg) { return arg.string_; }
+template<> enums::ServiceArgType to_service_arg_type<std::string>() { return enums::SERVICE_ARG_TYPE_STRING; }
+}  // namespace esphome::api
+#endif
+
 namespace esphome {
 namespace elero_managed {
 
@@ -83,11 +93,10 @@ void EleroManaged::setup() {
 #ifdef USE_API
   this->register_service(&EleroManaged::api_get_elero_info, "get_elero_info");
   this->register_service(&EleroManaged::api_get_elero_managed_registry, "get_elero_managed_registry");
-  // ESPHome 2026.5 custom services compile for no-argument services here, but
-  // linking fails for std::string service arguments in external components.
-  // Keep validate/push as firmware helpers until the write path moves to a
-  // supported Native API transport (custom protobuf/native message or another
-  // explicitly approved channel).
+  this->register_service(&EleroManaged::api_validate_elero_managed_registry,
+                         "validate_elero_managed_registry", {"registry_json"});
+  this->register_service(&EleroManaged::api_push_elero_managed_registry,
+                         "push_elero_managed_registry", {"registry_json"});
 #endif
 }
 
