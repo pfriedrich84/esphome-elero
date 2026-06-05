@@ -1,15 +1,17 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import text_sensor
-from esphome.const import CONF_ID, CONF_NAME, ENTITY_CATEGORY_DIAGNOSTIC
+from esphome.components import cover, light, text_sensor
+from esphome.const import CONF_ID, CONF_NAME, CONF_OUTPUT_ID, ENTITY_CATEGORY_DIAGNOSTIC
 
 from ..elero import CONF_ELERO_ID, elero
 
 DEPENDENCIES = ["elero"]
-AUTO_LOAD = ["text_sensor"]
+AUTO_LOAD = ["cover", "light", "text_sensor"]
 
 elero_managed_ns = cg.esphome_ns.namespace("elero_managed")
 EleroManaged = elero_managed_ns.class_("EleroManaged", cg.Component)
+EleroManagedCoverSlot = elero_managed_ns.class_("EleroManagedCoverSlot", cover.Cover, cg.Component)
+EleroManagedLightSlot = elero_managed_ns.class_("EleroManagedLightSlot", light.LightOutput, cg.Component)
 
 CONF_ENABLED = "enabled"
 CONF_MAX_DEVICES = "max_devices"
@@ -28,10 +30,16 @@ CONF_COMPONENT_VERSION_TEXT_SENSOR = "component_version_text_sensor"
 CONF_HUB_MAC_TEXT_SENSOR = "hub_mac_text_sensor"
 CONF_MAX_DEVICES_TEXT_SENSOR = "max_devices_text_sensor"
 CONF_ENTITY_MATERIALIZATION_TEXT_SENSOR = "entity_materialization_text_sensor"
+CONF_MANAGED_COVER_SLOT_CONFIGS = "managed_cover_slot_configs"
+CONF_MANAGED_LIGHT_SLOT_CONFIGS = "managed_light_slot_configs"
 
 _RESPONSE_TEXT_SENSOR_SCHEMA = text_sensor.text_sensor_schema(
     entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
     icon="mdi:api",
+)
+_MANAGED_COVER_SLOT_SCHEMA = cover.cover_schema(EleroManagedCoverSlot).extend(cv.COMPONENT_SCHEMA)
+_MANAGED_LIGHT_SLOT_SCHEMA = light.light_schema(EleroManagedLightSlot, light.LightType.BRIGHTNESS_ONLY).extend(
+    cv.COMPONENT_SCHEMA
 )
 
 
@@ -75,6 +83,35 @@ def _validate_preallocated_slots(config):
     return config
 
 
+def _auto_managed_slot_configs(config):
+    result = dict(config)
+    base_id = str(config[CONF_ID])
+    cover_slots = []
+    for i in range(config.get(CONF_PREALLOCATED_COVER_SLOTS, 0)):
+        cover_slots.append(
+            _MANAGED_COVER_SLOT_SCHEMA(
+                {
+                    CONF_ID: cv.declare_id(EleroManagedCoverSlot)(f"{base_id}_managed_cover_slot_{i}"),
+                    CONF_NAME: f"Elero Managed Cover Slot {i + 1}",
+                }
+            )
+        )
+    light_slots = []
+    for i in range(config.get(CONF_PREALLOCATED_LIGHT_SLOTS, 0)):
+        light_slots.append(
+            _MANAGED_LIGHT_SLOT_SCHEMA(
+                {
+                    CONF_ID: cv.declare_id(light.LightState)(f"{base_id}_managed_light_slot_{i}"),
+                    CONF_OUTPUT_ID: cv.declare_id(EleroManagedLightSlot)(f"{base_id}_managed_light_output_slot_{i}"),
+                    CONF_NAME: f"Elero Managed Light Slot {i + 1}",
+                }
+            )
+        )
+    result[CONF_MANAGED_COVER_SLOT_CONFIGS] = cover_slots
+    result[CONF_MANAGED_LIGHT_SLOT_CONFIGS] = light_slots
+    return result
+
+
 CONFIG_SCHEMA = cv.All(
     cv.Schema(
         {
@@ -101,6 +138,7 @@ CONFIG_SCHEMA = cv.All(
     ).extend(cv.COMPONENT_SCHEMA),
     _validate_preallocated_slots,
     _auto_diagnostic_text_sensors,
+    _auto_managed_slot_configs,
 )
 
 
@@ -142,3 +180,16 @@ async def to_code(config):
     cg.add(var.set_device_count_text_sensor(device_count_sensor))
     entity_materialization_sensor = await text_sensor.new_text_sensor(config[CONF_ENTITY_MATERIALIZATION_TEXT_SENSOR])
     cg.add(var.set_entity_materialization_text_sensor(entity_materialization_sensor))
+
+    for slot_config in config[CONF_MANAGED_COVER_SLOT_CONFIGS]:
+        cover_slot = await cover.new_cover(slot_config)
+        await cg.register_component(cover_slot, slot_config)
+        cg.add(cover_slot.set_managed_slot(True))
+        cg.add(var.add_preallocated_cover_slot(cover_slot))
+
+    for slot_config in config[CONF_MANAGED_LIGHT_SLOT_CONFIGS]:
+        light_slot = cg.new_Pvariable(slot_config[CONF_OUTPUT_ID])
+        await cg.register_component(light_slot, slot_config)
+        await light.register_light(light_slot, slot_config)
+        cg.add(light_slot.set_managed_slot(True))
+        cg.add(var.add_preallocated_light_slot(light_slot))

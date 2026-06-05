@@ -31,7 +31,7 @@ This spike adds the first firmware-side surface for a future Home Assistant Comp
   - `devices[]`
   - FNV-1a checksum integrity field
 - Device records are prepared for cover/light type, name, Elero RF addresses/channel, pck/hop/payload fields, durations, poll interval, capabilities, and enabled state.
-- Optional `preallocated_cover_slots` and `preallocated_light_slots` YAML settings are present for the preallocated-slot materialization spike. They default to `0`, so current firmware still does not create managed entities. When non-zero, registry validation rejects pushes whose enabled managed covers/lights exceed the configured slot capacity.
+- Optional `preallocated_cover_slots` and `preallocated_light_slots` YAML settings are present for the preallocated-slot materialization spike. They default to `0`. When non-zero, firmware generates stable managed cover/light slot entities and registry validation rejects pushes whose enabled managed covers/lights exceed the configured slot capacity.
 - Firmware helper methods are present for the Native API spike surface:
   - `get_elero_info()`
   - `get_elero_managed_registry()`
@@ -73,23 +73,25 @@ Registry pushes and clears are revision-guarded. The candidate `registry_revisio
 
 ## Still a spike / blocker
 
-ESPHome entities are normally materialized during Python code generation from YAML. This pass does **not** hot-add Home Assistant-visible `cover`/`light` entities from the persisted registry at runtime.
+ESPHome entities are normally materialized during Python code generation from YAML. Managed mode now uses generated preallocated slot entities instead of hot-adding entities at runtime.
 
 Current behavior after Push to ESP32:
 
 - Registry validation and persistence can be exercised in firmware code.
 - The accepted registry survives reboot.
-- Home Assistant entity materialization from that registry is not implemented yet.
-- A restart/reconnect alone is not sufficient in this pass to create managed entities, because no generated entity objects are created from the stored registry yet.
+- Generated managed cover/light slot entities exist when `preallocated_cover_slots` / `preallocated_light_slots` are non-zero.
+- Persisted registry devices are bound to slots during boot, so entity-list changes require ESP restart/reconnect after a push.
+- Unused generated slots are marked failed/unavailable during setup.
+- Slot entity names are stable placeholders such as `Elero Managed Light Slot 1`; dynamic friendly names from registry records are not implemented yet.
 
-Next investigation should decide whether preallocated C++ cover/light entity slots can be safely registered with ESPHome/Native API at boot from stored registry data. If ESPHome cannot expose those as normal Native API entities, document that limitation before considering any Companion command-proxy path.
+Next investigation should verify Home Assistant behavior for unavailable unused slots and active bound slots on real hardware, especially light command routing.
 
 ## Managed entity materialization investigation
 
 Candidate strategies to test, in preferred order:
 
 1. **Boot-time C++ materialization from the persisted registry.** Allocate/register managed cover/light objects during `elero_managed::setup()` before Home Assistant receives the Native API entity list. This keeps Companion out of the command path and may avoid exposing unused placeholder entities, but must prove ESPHome registration APIs can be called safely outside Python codegen.
-2. **Compile-time preallocated slots.** Generate configured cover/light slots and bind active slots to the stored registry at boot. This is likely closest to ESPHome's normal entity model, but may expose placeholder/disabled entities or unstable names unless carefully managed. The pure `managed_materialization::build_preallocated_slot_plan()` seam now models deterministic type-specific slot assignment and insufficient-capacity reporting for this strategy, and the `elero_managed` YAML surface now includes explicit cover/light slot capacities.
+2. **Compile-time preallocated slots.** Generate configured cover/light slots and bind active slots to the stored registry at boot. This is closest to ESPHome's normal entity model. The pure `managed_materialization::build_preallocated_slot_plan()` seam models deterministic type-specific slot assignment and insufficient-capacity reporting for this strategy, and the `elero_managed` YAML surface includes explicit cover/light slot capacities. Initial slot entities now bind registry devices at boot and route basic RF commands through the existing hub path.
 3. **Restart-required refresh after push.** Accept/persist registry changes immediately, then require ESP restart or Home Assistant reconnect so the Native API entity list is rebuilt from boot-time materialization.
 4. **Companion command adapter fallback.** Only consider this if normal ESPHome Native API entity materialization is proven infeasible; it would violate the preferred direct command path and needs explicit documentation before implementation.
 

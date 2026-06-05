@@ -60,6 +60,253 @@ struct StoredManagedRegistry {
   StoredManagedDevice devices[elero::ELERO_MANAGED_MAX_DEVICES_LIMIT];
 };
 
+static const char *const COVER_SLOT_TAG = "elero_managed.cover";
+static const char *const LIGHT_SLOT_TAG = "elero_managed.light";
+
+void EleroManagedCoverSlot::setup() {
+  if (!this->active_) {
+    ESP_LOGCONFIG(COVER_SLOT_TAG, "Managed cover slot '%s' is unbound", this->get_name().c_str());
+    this->mark_failed();
+    return;
+  }
+  if (this->parent_ == nullptr) {
+    ESP_LOGE(COVER_SLOT_TAG, "Elero parent not configured for managed cover slot");
+    this->mark_failed();
+    return;
+  }
+  this->parent_->register_cover(this);
+  this->last_poll_ = millis() - this->poll_intvl_ + this->poll_offset_;
+  if (this->command_check_ != 0x00)
+    this->enqueue_command(this->command_check_);
+}
+
+void EleroManagedCoverSlot::dump_config() {
+  LOG_COVER("", "Elero Managed Cover Slot", this);
+  ESP_LOGCONFIG(COVER_SLOT_TAG, "  Active: %s", YESNO(this->active_));
+  ESP_LOGCONFIG(COVER_SLOT_TAG, "  Blind Address: 0x%06lx", (unsigned long) this->command_.blind_addr);
+}
+
+cover::CoverTraits EleroManagedCoverSlot::get_traits() {
+  auto traits = cover::CoverTraits();
+  traits.set_supports_stop(true);
+  traits.set_supports_toggle(true);
+  traits.set_supports_position(false);
+  traits.set_supports_tilt(this->supports_tilt_);
+  traits.set_is_assumed_state(true);
+  return traits;
+}
+
+void EleroManagedCoverSlot::apply_managed_device(const elero::ManagedDevice &device) {
+  this->active_ = true;
+  this->command_.blind_addr = device.blind_address;
+  this->command_.remote_addr = device.remote_address;
+  this->command_.channel = device.channel;
+  this->command_.pck_inf[0] = device.pck_inf[0];
+  this->command_.pck_inf[1] = device.pck_inf[1];
+  this->command_.hop = device.hop;
+  memcpy(this->command_.payload, device.payload, sizeof(this->command_.payload));
+  this->open_duration_ = device.open_duration_ms;
+  this->close_duration_ = device.close_duration_ms;
+  this->poll_intvl_ = device.poll_interval_ms;
+  this->supports_tilt_ = device.supports_tilt;
+}
+
+void EleroManagedCoverSlot::loop() {
+  const uint32_t now = millis();
+  if (this->poll_intvl_ != 0 && this->poll_intvl_ != UINT32_MAX && now - this->last_poll_ > this->poll_intvl_) {
+    this->enqueue_command(this->command_check_);
+    this->last_poll_ = now;
+  }
+  this->handle_commands_(now);
+}
+
+void EleroManagedCoverSlot::control(const cover::CoverCall &call) {
+  if (call.get_stop()) {
+    this->enqueue_command(this->command_stop_);
+    this->current_operation = cover::COVER_OPERATION_IDLE;
+  } else if (call.get_position().has_value()) {
+    float pos = *call.get_position();
+    if (pos <= 0.01f) {
+      this->enqueue_command(this->command_down_);
+      this->current_operation = cover::COVER_OPERATION_CLOSING;
+    } else if (pos >= 0.99f) {
+      this->enqueue_command(this->command_up_);
+      this->current_operation = cover::COVER_OPERATION_OPENING;
+    }
+  } else if (call.get_tilt().has_value() && this->supports_tilt_) {
+    this->enqueue_command(this->command_tilt_);
+  }
+  this->publish_state(false);
+}
+
+void EleroManagedCoverSlot::set_rx_state(uint8_t state) {
+  this->last_state_raw_ = state;
+  switch (state) {
+    case elero::ELERO_STATE_TOP:
+      this->position = 1.0f;
+      this->current_operation = cover::COVER_OPERATION_IDLE;
+      break;
+    case elero::ELERO_STATE_BOTTOM:
+      this->position = 0.0f;
+      this->current_operation = cover::COVER_OPERATION_IDLE;
+      break;
+    case elero::ELERO_STATE_STOPPED:
+      this->current_operation = cover::COVER_OPERATION_IDLE;
+      break;
+    case elero::ELERO_STATE_MOVING_UP:
+      this->current_operation = cover::COVER_OPERATION_OPENING;
+      break;
+    case elero::ELERO_STATE_MOVING_DOWN:
+      this->current_operation = cover::COVER_OPERATION_CLOSING;
+      break;
+    default:
+      break;
+  }
+  this->publish_state(false);
+}
+
+const char *EleroManagedCoverSlot::get_operation_str() const {
+  return this->current_operation == cover::COVER_OPERATION_IDLE ? "idle" :
+         this->current_operation == cover::COVER_OPERATION_OPENING ? "opening" : "closing";
+}
+
+elero::t_elero_command EleroManagedCoverSlot::build_tx_command(uint8_t cmd_byte) {
+  elero::t_elero_command cmd = this->command_;
+  cmd.payload[4] = cmd_byte;
+  this->increase_counter_();
+  return cmd;
+}
+
+void EleroManagedCoverSlot::enqueue_command(uint8_t cmd_byte) {
+  if (this->commands_to_send_.size() < elero::ELERO_MAX_COMMAND_QUEUE) {
+    this->commands_to_send_.push(cmd_byte);
+  } else {
+    ESP_LOGW(COVER_SLOT_TAG, "Command queue full for managed cover 0x%06lx", (unsigned long) this->command_.blind_addr);
+  }
+}
+
+void EleroManagedCoverSlot::apply_runtime_settings(uint32_t open_dur_ms, uint32_t close_dur_ms,
+                                                   uint32_t poll_intvl_ms) {
+  this->open_duration_ = open_dur_ms;
+  this->close_duration_ = close_dur_ms;
+  this->poll_intvl_ = poll_intvl_ms;
+}
+
+void EleroManagedCoverSlot::schedule_immediate_poll() { this->enqueue_command(this->command_check_); }
+
+void EleroManagedCoverSlot::handle_commands_(uint32_t now) {
+  elero::dispatch_commands(this->parent_, this->commands_to_send_, this->command_, this->send_packets_,
+                           this->send_retries_, this->last_command_, this->queue_full_published_, now,
+                           COVER_SLOT_TAG, this->command_.blind_addr, [](void *ctx) {
+                             static_cast<EleroManagedCoverSlot *>(ctx)->increase_counter_();
+                           }, this, false, &this->last_queue_drain_ms_);
+}
+
+void EleroManagedCoverSlot::increase_counter_() {
+  this->command_.counter++;
+  if (this->command_.counter == 0)
+    this->command_.counter = 1;
+}
+
+void EleroManagedLightSlot::setup() {
+  if (!this->active_) {
+    ESP_LOGCONFIG(LIGHT_SLOT_TAG, "Managed light slot '%s' is unbound", this->get_light_name().c_str());
+    this->mark_failed();
+    return;
+  }
+  if (this->parent_ == nullptr) {
+    ESP_LOGE(LIGHT_SLOT_TAG, "Elero parent not configured for managed light slot");
+    this->mark_failed();
+    return;
+  }
+  this->parent_->register_light(this);
+  if (this->command_check_ != 0x00)
+    this->enqueue_command(this->command_check_);
+}
+
+void EleroManagedLightSlot::dump_config() {
+  ESP_LOGCONFIG(LIGHT_SLOT_TAG, "Elero Managed Light Slot:");
+  ESP_LOGCONFIG(LIGHT_SLOT_TAG, "  Active: %s", YESNO(this->active_));
+  ESP_LOGCONFIG(LIGHT_SLOT_TAG, "  Blind Address: 0x%06lx", (unsigned long) this->command_.blind_addr);
+}
+
+light::LightTraits EleroManagedLightSlot::get_traits() {
+  auto traits = light::LightTraits();
+  if (this->dim_duration_ > 0)
+    traits.set_supported_color_modes({light::ColorMode::BRIGHTNESS});
+  else
+    traits.set_supported_color_modes({light::ColorMode::ON_OFF});
+  return traits;
+}
+
+void EleroManagedLightSlot::apply_managed_device(const elero::ManagedDevice &device) {
+  this->active_ = true;
+  this->command_.blind_addr = device.blind_address;
+  this->command_.remote_addr = device.remote_address;
+  this->command_.channel = device.channel;
+  this->command_.pck_inf[0] = device.pck_inf[0];
+  this->command_.pck_inf[1] = device.pck_inf[1];
+  this->command_.hop = device.hop;
+  memcpy(this->command_.payload, device.payload, sizeof(this->command_.payload));
+  this->dim_duration_ = device.dim_duration_ms;
+}
+
+void EleroManagedLightSlot::write_state(light::LightState *state) {
+  this->state_ = state;
+  bool new_on = state->current_values.is_on();
+  if (new_on) {
+    this->enqueue_command(this->command_on_);
+    this->is_on_ = true;
+    this->brightness_ = state->current_values.get_brightness();
+  } else {
+    this->enqueue_command(this->command_off_);
+    this->is_on_ = false;
+    this->brightness_ = 0.0f;
+  }
+}
+
+void EleroManagedLightSlot::loop() { this->handle_commands_(millis()); }
+
+void EleroManagedLightSlot::set_rx_state(uint8_t state) {
+  if (state == elero::ELERO_STATE_ON) {
+    this->is_on_ = true;
+    this->brightness_ = 1.0f;
+  } else if (state == elero::ELERO_STATE_OFF) {
+    this->is_on_ = false;
+    this->brightness_ = 0.0f;
+  }
+  if (this->state_ != nullptr)
+    this->state_->publish_state();
+}
+
+void EleroManagedLightSlot::enqueue_command(uint8_t cmd_byte) {
+  if (this->commands_to_send_.size() < elero::ELERO_MAX_COMMAND_QUEUE) {
+    this->commands_to_send_.push(cmd_byte);
+  } else {
+    ESP_LOGW(LIGHT_SLOT_TAG, "Command queue full for managed light 0x%06lx", (unsigned long) this->command_.blind_addr);
+  }
+}
+
+void EleroManagedLightSlot::schedule_immediate_poll() { this->enqueue_command(this->command_check_); }
+
+std::string EleroManagedLightSlot::get_light_name() const {
+  return this->state_ != nullptr ? std::string(this->state_->get_name().c_str()) : "Elero Managed Light Slot";
+}
+
+void EleroManagedLightSlot::handle_commands_(uint32_t now) {
+  elero::dispatch_commands(this->parent_, this->commands_to_send_, this->command_, this->send_packets_,
+                           this->send_retries_, this->last_command_, this->queue_full_published_, now,
+                           LIGHT_SLOT_TAG, this->command_.blind_addr, [](void *ctx) {
+                             static_cast<EleroManagedLightSlot *>(ctx)->increase_counter_();
+                           }, this, false, &this->last_queue_drain_ms_);
+}
+
+void EleroManagedLightSlot::increase_counter_() {
+  this->command_.counter++;
+  if (this->command_.counter == 0)
+    this->command_.counter = 1;
+}
+
 uint32_t EleroManaged::preference_hash_() { return PREF_HASH; }
 
 uint32_t EleroManaged::hub_id_from_mac_(const uint8_t mac[6]) { return hash_bytes_(mac, 6); }
@@ -82,6 +329,7 @@ void EleroManaged::setup() {
   this->registry_.hub_id = this->hub_id_;
   this->pref_ = global_preferences->make_preference<StoredManagedRegistry>(preference_hash_());
   this->load_registry_();
+  this->bind_preallocated_slots_();
 #ifdef USE_API
   this->register_service(&EleroManaged::api_get_elero_info, "get_elero_info");
   this->register_service(&EleroManaged::api_get_elero_managed_registry, "get_elero_managed_registry");
@@ -140,7 +388,36 @@ std::string EleroManaged::entity_materialization_status_() const {
   auto plan = this->materialization_plan_();
   if (!plan.fits())
     return "preallocated_slots_insufficient_capacity";
-  return "preallocated_slots_planned_restart_required";
+  return "preallocated_slots_bound_at_boot_restart_required";
+}
+
+void EleroManaged::bind_preallocated_slots_() {
+  auto plan = this->materialization_plan_();
+  if (!plan.fits()) {
+    ESP_LOGW(TAG, "Managed registry exceeds preallocated entity slots: %u cover(s), %u light(s) unbound",
+             (unsigned) plan.unbound_cover_count, (unsigned) plan.unbound_light_count);
+  }
+
+  for (const auto &binding : plan.bindings) {
+    const auto &device = this->registry_.devices[binding.device_index];
+    if (binding.type == elero::ManagedDeviceType::LIGHT) {
+      if (binding.slot_index < this->preallocated_light_slot_entities_.size()) {
+        auto *slot = this->preallocated_light_slot_entities_[binding.slot_index];
+        slot->set_elero_parent(this->parent_);
+        slot->apply_managed_device(device);
+        ESP_LOGI(TAG, "Bound managed light slot %u to '%s' (0x%06lx)", (unsigned) binding.slot_index,
+                 device.name.c_str(), (unsigned long) device.blind_address);
+      }
+    } else {
+      if (binding.slot_index < this->preallocated_cover_slot_entities_.size()) {
+        auto *slot = this->preallocated_cover_slot_entities_[binding.slot_index];
+        slot->set_elero_parent(this->parent_);
+        slot->apply_managed_device(device);
+        ESP_LOGI(TAG, "Bound managed cover slot %u to '%s' (0x%06lx)", (unsigned) binding.slot_index,
+                 device.name.c_str(), (unsigned long) device.blind_address);
+      }
+    }
+  }
 }
 
 elero::ManagedRegistryValidation EleroManaged::validate_elero_managed_registry(
