@@ -17,6 +17,7 @@ wifi:
 api:
   encryption:
     key: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+  custom_services: true
 
 external_components:
   - source:
