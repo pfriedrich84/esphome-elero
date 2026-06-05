@@ -4,7 +4,7 @@
 #include "esphome/core/log.h"
 #include <cstring>
 #include <esp_mac.h>
-#include <ArduinoJson.h>
+#include <cJSON.h>
 
 namespace esphome {
 namespace elero_managed {
@@ -294,66 +294,100 @@ std::string EleroManaged::registry_to_json_(const elero::ManagedRegistry &regist
   return out;
 }
 
+uint32_t json_u32_(const cJSON *object, const char *name, uint32_t fallback) {
+  const cJSON *item = cJSON_GetObjectItemCaseSensitive(object, name);
+  return cJSON_IsNumber(item) ? static_cast<uint32_t>(item->valuedouble) : fallback;
+}
+
+uint8_t json_u8_(const cJSON *object, const char *name, uint8_t fallback) {
+  return static_cast<uint8_t>(json_u32_(object, name, fallback) & 0xff);
+}
+
+bool json_bool_(const cJSON *object, const char *name, bool fallback) {
+  const cJSON *item = cJSON_GetObjectItemCaseSensitive(object, name);
+  if (cJSON_IsBool(item))
+    return cJSON_IsTrue(item);
+  return fallback;
+}
+
+const char *json_string_(const cJSON *object, const char *name, const char *fallback) {
+  const cJSON *item = cJSON_GetObjectItemCaseSensitive(object, name);
+  return cJSON_IsString(item) && item->valuestring != nullptr ? item->valuestring : fallback;
+}
+
 bool EleroManaged::registry_from_json_(const std::string &json, elero::ManagedRegistry *registry,
                                        std::string *error) const {
-  DynamicJsonDocument doc(12288);
-  DeserializationError parse_error = deserializeJson(doc, json);
-  if (parse_error) {
+  cJSON *root = cJSON_ParseWithLength(json.c_str(), json.size());
+  if (root == nullptr) {
     if (error != nullptr)
-      *error = parse_error.c_str();
+      *error = "invalid JSON";
     return false;
   }
-
-  JsonObject root = doc.as<JsonObject>();
-  if (root.isNull()) {
+  if (!cJSON_IsObject(root)) {
+    cJSON_Delete(root);
     if (error != nullptr)
       *error = "registry_json must be a JSON object";
     return false;
   }
 
   elero::ManagedRegistry parsed{};
-  parsed.schema_version = root["schema_version"] | elero::ELERO_MANAGED_SCHEMA_VERSION;
-  parsed.registry_revision = root["registry_revision"] | 0;
-  parsed.hub_id = root["hub_id"] | 0;
-  parsed.checksum = root["checksum"] | 0;
+  parsed.schema_version = static_cast<uint16_t>(json_u32_(root, "schema_version", elero::ELERO_MANAGED_SCHEMA_VERSION));
+  parsed.registry_revision = json_u32_(root, "registry_revision", 0);
+  parsed.hub_id = json_u32_(root, "hub_id", 0);
+  parsed.checksum = json_u32_(root, "checksum", 0);
 
-  JsonArray devices = root["devices"].as<JsonArray>();
-  if (devices.isNull()) {
+  const cJSON *devices = cJSON_GetObjectItemCaseSensitive(root, "devices");
+  if (!cJSON_IsArray(devices)) {
+    cJSON_Delete(root);
     if (error != nullptr)
       *error = "devices must be an array";
     return false;
   }
-  for (JsonObject src : devices) {
+
+  const cJSON *src = nullptr;
+  cJSON_ArrayForEach(src, devices) {
+    if (!cJSON_IsObject(src))
+      continue;
     elero::ManagedDevice dst{};
-    dst.enabled = src["enabled"] | true;
-    const char *type = src["type"] | "cover";
+    dst.enabled = json_bool_(src, "enabled", true);
+    const char *type = json_string_(src, "type", "cover");
     dst.type = strcmp(type, "light") == 0 ? elero::ManagedDeviceType::LIGHT : elero::ManagedDeviceType::COVER;
-    dst.name = std::string(src["name"] | "");
-    dst.blind_address = src["blind_address"] | 0;
-    dst.remote_address = src["remote_address"] | 0;
-    dst.channel = src["channel"] | 0;
-    JsonArray pck_inf = src["pck_inf"].as<JsonArray>();
-    if (!pck_inf.isNull() && pck_inf.size() >= 2) {
-      dst.pck_inf[0] = pck_inf[0] | 0;
-      dst.pck_inf[1] = pck_inf[1] | 0;
+    dst.name = std::string(json_string_(src, "name", ""));
+    dst.blind_address = json_u32_(src, "blind_address", 0);
+    dst.remote_address = json_u32_(src, "remote_address", 0);
+    dst.channel = json_u8_(src, "channel", 0);
+
+    const cJSON *pck_inf = cJSON_GetObjectItemCaseSensitive(src, "pck_inf");
+    if (cJSON_IsArray(pck_inf) && cJSON_GetArraySize(pck_inf) >= 2) {
+      const cJSON *p0 = cJSON_GetArrayItem(pck_inf, 0);
+      const cJSON *p1 = cJSON_GetArrayItem(pck_inf, 1);
+      dst.pck_inf[0] = cJSON_IsNumber(p0) ? static_cast<uint8_t>(p0->valuedouble) : 0;
+      dst.pck_inf[1] = cJSON_IsNumber(p1) ? static_cast<uint8_t>(p1->valuedouble) : 0;
     } else {
-      dst.pck_inf[0] = src["pck_inf1"] | 0;
-      dst.pck_inf[1] = src["pck_inf2"] | 0;
+      dst.pck_inf[0] = json_u8_(src, "pck_inf1", 0);
+      dst.pck_inf[1] = json_u8_(src, "pck_inf2", 0);
     }
-    dst.hop = src["hop"] | 0;
-    JsonArray payload = src["payload"].as<JsonArray>();
-    if (!payload.isNull()) {
-      for (uint8_t i = 0; i < payload.size() && i < 10; i++)
-        dst.payload[i] = payload[i] | 0;
+
+    dst.hop = json_u8_(src, "hop", 0);
+    const cJSON *payload = cJSON_GetObjectItemCaseSensitive(src, "payload");
+    if (cJSON_IsArray(payload)) {
+      uint8_t i = 0;
+      const cJSON *payload_value = nullptr;
+      cJSON_ArrayForEach(payload_value, payload) {
+        if (i >= 10)
+          break;
+        dst.payload[i++] = cJSON_IsNumber(payload_value) ? static_cast<uint8_t>(payload_value->valuedouble) : 0;
+      }
     }
-    dst.open_duration_ms = src["open_duration_ms"] | 0;
-    dst.close_duration_ms = src["close_duration_ms"] | 0;
-    dst.dim_duration_ms = src["dim_duration_ms"] | 0;
-    dst.poll_interval_ms = src["poll_interval_ms"] | elero::ELERO_MANAGED_DEFAULT_POLL_INTERVAL_MS;
-    dst.supports_tilt = src["supports_tilt"] | false;
+    dst.open_duration_ms = json_u32_(src, "open_duration_ms", 0);
+    dst.close_duration_ms = json_u32_(src, "close_duration_ms", 0);
+    dst.dim_duration_ms = json_u32_(src, "dim_duration_ms", 0);
+    dst.poll_interval_ms = json_u32_(src, "poll_interval_ms", elero::ELERO_MANAGED_DEFAULT_POLL_INTERVAL_MS);
+    dst.supports_tilt = json_bool_(src, "supports_tilt", false);
     parsed.devices.push_back(dst);
   }
 
+  cJSON_Delete(root);
   *registry = parsed;
   return true;
 }
