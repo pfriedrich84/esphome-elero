@@ -149,6 +149,7 @@ class EleroManagedLightSlot : public light::LightOutput, public Component, publi
   float last_rssi_{0.0f};
   float brightness_{0.0f};
   bool is_on_{false};
+  bool state_initialized_{false};
   uint32_t dim_duration_{0};
   uint8_t send_retries_{0};
   uint8_t send_packets_{0};

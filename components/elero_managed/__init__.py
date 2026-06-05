@@ -104,6 +104,7 @@ def _auto_managed_slot_configs(config):
                     CONF_ID: cv.declare_id(light.LightState)(f"{base_id}_managed_light_slot_{i}"),
                     CONF_OUTPUT_ID: cv.declare_id(EleroManagedLightSlot)(f"{base_id}_managed_light_output_slot_{i}"),
                     CONF_NAME: f"Elero Managed Light Slot {i + 1}",
+                    "default_transition_length": "0s",
                 }
             )
         )

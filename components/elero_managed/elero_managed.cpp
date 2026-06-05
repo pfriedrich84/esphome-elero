@@ -253,16 +253,22 @@ void EleroManagedLightSlot::apply_managed_device(const elero::ManagedDevice &dev
 
 void EleroManagedLightSlot::write_state(light::LightState *state) {
   this->state_ = state;
-  bool new_on = state->current_values.is_on();
-  if (new_on) {
-    this->enqueue_command(this->command_on_);
-    this->is_on_ = true;
-    this->brightness_ = state->current_values.get_brightness();
-  } else {
-    this->enqueue_command(this->command_off_);
-    this->is_on_ = false;
-    this->brightness_ = 0.0f;
+  if (!this->active_ || this->parent_ == nullptr) {
+    ESP_LOGW(LIGHT_SLOT_TAG, "Ignoring command for unbound managed light slot");
+    return;
   }
+
+  bool new_on = state->current_values.is_on();
+  float new_brightness = new_on ? state->current_values.get_brightness() : 0.0f;
+  if (this->state_initialized_ && new_on == this->is_on_) {
+    this->brightness_ = new_brightness;
+    return;
+  }
+
+  this->enqueue_command(new_on ? this->command_on_ : this->command_off_);
+  this->is_on_ = new_on;
+  this->brightness_ = new_brightness;
+  this->state_initialized_ = true;
 }
 
 void EleroManagedLightSlot::loop() { this->handle_commands_(millis()); }
