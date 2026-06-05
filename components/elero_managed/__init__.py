@@ -30,6 +30,8 @@ CONF_COMPONENT_VERSION_TEXT_SENSOR = "component_version_text_sensor"
 CONF_HUB_MAC_TEXT_SENSOR = "hub_mac_text_sensor"
 CONF_MAX_DEVICES_TEXT_SENSOR = "max_devices_text_sensor"
 CONF_ENTITY_MATERIALIZATION_TEXT_SENSOR = "entity_materialization_text_sensor"
+CONF_MATERIALIZED_COVER_COUNT_TEXT_SENSOR = "materialized_cover_count_text_sensor"
+CONF_MATERIALIZED_LIGHT_COUNT_TEXT_SENSOR = "materialized_light_count_text_sensor"
 CONF_MANAGED_COVER_SLOT_CONFIGS = "managed_cover_slot_configs"
 CONF_MANAGED_LIGHT_SLOT_CONFIGS = "managed_light_slot_configs"
 
@@ -57,6 +59,14 @@ _DIAGNOSTIC_TEXT_SENSORS = {
     CONF_DEVICE_COUNT_TEXT_SENSOR: ("Elero Managed Device Count", _RESPONSE_TEXT_SENSOR_SCHEMA),
     CONF_ENTITY_MATERIALIZATION_TEXT_SENSOR: (
         "Elero Managed Entity Materialization",
+        _RESPONSE_TEXT_SENSOR_SCHEMA,
+    ),
+    CONF_MATERIALIZED_COVER_COUNT_TEXT_SENSOR: (
+        "Elero Managed Materialized Cover Count",
+        _RESPONSE_TEXT_SENSOR_SCHEMA,
+    ),
+    CONF_MATERIALIZED_LIGHT_COUNT_TEXT_SENSOR: (
+        "Elero Managed Materialized Light Count",
         _RESPONSE_TEXT_SENSOR_SCHEMA,
     ),
 }
@@ -135,6 +145,8 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_REGISTRY_REVISION_TEXT_SENSOR): _RESPONSE_TEXT_SENSOR_SCHEMA,
             cv.Optional(CONF_DEVICE_COUNT_TEXT_SENSOR): _RESPONSE_TEXT_SENSOR_SCHEMA,
             cv.Optional(CONF_ENTITY_MATERIALIZATION_TEXT_SENSOR): _RESPONSE_TEXT_SENSOR_SCHEMA,
+            cv.Optional(CONF_MATERIALIZED_COVER_COUNT_TEXT_SENSOR): _RESPONSE_TEXT_SENSOR_SCHEMA,
+            cv.Optional(CONF_MATERIALIZED_LIGHT_COUNT_TEXT_SENSOR): _RESPONSE_TEXT_SENSOR_SCHEMA,
         }
     ).extend(cv.COMPONENT_SCHEMA),
     _validate_preallocated_slots,
@@ -181,6 +193,14 @@ async def to_code(config):
     cg.add(var.set_device_count_text_sensor(device_count_sensor))
     entity_materialization_sensor = await text_sensor.new_text_sensor(config[CONF_ENTITY_MATERIALIZATION_TEXT_SENSOR])
     cg.add(var.set_entity_materialization_text_sensor(entity_materialization_sensor))
+    materialized_cover_count_sensor = await text_sensor.new_text_sensor(
+        config[CONF_MATERIALIZED_COVER_COUNT_TEXT_SENSOR]
+    )
+    cg.add(var.set_materialized_cover_count_text_sensor(materialized_cover_count_sensor))
+    materialized_light_count_sensor = await text_sensor.new_text_sensor(
+        config[CONF_MATERIALIZED_LIGHT_COUNT_TEXT_SENSOR]
+    )
+    cg.add(var.set_materialized_light_count_text_sensor(materialized_light_count_sensor))
 
     for slot_config in config[CONF_MANAGED_COVER_SLOT_CONFIGS]:
         cover_slot = await cover.new_cover(slot_config)

@@ -48,7 +48,9 @@
       "tx_drop_count": { "name": "TX drop count" },
       "drop_crc_fail": { "name": "Drop CRC fail" },
       "drop_bounds": { "name": "Drop bounds" },
-      "tx_queue_latency_last_ms": { "name": "TX queue latency" }
+      "tx_queue_latency_last_ms": { "name": "TX queue latency" },
+      "managed_materialized_cover_count": { "name": "Managed materialized cover count" },
+      "managed_materialized_light_count": { "name": "Managed materialized light count" }
     },
     "binary_sensor": {
       "web_ui_enabled": { "name": "Web UI enabled" },

@@ -623,6 +623,11 @@ void EleroManaged::publish_diagnostic_fields_(const std::string &request, bool o
     this->device_count_text_sensor_->publish_state(std::to_string(this->registry_.devices.size()));
   if (this->entity_materialization_text_sensor_ != nullptr)
     this->entity_materialization_text_sensor_->publish_state(this->entity_materialization_status_());
+  auto plan = this->materialization_plan_();
+  if (this->materialized_cover_count_text_sensor_ != nullptr)
+    this->materialized_cover_count_text_sensor_->publish_state(std::to_string(plan.enabled_cover_count));
+  if (this->materialized_light_count_text_sensor_ != nullptr)
+    this->materialized_light_count_text_sensor_->publish_state(std::to_string(plan.enabled_light_count));
 #endif
 }
 

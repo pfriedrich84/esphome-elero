@@ -23,6 +23,7 @@ from .const import (
     SERVICE_VALIDATE_MANAGED_REGISTRY,
 )
 from .coordinator import EleroDataUpdateCoordinator
+from .managed_slots import async_sync_managed_slot_entities
 from .repairs import async_update_issues
 
 PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR]
@@ -55,12 +56,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await coordinator.async_config_entry_first_refresh()
 
     entry.runtime_data = coordinator
-    entry.async_on_unload(coordinator.async_add_listener(lambda: async_update_issues(hass, entry, coordinator)))
+
+    def _handle_coordinator_update() -> None:
+        async_update_issues(hass, entry, coordinator)
+        async_sync_managed_slot_entities(hass)
+
+    entry.async_on_unload(coordinator.async_add_listener(_handle_coordinator_update))
 
     _async_setup_services(hass)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     async_update_issues(hass, entry, coordinator)
+    async_sync_managed_slot_entities(hass)
     return True
 
 
@@ -88,6 +95,7 @@ def _async_setup_services(hass: HomeAssistant) -> None:
     async def async_push_registry(call: ServiceCall) -> None:
         coordinator = _coordinator_for_service_call(hass, call)
         await _native_api(coordinator).async_push_managed_registry(call.data["registry_json"])
+        async_sync_managed_slot_entities(hass)
         persistent_notification.async_create(
             hass,
             "Managed Elero registry pushed. Restart the ESPHome node so generated managed slots bind the new registry.",
@@ -101,6 +109,7 @@ def _async_setup_services(hass: HomeAssistant) -> None:
             call.data["registry_revision"],
             call.data["confirm"],
         )
+        async_sync_managed_slot_entities(hass)
         persistent_notification.async_create(
             hass,
             "Managed Elero registry cleared. Restart the ESPHome node so managed slot availability reflects the cleared registry.",

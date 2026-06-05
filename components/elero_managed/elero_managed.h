@@ -193,6 +193,12 @@ class EleroManaged : public Component
   void set_entity_materialization_text_sensor(text_sensor::TextSensor *sensor) {
     this->entity_materialization_text_sensor_ = sensor;
   }
+  void set_materialized_cover_count_text_sensor(text_sensor::TextSensor *sensor) {
+    this->materialized_cover_count_text_sensor_ = sensor;
+  }
+  void set_materialized_light_count_text_sensor(text_sensor::TextSensor *sensor) {
+    this->materialized_light_count_text_sensor_ = sensor;
+  }
 #endif
 
   bool is_enabled() const { return this->enabled_; }
@@ -253,6 +259,8 @@ class EleroManaged : public Component
   text_sensor::TextSensor *registry_revision_text_sensor_{nullptr};
   text_sensor::TextSensor *device_count_text_sensor_{nullptr};
   text_sensor::TextSensor *entity_materialization_text_sensor_{nullptr};
+  text_sensor::TextSensor *materialized_cover_count_text_sensor_{nullptr};
+  text_sensor::TextSensor *materialized_light_count_text_sensor_{nullptr};
 #endif
   ESPPreferenceObject pref_{};
 };

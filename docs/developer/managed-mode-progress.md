@@ -57,6 +57,7 @@ Implemented in current follow-up work:
 - Unused slots are intentionally left unbound and ignore commands instead of marking the shared component failed.
 - Managed light slots suppress duplicate writes caused by HA/ESPHome light transitions and default generated managed light transitions are `0s`.
 - Companion now has a Native API service-call adapter and companion-level services for get/validate/push/clear managed registry operations. Push/clear create a restart-required notification because slot binding happens at ESP boot.
+- Firmware publishes materialized cover/light count diagnostic text sensors. Companion uses those counts to disable unused generated managed slot placeholders in Home Assistant's entity registry while leaving active slots enabled.
 
 Not implemented yet:
 
