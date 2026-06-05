@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import logging
+
 import voluptuous as vol
 from homeassistant.components import persistent_notification
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, ConfigEntryNotReady
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME, Platform
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import HomeAssistantError
@@ -25,6 +27,8 @@ from .const import (
 from .coordinator import EleroDataUpdateCoordinator
 from .managed_slots import async_sync_managed_slot_entities
 from .repairs import async_update_issues
+
+_LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR]
 
@@ -53,7 +57,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         api,
         entry.options.get(CONF_ESPHOME_NODE) or entry.data.get(CONF_ESPHOME_NODE) or None,
     )
-    await coordinator.async_config_entry_first_refresh()
+    try:
+        await coordinator.async_config_entry_first_refresh()
+    except ConfigEntryNotReady as err:
+        _LOGGER.warning(
+            "Elero legacy diagnostics refresh failed during setup; loading Companion anyway so Native API services remain available: %s",
+            err,
+        )
 
     entry.runtime_data = coordinator
 
