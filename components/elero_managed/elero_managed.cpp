@@ -83,10 +83,11 @@ void EleroManaged::setup() {
 #ifdef USE_API
   this->register_service(&EleroManaged::api_get_elero_info, "get_elero_info");
   this->register_service(&EleroManaged::api_get_elero_managed_registry, "get_elero_managed_registry");
-  this->register_service(&EleroManaged::api_validate_elero_managed_registry,
-                         "validate_elero_managed_registry", {"registry_json"});
-  this->register_service(&EleroManaged::api_push_elero_managed_registry,
-                         "push_elero_managed_registry", {"registry_json"});
+  // ESPHome 2026.5 custom services compile for no-argument services here, but
+  // linking fails for std::string service arguments in external components.
+  // Keep validate/push as firmware helpers until the write path moves to a
+  // supported Native API transport (custom protobuf/native message or another
+  // explicitly approved channel).
 #endif
 }
 
