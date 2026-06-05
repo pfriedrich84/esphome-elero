@@ -4,6 +4,7 @@
 #include "esphome/core/log.h"
 #include <cstring>
 #include <esp_mac.h>
+#include <ArduinoJson.h>
 
 namespace esphome {
 namespace elero_managed {
@@ -79,6 +80,14 @@ void EleroManaged::setup() {
   this->registry_.hub_id = this->hub_id_;
   this->pref_ = global_preferences->make_preference<StoredManagedRegistry>(preference_hash_());
   this->load_registry_();
+#ifdef USE_API
+  this->register_service(&EleroManaged::api_get_elero_info, "get_elero_info");
+  this->register_service(&EleroManaged::api_get_elero_managed_registry, "get_elero_managed_registry");
+  this->register_service(&EleroManaged::api_validate_elero_managed_registry,
+                         "validate_elero_managed_registry", {"registry_json"});
+  this->register_service(&EleroManaged::api_push_elero_managed_registry,
+                         "push_elero_managed_registry", {"registry_json"});
+#endif
 }
 
 void EleroManaged::dump_config() {
@@ -219,6 +228,174 @@ bool EleroManaged::save_registry_() {
   }
   return this->pref_.save(&stored);
 }
+
+void EleroManaged::publish_response_(const std::string &json) {
+#ifdef USE_TEXT_SENSOR
+  if (this->response_text_sensor_ != nullptr)
+    this->response_text_sensor_->publish_state(json);
+#endif
+  ESP_LOGD(TAG, "Native API response: %s", json.c_str());
+}
+
+std::string escape_json_string_(const std::string &value) {
+  std::string out;
+  out.reserve(value.size() + 8);
+  for (char c : value) {
+    if (c == '"' || c == '\\') {
+      out.push_back('\\');
+      out.push_back(c);
+    } else if (c == '\n') {
+      out += "\\n";
+    } else {
+      out.push_back(c);
+    }
+  }
+  return out;
+}
+
+std::string EleroManaged::registry_to_json_(const elero::ManagedRegistry &registry) const {
+  std::string out;
+  out.reserve(256 + registry.devices.size() * 256);
+  out += "{\"schema_version\":" + std::to_string(registry.schema_version);
+  out += ",\"registry_revision\":" + std::to_string(registry.registry_revision);
+  out += ",\"hub_id\":" + std::to_string(registry.hub_id);
+  out += ",\"checksum\":" + std::to_string(registry.checksum);
+  out += ",\"devices\":[";
+  for (size_t i = 0; i < registry.devices.size(); i++) {
+    const auto &device = registry.devices[i];
+    if (i > 0)
+      out += ",";
+    out += "{\"enabled\":";
+    out += device.enabled ? "true" : "false";
+    out += ",\"type\":\"";
+    out += device.type == elero::ManagedDeviceType::LIGHT ? "light" : "cover";
+    out += "\",\"name\":\"" + escape_json_string_(device.name) + "\"";
+    out += ",\"blind_address\":" + std::to_string(device.blind_address);
+    out += ",\"remote_address\":" + std::to_string(device.remote_address);
+    out += ",\"channel\":" + std::to_string(device.channel);
+    out += ",\"pck_inf\":[" + std::to_string(device.pck_inf[0]) + "," + std::to_string(device.pck_inf[1]) + "]";
+    out += ",\"hop\":" + std::to_string(device.hop);
+    out += ",\"payload\":[";
+    for (size_t j = 0; j < 10; j++) {
+      if (j > 0)
+        out += ",";
+      out += std::to_string(device.payload[j]);
+    }
+    out += "]";
+    out += ",\"open_duration_ms\":" + std::to_string(device.open_duration_ms);
+    out += ",\"close_duration_ms\":" + std::to_string(device.close_duration_ms);
+    out += ",\"dim_duration_ms\":" + std::to_string(device.dim_duration_ms);
+    out += ",\"poll_interval_ms\":" + std::to_string(device.poll_interval_ms);
+    out += ",\"supports_tilt\":";
+    out += device.supports_tilt ? "true" : "false";
+    out += "}";
+  }
+  out += "]}";
+  return out;
+}
+
+bool EleroManaged::registry_from_json_(const std::string &json, elero::ManagedRegistry *registry,
+                                       std::string *error) const {
+  DynamicJsonDocument doc(12288);
+  DeserializationError parse_error = deserializeJson(doc, json);
+  if (parse_error) {
+    if (error != nullptr)
+      *error = parse_error.c_str();
+    return false;
+  }
+
+  JsonObject root = doc.as<JsonObject>();
+  if (root.isNull()) {
+    if (error != nullptr)
+      *error = "registry_json must be a JSON object";
+    return false;
+  }
+
+  elero::ManagedRegistry parsed{};
+  parsed.schema_version = root["schema_version"] | elero::ELERO_MANAGED_SCHEMA_VERSION;
+  parsed.registry_revision = root["registry_revision"] | 0;
+  parsed.hub_id = root["hub_id"] | 0;
+  parsed.checksum = root["checksum"] | 0;
+
+  JsonArray devices = root["devices"].as<JsonArray>();
+  if (devices.isNull()) {
+    if (error != nullptr)
+      *error = "devices must be an array";
+    return false;
+  }
+  for (JsonObject src : devices) {
+    elero::ManagedDevice dst{};
+    dst.enabled = src["enabled"] | true;
+    const char *type = src["type"] | "cover";
+    dst.type = strcmp(type, "light") == 0 ? elero::ManagedDeviceType::LIGHT : elero::ManagedDeviceType::COVER;
+    dst.name = std::string(src["name"] | "");
+    dst.blind_address = src["blind_address"] | 0;
+    dst.remote_address = src["remote_address"] | 0;
+    dst.channel = src["channel"] | 0;
+    JsonArray pck_inf = src["pck_inf"].as<JsonArray>();
+    if (!pck_inf.isNull() && pck_inf.size() >= 2) {
+      dst.pck_inf[0] = pck_inf[0] | 0;
+      dst.pck_inf[1] = pck_inf[1] | 0;
+    } else {
+      dst.pck_inf[0] = src["pck_inf1"] | 0;
+      dst.pck_inf[1] = src["pck_inf2"] | 0;
+    }
+    dst.hop = src["hop"] | 0;
+    JsonArray payload = src["payload"].as<JsonArray>();
+    if (!payload.isNull()) {
+      for (uint8_t i = 0; i < payload.size() && i < 10; i++)
+        dst.payload[i] = payload[i] | 0;
+    }
+    dst.open_duration_ms = src["open_duration_ms"] | 0;
+    dst.close_duration_ms = src["close_duration_ms"] | 0;
+    dst.dim_duration_ms = src["dim_duration_ms"] | 0;
+    dst.poll_interval_ms = src["poll_interval_ms"] | elero::ELERO_MANAGED_DEFAULT_POLL_INTERVAL_MS;
+    dst.supports_tilt = src["supports_tilt"] | false;
+    parsed.devices.push_back(dst);
+  }
+
+  *registry = parsed;
+  return true;
+}
+
+#ifdef USE_API
+void EleroManaged::api_get_elero_info() {
+  this->publish_response_(this->get_elero_info());
+}
+
+void EleroManaged::api_get_elero_managed_registry() {
+  this->publish_response_(this->registry_to_json_(this->registry_));
+}
+
+void EleroManaged::api_validate_elero_managed_registry(std::string registry_json) {
+  elero::ManagedRegistry registry{};
+  std::string error;
+  if (!this->registry_from_json_(registry_json, &registry, &error)) {
+    this->publish_response_("{\"ok\":false,\"request\":\"validate_elero_managed_registry\",\"error\":\"" +
+                            escape_json_string_(error) + "\"}");
+    return;
+  }
+  auto result = this->validate_elero_managed_registry(registry);
+  this->publish_response_("{\"ok\":" + std::string(result.ok ? "true" : "false") +
+                          ",\"request\":\"validate_elero_managed_registry\",\"error\":\"" +
+                          escape_json_string_(result.error) + "\"}");
+}
+
+void EleroManaged::api_push_elero_managed_registry(std::string registry_json) {
+  elero::ManagedRegistry registry{};
+  std::string error;
+  if (!this->registry_from_json_(registry_json, &registry, &error)) {
+    this->publish_response_("{\"ok\":false,\"request\":\"push_elero_managed_registry\",\"error\":\"" +
+                            escape_json_string_(error) + "\"}");
+    return;
+  }
+  bool ok = this->push_elero_managed_registry(registry, &error);
+  this->publish_response_("{\"ok\":" + std::string(ok ? "true" : "false") +
+                          ",\"request\":\"push_elero_managed_registry\",\"error\":\"" +
+                          escape_json_string_(error) + "\",\"registry_revision\":" +
+                          std::to_string(this->registry_.registry_revision) + "}");
+}
+#endif
 
 }  // namespace elero_managed
 }  // namespace esphome

@@ -35,7 +35,14 @@ This spike adds the first firmware-side surface for a future Home Assistant Comp
   - `push_elero_managed_registry()`
 - Accepted registries are saved with ESPHome preferences and loaded at boot. Invalid pushes are rejected before replacing the active registry.
 
-The helpers are firmware-side C++ entry points in this pass. The actual ESPHome Native API protobuf/custom-message binding for a HACS Companion is still pending.
+The helpers are exposed as ESPHome Native API user services in this pass:
+
+- `get_elero_info`
+- `get_elero_managed_registry`
+- `validate_elero_managed_registry(registry_json: string)`
+- `push_elero_managed_registry(registry_json: string)`
+
+Because ESPHome user-defined API services are command-style calls rather than direct request/response RPCs, responses are published to an auto-created diagnostic text sensor named `Elero Managed API Result`. Payloads are JSON strings. This is the first Native API path; custom protobuf/native messages remain a future option if response size or correlation needs outgrow text-sensor responses.
 
 `hub_id` is ESP32-owned. The Companion should discover it with `get_elero_info()`, keep it with the draft registry, and echo it in pushes. The ESP32 rejects registries whose `hub_id` does not match the local eFuse-MAC-derived ID.
 
