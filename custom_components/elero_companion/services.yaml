@@ -1,0 +1,68 @@
+get_info:
+  target:
+  fields:
+    entry_id:
+      required: false
+      selector:
+        text:
+      name: Config entry ID
+      description: Required when multiple Elero Companion entries are loaded.
+
+validate_managed_registry:
+  target:
+  fields:
+    entry_id:
+      required: false
+      selector:
+        text:
+      name: Config entry ID
+      description: Required when multiple Elero Companion entries are loaded.
+    registry_json:
+      required: true
+      selector:
+        text:
+          multiline: true
+      name: Managed registry JSON
+      description: Registry JSON to validate through the ESPHome Native API.
+
+push_managed_registry:
+  target:
+  fields:
+    entry_id:
+      required: false
+      selector:
+        text:
+      name: Config entry ID
+      description: Required when multiple Elero Companion entries are loaded.
+    registry_json:
+      required: true
+      selector:
+        text:
+          multiline: true
+      name: Managed registry JSON
+      description: Registry JSON to push through the ESPHome Native API.
+
+clear_managed_registry:
+  target:
+  fields:
+    entry_id:
+      required: false
+      selector:
+        text:
+      name: Config entry ID
+      description: Required when multiple Elero Companion entries are loaded.
+    registry_revision:
+      required: true
+      selector:
+        number:
+          min: 0
+          mode: box
+      name: Registry revision
+      description: Current registry revision expected by the ESPHome node.
+    confirm:
+      required: false
+      default: CLEAR
+      selector:
+        text:
+      name: Confirmation
+      description: Must be CLEAR.

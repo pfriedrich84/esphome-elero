@@ -14,6 +14,7 @@ Updated: 2026-06-05
   - `push_elero_managed_registry`
   - `clear_elero_managed_registry`
 - Registry validation/push works with pretty JSON passed from Home Assistant service YAML.
+- Managed light slot was verified on real hardware: persisted registry record bound at boot and HA light service calls routed RF through the ESPHome/Elero command path.
 - Revision guard works for accepted pushes.
 - Accepted registry persists across ESP reboot.
 - Clear with `registry_revision` and `confirm: "CLEAR"` works.
@@ -53,24 +54,25 @@ Implemented in current follow-up work:
 
 - Generated preallocated managed cover/light slot entities from `elero_managed` codegen.
 - Boot-time binding of persisted registry devices into those slots.
-- Unused slots are marked failed/unavailable during setup.
+- Unused slots are intentionally left unbound and ignore commands instead of marking the shared component failed.
+- Managed light slots suppress duplicate writes caused by HA/ESPHome light transitions and default generated managed light transitions are `0s`.
+- Companion now has a Native API service-call adapter and companion-level services for get/validate/push/clear managed registry operations. Push/clear create a restart-required notification because slot binding happens at ESP boot.
 
 Not implemented yet:
 
 - Runtime hot-binding immediately after push without reboot.
 - Dynamic entity names from registry device names; slot entity names are currently stable placeholder names.
 - Full cover position/dimming parity with YAML entities; managed slots initially provide direct RF command routing and basic state updates.
-- Companion migration from REST to Native API/service-call-first.
+- Full Companion UI/device workflow for authoring managed registries; the current Companion migration exposes Native API-backed services but does not yet build registries from discovered devices.
 
 ## Next implementation target
 
-Implement both managed cover and managed light preallocated slots in one pass:
+Continue Companion-managed workflow integration:
 
-1. Generate up to configured cover/light slot entities from `elero_managed` codegen.
-2. Bind persisted managed registry records to slots at boot.
-3. Ensure active slots register with the existing Elero hub mappings and use existing RF queue/counter behavior.
-4. Make unused slots clearly unavailable/disabled where ESPHome supports it.
-5. Validate with a managed `type: "light"` registry first, then cover.
+1. Add a Companion registry builder that turns discovered/adopted devices into managed registry JSON and computes the firmware checksum.
+2. Add UX/actions around validate -> push -> restart-required guidance.
+3. Add options/migration support for configuring `esphome_node` on existing Companion entries.
+4. Improve firmware slot parity for cover position/dimming behavior and registry-name visibility where ESPHome allows it.
 
 ## Validation commands
 

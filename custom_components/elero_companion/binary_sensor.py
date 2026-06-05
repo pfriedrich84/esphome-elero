@@ -20,6 +20,11 @@ WEB_UI_DESCRIPTION = BinarySensorEntityDescription(
     translation_key="web_ui_enabled",
     device_class=BinarySensorDeviceClass.CONNECTIVITY,
 )
+NATIVE_API_DESCRIPTION = BinarySensorEntityDescription(
+    key="native_api_services_available",
+    translation_key="native_api_services_available",
+    device_class=BinarySensorDeviceClass.CONNECTIVITY,
+)
 
 
 async def async_setup_entry(
@@ -29,7 +34,32 @@ async def async_setup_entry(
 ) -> None:
     """Set up Elero binary sensors."""
     coordinator: EleroDataUpdateCoordinator = entry.runtime_data
-    async_add_entities([EleroWebUiEnabledBinarySensor(coordinator, entry)])
+    async_add_entities(
+        [
+            EleroWebUiEnabledBinarySensor(coordinator, entry),
+            EleroNativeApiServicesAvailableBinarySensor(coordinator, entry),
+        ]
+    )
+
+
+class EleroNativeApiServicesAvailableBinarySensor(CoordinatorEntity[EleroDataUpdateCoordinator], BinarySensorEntity):
+    """Whether ESPHome managed Native API services are registered in Home Assistant."""
+
+    entity_description = NATIVE_API_DESCRIPTION
+
+    def __init__(self, coordinator: EleroDataUpdateCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator)
+        self.entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_native_api_services_available"
+        self._attr_device_info = device_info(entry)
+        self._attr_has_entity_name = True
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return whether the managed Native API service is available."""
+        if self.coordinator.native_api is None:
+            return None
+        return self.coordinator.native_api.service_available("get_elero_info")
 
 
 class EleroWebUiEnabledBinarySensor(CoordinatorEntity[EleroDataUpdateCoordinator], BinarySensorEntity):

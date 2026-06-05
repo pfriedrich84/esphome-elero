@@ -16,9 +16,10 @@ from .api import (
     EleroCannotConnect,
     EleroInvalidResponse,
     EleroWebUiDisabled,
+    esphome_service_prefix,
     normalize_base_url,
 )
-from .const import CONF_URL, DOMAIN
+from .const import CONF_ESPHOME_NODE, CONF_URL, DOMAIN, ESPHOME_SERVICE_DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -27,6 +28,7 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
         vol.Required(CONF_URL): str,
         vol.Optional(CONF_USERNAME): str,
         vol.Optional(CONF_PASSWORD): str,
+        vol.Optional(CONF_ESPHOME_NODE): str,
     }
 )
 
@@ -35,6 +37,11 @@ class EleroCompanionConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle an Elero Companion config flow."""
 
     VERSION = 1
+
+    @staticmethod
+    def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> config_entries.OptionsFlow:
+        """Return the options flow for this entry."""
+        return EleroCompanionOptionsFlow(config_entry)
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None):
         """Handle the initial step."""
@@ -62,10 +69,20 @@ class EleroCompanionConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             else:
                 await self.async_set_unique_id(base_url)
                 self._abort_if_unique_id_configured(updates={CONF_URL: base_url})
+                node_name = str(user_input.get(CONF_ESPHOME_NODE) or "").strip()
+                if node_name:
+                    native_service = f"{esphome_service_prefix(node_name)}_get_elero_info"
+                    if not self.hass.services.has_service(ESPHOME_SERVICE_DOMAIN, native_service):
+                        _LOGGER.info(
+                            "ESPHome Native API service %s.%s is not registered yet; managed registry actions may be unavailable until the ESPHome node reconnects",
+                            ESPHOME_SERVICE_DOMAIN,
+                            native_service,
+                        )
                 data = {
                     CONF_URL: base_url,
                     CONF_USERNAME: user_input.get(CONF_USERNAME, ""),
                     CONF_PASSWORD: user_input.get(CONF_PASSWORD, ""),
+                    CONF_ESPHOME_NODE: node_name,
                 }
                 return self.async_create_entry(
                     title=str(info.get("device_name") or "Elero hub"),
@@ -86,3 +103,23 @@ class EleroCompanionConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             user_input.get(CONF_PASSWORD),
         )
         return await api.async_validate()
+
+
+class EleroCompanionOptionsFlow(config_entries.OptionsFlow):
+    """Handle options for an Elero Companion config entry."""
+
+    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+        self.config_entry = config_entry
+
+    async def async_step_init(self, user_input: dict[str, Any] | None = None):
+        """Manage Companion options."""
+        if user_input is not None:
+            return self.async_create_entry(title="", data={CONF_ESPHOME_NODE: user_input.get(CONF_ESPHOME_NODE, "")})
+
+        default_node = self.config_entry.options.get(
+            CONF_ESPHOME_NODE, self.config_entry.data.get(CONF_ESPHOME_NODE, "")
+        )
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema({vol.Optional(CONF_ESPHOME_NODE, default=default_node): str}),
+        )

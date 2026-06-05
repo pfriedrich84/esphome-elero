@@ -4,11 +4,12 @@
     "step": {
       "user": {
         "title": "Connect to Elero hub",
-        "description": "Connect to an existing esphome-elero hub through its /elero web API. Enter the device origin, for example http://192.168.1.50. If you paste http://host/elero, the path is ignored.",
+        "description": "Connect to an existing esphome-elero hub. The legacy /elero web API is used for diagnostics; managed registry actions use ESPHome Native API services when an ESPHome node name is provided.",
         "data": {
           "url": "Host or URL",
           "username": "Username",
-          "password": "Password"
+          "password": "Password",
+          "esphome_node": "ESPHome node name for Native API services"
         }
       }
     },
@@ -21,6 +22,17 @@
     },
     "abort": {
       "already_configured": "This Elero hub is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Elero Companion options",
+        "description": "Configure the ESPHome node name used for Native API managed registry services.",
+        "data": {
+          "esphome_node": "ESPHome node name for Native API services"
+        }
+      }
     }
   },
   "entity": {
@@ -39,7 +51,8 @@
       "tx_queue_latency_last_ms": { "name": "TX queue latency" }
     },
     "binary_sensor": {
-      "web_ui_enabled": { "name": "Web UI enabled" }
+      "web_ui_enabled": { "name": "Web UI enabled" },
+      "native_api_services_available": { "name": "Native API services available" }
     }
   },
   "issues": {

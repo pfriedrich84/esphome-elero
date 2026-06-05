@@ -10,6 +10,13 @@ CONF_URL = "url"
 CONF_HOST = "host"
 CONF_USERNAME = "username"
 CONF_PASSWORD = "password"
+CONF_ESPHOME_NODE = "esphome_node"
+
+ESPHOME_SERVICE_DOMAIN = "esphome"
+SERVICE_GET_INFO = "get_info"
+SERVICE_VALIDATE_MANAGED_REGISTRY = "validate_managed_registry"
+SERVICE_PUSH_MANAGED_REGISTRY = "push_managed_registry"
+SERVICE_CLEAR_MANAGED_REGISTRY = "clear_managed_registry"
 
 DEFAULT_SCAN_INTERVAL = timedelta(seconds=30)
 DEFAULT_TIMEOUT = 10

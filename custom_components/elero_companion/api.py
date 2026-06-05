@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
 
 import aiohttp
+from homeassistant.core import HomeAssistant
 
-from .const import DEFAULT_TIMEOUT
+from .const import DEFAULT_TIMEOUT, ESPHOME_SERVICE_DOMAIN
 
 
 class EleroApiError(Exception):
@@ -93,6 +95,11 @@ class EleroHubData:
         return enabled if isinstance(enabled, bool) else None
 
 
+def esphome_service_prefix(value: str) -> str:
+    """Return ESPHome's Home Assistant service prefix for a node name."""
+    return re.sub(r"_+", "_", re.sub(r"[^a-z0-9_]", "_", value.lower())).strip("_")
+
+
 def normalize_base_url(value: str) -> str:
     """Normalize user input into an origin URL without a path.
 
@@ -109,6 +116,53 @@ def normalize_base_url(value: str) -> str:
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise ValueError("invalid URL")
     return f"{parsed.scheme}://{parsed.netloc}"
+
+
+class EleroNativeApiClient:
+    """Home Assistant Native API service-call adapter for managed mode."""
+
+    def __init__(self, hass: HomeAssistant, node_name: str) -> None:
+        self.hass = hass
+        self.node_name = node_name
+        self.service_prefix = esphome_service_prefix(node_name)
+
+    def service_name(self, suffix: str) -> str:
+        """Return the ESPHome service name for a managed native action."""
+        return f"{self.service_prefix}_{suffix}"
+
+    def service_available(self, suffix: str) -> bool:
+        """Return whether the ESPHome native API service is currently registered in HA."""
+        return self.hass.services.has_service(ESPHOME_SERVICE_DOMAIN, self.service_name(suffix))
+
+    async def async_get_info(self) -> None:
+        """Request firmware managed-mode info via Native API."""
+        await self._async_call("get_elero_info")
+
+    async def async_validate_managed_registry(self, registry_json: str) -> None:
+        """Validate a managed registry via Native API."""
+        await self._async_call("validate_elero_managed_registry", {"registry_json": registry_json})
+
+    async def async_push_managed_registry(self, registry_json: str) -> None:
+        """Push a managed registry via Native API."""
+        await self._async_call("push_elero_managed_registry", {"registry_json": registry_json})
+
+    async def async_clear_managed_registry(self, registry_revision: int, confirm: str = "CLEAR") -> None:
+        """Clear the managed registry via Native API."""
+        await self._async_call(
+            "clear_elero_managed_registry",
+            {"registry_revision": str(registry_revision), "confirm": confirm},
+        )
+
+    async def _async_call(self, suffix: str, service_data: dict[str, Any] | None = None) -> None:
+        service = self.service_name(suffix)
+        if not self.hass.services.has_service(ESPHOME_SERVICE_DOMAIN, service):
+            raise EleroCannotConnect(f"ESPHome Native API service {ESPHOME_SERVICE_DOMAIN}.{service} is unavailable")
+        await self.hass.services.async_call(
+            ESPHOME_SERVICE_DOMAIN,
+            service,
+            service_data or {},
+            blocking=True,
+        )
 
 
 class EleroApiClient:

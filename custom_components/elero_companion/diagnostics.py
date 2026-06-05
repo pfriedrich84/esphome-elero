@@ -8,7 +8,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 
-from .const import CONF_URL
+from .const import CONF_ESPHOME_NODE, CONF_URL
 from .coordinator import EleroDataUpdateCoordinator
 
 TO_REDACT = {CONF_USERNAME, CONF_PASSWORD}
@@ -32,6 +32,7 @@ async def async_get_config_entry_diagnostics(
             "title": entry.title,
             CONF_URL: entry_data.get(CONF_URL),
             CONF_USERNAME: entry_data.get(CONF_USERNAME),
+            CONF_ESPHOME_NODE: entry_data.get(CONF_ESPHOME_NODE),
             "has_password": bool(entry.data.get(CONF_PASSWORD)),
         },
         "last_update_success": coordinator.last_update_success,
