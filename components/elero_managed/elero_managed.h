@@ -30,6 +30,12 @@ class EleroManaged : public Component
   void set_max_devices(uint8_t max_devices) { this->max_devices_ = max_devices; }
 #ifdef USE_TEXT_SENSOR
   void set_response_text_sensor(text_sensor::TextSensor *sensor) { this->response_text_sensor_ = sensor; }
+  void set_last_call_text_sensor(text_sensor::TextSensor *sensor) { this->last_call_text_sensor_ = sensor; }
+  void set_last_ok_text_sensor(text_sensor::TextSensor *sensor) { this->last_ok_text_sensor_ = sensor; }
+  void set_last_error_text_sensor(text_sensor::TextSensor *sensor) { this->last_error_text_sensor_ = sensor; }
+  void set_hub_id_text_sensor(text_sensor::TextSensor *sensor) { this->hub_id_text_sensor_ = sensor; }
+  void set_registry_revision_text_sensor(text_sensor::TextSensor *sensor) { this->registry_revision_text_sensor_ = sensor; }
+  void set_device_count_text_sensor(text_sensor::TextSensor *sensor) { this->device_count_text_sensor_ = sensor; }
 #endif
 
   bool is_enabled() const { return this->enabled_; }
@@ -53,7 +59,9 @@ class EleroManaged : public Component
  protected:
   void load_registry_();
   bool save_registry_();
-  void publish_response_(const std::string &json);
+  void publish_response_(const std::string &request, const std::string &json, bool ok = true,
+                         const std::string &error = "");
+  void publish_diagnostic_fields_(const std::string &request, bool ok, const std::string &error);
   std::string registry_to_json_(const elero::ManagedRegistry &registry) const;
   bool registry_from_json_(const std::string &json, elero::ManagedRegistry *registry, std::string *error) const;
   static uint32_t preference_hash_();
@@ -67,6 +75,12 @@ class EleroManaged : public Component
   elero::ManagedRegistry registry_{};
 #ifdef USE_TEXT_SENSOR
   text_sensor::TextSensor *response_text_sensor_{nullptr};
+  text_sensor::TextSensor *last_call_text_sensor_{nullptr};
+  text_sensor::TextSensor *last_ok_text_sensor_{nullptr};
+  text_sensor::TextSensor *last_error_text_sensor_{nullptr};
+  text_sensor::TextSensor *hub_id_text_sensor_{nullptr};
+  text_sensor::TextSensor *registry_revision_text_sensor_{nullptr};
+  text_sensor::TextSensor *device_count_text_sensor_{nullptr};
 #endif
   ESPPreferenceObject pref_{};
 };

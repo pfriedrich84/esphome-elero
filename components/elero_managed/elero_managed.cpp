@@ -109,6 +109,7 @@ void EleroManaged::dump_config() {
   ESP_LOGCONFIG(TAG, "  Registry revision: %lu", (unsigned long) this->registry_.registry_revision);
   ESP_LOGCONFIG(TAG, "  Registry devices: %u", (unsigned) this->registry_.devices.size());
   ESP_LOGCONFIG(TAG, "  Entity materialization: static ESPHome codegen only; restart/recompile spike pending");
+  this->publish_diagnostic_fields_("boot", true, "");
 }
 
 std::string EleroManaged::get_elero_info() const {
@@ -239,11 +240,31 @@ bool EleroManaged::save_registry_() {
   return this->pref_.save(&stored);
 }
 
-void EleroManaged::publish_response_(const std::string &json) {
+void EleroManaged::publish_diagnostic_fields_(const std::string &request, bool ok, const std::string &error) {
+#ifdef USE_TEXT_SENSOR
+  if (this->last_call_text_sensor_ != nullptr) {
+    this->last_call_text_sensor_->publish_state(std::to_string(millis()) + "ms " + request);
+  }
+  if (this->last_ok_text_sensor_ != nullptr)
+    this->last_ok_text_sensor_->publish_state(ok ? "true" : "false");
+  if (this->last_error_text_sensor_ != nullptr)
+    this->last_error_text_sensor_->publish_state(error);
+  if (this->hub_id_text_sensor_ != nullptr)
+    this->hub_id_text_sensor_->publish_state(std::to_string(this->hub_id_));
+  if (this->registry_revision_text_sensor_ != nullptr)
+    this->registry_revision_text_sensor_->publish_state(std::to_string(this->registry_.registry_revision));
+  if (this->device_count_text_sensor_ != nullptr)
+    this->device_count_text_sensor_->publish_state(std::to_string(this->registry_.devices.size()));
+#endif
+}
+
+void EleroManaged::publish_response_(const std::string &request, const std::string &json, bool ok,
+                                     const std::string &error) {
 #ifdef USE_TEXT_SENSOR
   if (this->response_text_sensor_ != nullptr)
     this->response_text_sensor_->publish_state(json);
 #endif
+  this->publish_diagnostic_fields_(request, ok, error);
   ESP_LOGD(TAG, "Native API response: %s", json.c_str());
 }
 
@@ -404,40 +425,48 @@ bool EleroManaged::registry_from_json_(const std::string &json, elero::ManagedRe
 
 #ifdef USE_API
 void EleroManaged::api_get_elero_info() {
-  this->publish_response_(this->get_elero_info());
+  this->publish_response_("get_elero_info", this->get_elero_info());
 }
 
 void EleroManaged::api_get_elero_managed_registry() {
-  this->publish_response_(this->registry_to_json_(this->registry_));
+  this->publish_response_("get_elero_managed_registry", this->registry_to_json_(this->registry_));
 }
 
 void EleroManaged::api_validate_elero_managed_registry(std::string registry_json) {
   elero::ManagedRegistry registry{};
   std::string error;
   if (!this->registry_from_json_(registry_json, &registry, &error)) {
-    this->publish_response_("{\"ok\":false,\"request\":\"validate_elero_managed_registry\",\"error\":\"" +
-                            escape_json_string_(error) + "\"}");
+    this->publish_response_("validate_elero_managed_registry",
+                            "{\"ok\":false,\"request\":\"validate_elero_managed_registry\",\"error\":\"" +
+                                escape_json_string_(error) + "\"}",
+                            false, error);
     return;
   }
   auto result = this->validate_elero_managed_registry(registry);
-  this->publish_response_("{\"ok\":" + std::string(result.ok ? "true" : "false") +
-                          ",\"request\":\"validate_elero_managed_registry\",\"error\":\"" +
-                          escape_json_string_(result.error) + "\"}");
+  this->publish_response_("validate_elero_managed_registry",
+                          "{\"ok\":" + std::string(result.ok ? "true" : "false") +
+                              ",\"request\":\"validate_elero_managed_registry\",\"error\":\"" +
+                              escape_json_string_(result.error) + "\"}",
+                          result.ok, result.error);
 }
 
 void EleroManaged::api_push_elero_managed_registry(std::string registry_json) {
   elero::ManagedRegistry registry{};
   std::string error;
   if (!this->registry_from_json_(registry_json, &registry, &error)) {
-    this->publish_response_("{\"ok\":false,\"request\":\"push_elero_managed_registry\",\"error\":\"" +
-                            escape_json_string_(error) + "\"}");
+    this->publish_response_("push_elero_managed_registry",
+                            "{\"ok\":false,\"request\":\"push_elero_managed_registry\",\"error\":\"" +
+                                escape_json_string_(error) + "\"}",
+                            false, error);
     return;
   }
   bool ok = this->push_elero_managed_registry(registry, &error);
-  this->publish_response_("{\"ok\":" + std::string(ok ? "true" : "false") +
-                          ",\"request\":\"push_elero_managed_registry\",\"error\":\"" +
-                          escape_json_string_(error) + "\",\"registry_revision\":" +
-                          std::to_string(this->registry_.registry_revision) + "}");
+  this->publish_response_("push_elero_managed_registry",
+                          "{\"ok\":" + std::string(ok ? "true" : "false") +
+                              ",\"request\":\"push_elero_managed_registry\",\"error\":\"" +
+                              escape_json_string_(error) + "\",\"registry_revision\":" +
+                              std::to_string(this->registry_.registry_revision) + "}",
+                          ok, error);
 }
 #endif
 

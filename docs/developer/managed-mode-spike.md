@@ -45,6 +45,15 @@ The helpers are exposed as ESPHome Native API user services in this pass:
 
 Because ESPHome user-defined API services are command-style calls rather than direct request/response RPCs, responses are published to an auto-created diagnostic text sensor named `Elero Managed API Result`. Payloads are JSON strings. ESPHome requires `api.custom_services: true` for these services.
 
+Additional diagnostic text sensors are auto-created with `disabled_by_default: true` so they are hidden unless the user explicitly enables them in Home Assistant:
+
+- `Elero Managed Last Call`
+- `Elero Managed Last OK`
+- `Elero Managed Last Error`
+- `Elero Managed Hub ID`
+- `Elero Managed Registry Revision`
+- `Elero Managed Device Count`
+
 Implementation note: ESPHome 2026.5.3 did not link the string-argument user-service template specializations for this external-component-only custom API service path, so `elero_managed` provides the required `std::string` specializations locally.
 
 `hub_id` is ESP32-owned. The Companion should discover it with `get_elero_info()`, keep it with the draft registry, and echo it in pushes. The ESP32 rejects registries whose `hub_id` does not match the local eFuse-MAC-derived ID.
