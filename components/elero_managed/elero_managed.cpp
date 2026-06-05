@@ -8,10 +8,13 @@
 
 #ifdef USE_API_USER_DEFINED_ACTIONS
 namespace esphome::api {
-// ESPHome 2026.5.3 may not link user_services.cpp for external-component-only
-// custom API services. Provide the string specializations used by this component
-// so JSON payload services link when api.custom_services is enabled.
+// Some ESPHome builds do not link user_services.cpp for external-component-only
+// custom API services, while others do. Provide weak string specializations used
+// by this component so JSON payload services link without conflicting with the
+// strong definitions from ESPHome when they are present.
+template<> std::string get_execute_arg_value<std::string>(const ExecuteServiceArgument &arg) __attribute__((weak));
 template<> std::string get_execute_arg_value<std::string>(const ExecuteServiceArgument &arg) { return arg.string_; }
+template<> enums::ServiceArgType to_service_arg_type<std::string>() __attribute__((weak));
 template<> enums::ServiceArgType to_service_arg_type<std::string>() { return enums::SERVICE_ARG_TYPE_STRING; }
 }  // namespace esphome::api
 #endif

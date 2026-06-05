@@ -49,6 +49,7 @@ def _auto_diagnostic_text_sensors(config):
             result[key] = schema(_hidden_text_sensor_config(name))
     return result
 
+
 CONFIG_SCHEMA = cv.All(
     cv.Schema(
         {
