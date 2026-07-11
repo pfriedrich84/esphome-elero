@@ -25,15 +25,15 @@ jobs:
   markdown:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v7.0.0
       - run: python3 scripts/check_markdown_links.py
 
   esphome-lint:
     if: github.event_name != 'push' || !startsWith(github.ref, 'refs/heads/docs/')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6.0.2
-      - uses: actions/setup-python@v6.2.0
+      - uses: actions/checkout@v7.0.0
+      - uses: actions/setup-python@v6.3.0
         with:
           python-version: "3.12"
           cache: "pip"
@@ -45,8 +45,8 @@ jobs:
     if: github.event_name != 'push' || !startsWith(github.ref, 'refs/heads/docs/')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6.0.2
-      - uses: actions/setup-python@v6.2.0
+      - uses: actions/checkout@v7.0.0
+      - uses: actions/setup-python@v6.3.0
         with:
           python-version: "3.12"
           cache: "pip"
@@ -74,8 +74,8 @@ jobs:
           - tests/configs/custom_frequency.yaml
           - tests/configs/esp32s3-idf.yaml
     steps:
-      - uses: actions/checkout@v6.0.2
-      - uses: actions/setup-python@v6.2.0
+      - uses: actions/checkout@v7.0.0
+      - uses: actions/setup-python@v6.3.0
         with:
           python-version: "3.12"
           cache: "pip"
@@ -165,7 +165,7 @@ jobs:
       run:
         working-directory: components/elero_web/frontend
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v7.0.0
       - uses: actions/setup-node@v6.4.0
         with:
           node-version: "22"
@@ -194,7 +194,7 @@ jobs:
     if: github.event_name != 'push' || !startsWith(github.ref, 'refs/heads/docs/')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v7.0.0
       - name: Configure CMake
         run: cmake -S tests -B tests/build -DCMAKE_BUILD_TYPE=Debug
       - name: Build
@@ -206,8 +206,8 @@ jobs:
     if: github.event_name != 'push' || !startsWith(github.ref, 'refs/heads/docs/')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6.0.2
-      - uses: actions/setup-python@v6.2.0
+      - uses: actions/checkout@v7.0.0
+      - uses: actions/setup-python@v6.3.0
         with:
           python-version: "3.12"
           cache: "pip"
