@@ -65,19 +65,19 @@ cover::CoverTraits EleroGroupCover::get_traits() {
 }
 
 void EleroGroupCover::control(const cover::CoverCall &call) {
-  if (call.get_stop()) {
-    this->submit_group_intent_({CommandIntentKind::STOP, 0});
+  if (call.get_stop() && intent_was_accepted(
+          this->submit_group_intent_({CommandIntentKind::STOP, 0}))) {
     this->current_operation = cover::COVER_OPERATION_IDLE;
     this->publish_state();
   }
   if (call.get_position().has_value()) {
     const float pos = *call.get_position();
     if (pos == cover::COVER_OPEN) {
-      this->submit_group_intent_({CommandIntentKind::OPEN, 0});
-      this->current_operation = cover::COVER_OPERATION_OPENING;
+      if (intent_was_accepted(this->submit_group_intent_({CommandIntentKind::OPEN, 0})))
+        this->current_operation = cover::COVER_OPERATION_OPENING;
     } else if (pos == cover::COVER_CLOSED) {
-      this->submit_group_intent_({CommandIntentKind::CLOSE, 0});
-      this->current_operation = cover::COVER_OPERATION_CLOSING;
+      if (intent_was_accepted(this->submit_group_intent_({CommandIntentKind::CLOSE, 0})))
+        this->current_operation = cover::COVER_OPERATION_CLOSING;
     } else {
       for (auto *member : this->members_) {
         const auto kind = pos > member->get_cover_position() ? CommandIntentKind::OPEN
@@ -92,26 +92,30 @@ void EleroGroupCover::control(const cover::CoverCall &call) {
     this->submit_group_intent_({CommandIntentKind::TILT, 0});
   if (call.get_toggle().has_value()) {
     if (this->current_operation != cover::COVER_OPERATION_IDLE) {
-      this->submit_group_intent_({CommandIntentKind::STOP, 0});
-      this->current_operation = cover::COVER_OPERATION_IDLE;
+      if (intent_was_accepted(this->submit_group_intent_({CommandIntentKind::STOP, 0})))
+        this->current_operation = cover::COVER_OPERATION_IDLE;
     } else {
-      this->submit_group_intent_({CommandIntentKind::OPEN, 0});
-      this->current_operation = cover::COVER_OPERATION_OPENING;
+      if (intent_was_accepted(this->submit_group_intent_({CommandIntentKind::OPEN, 0})))
+        this->current_operation = cover::COVER_OPERATION_OPENING;
     }
     this->publish_state();
   }
 }
 
-void EleroGroupCover::submit_group_intent_(const CommandIntent &intent) {
+IntentSubmitResult EleroGroupCover::submit_group_intent_(const CommandIntent &intent) {
   if (!this->native_group_) {
     this->submit_to_members_(intent);
-    return;
+    return IntentSubmitResult::ACCEPTED;
   }
   const auto result = this->native_delivery_.submit(intent);
-  if (group_delivery_policy::after_native_submit(result) == group_delivery_policy::Route::MEMBERS) {
-    ESP_LOGW(TAG, "Native group command queue full; using member delivery");
-    this->submit_to_members_(intent);
+  if (group_delivery_policy::reject_native_submit_without_fanout(result)) {
+    // Keep all compatible group work in the native lane. Sending only this
+    // newest command through members would overtake its older native backlog.
+    ESP_LOGW(TAG, "Native group command queue full; rejecting newest group command");
+    if (this->parent_ != nullptr)
+      this->parent_->increment_tx_drop_count();
   }
+  return result;
 }
 
 void EleroGroupCover::submit_to_members_(const CommandIntent &intent) {

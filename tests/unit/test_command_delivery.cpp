@@ -1,4 +1,5 @@
 #include "elero/elero_command_delivery.h"
+#include "elero/elero_timed_action.h"
 #include <gtest/gtest.h>
 #include <atomic>
 #include <thread>
@@ -235,6 +236,63 @@ TEST(CommandDelivery, BatchSubmissionPreservesMultiIntentOrder) {
   delivery.advance(1, 0, 1, submit);
   delivery.advance(2, 0, 1, submit);
   EXPECT_EQ(bytes, (std::vector<uint8_t>{0x20, 0x40}));
+}
+
+TEST(CommandDelivery, CoverButtonBytesPreserveStopUrgencyAndSemanticDeferral) {
+  const auto mapping = config().mapping;
+  EXPECT_EQ(cover_intent_for_command_byte(mapping, mapping.stop).kind, CommandIntentKind::STOP);
+  EXPECT_EQ(cover_intent_for_command_byte(mapping, mapping.open).kind, CommandIntentKind::OPEN);
+  const auto custom = cover_intent_for_command_byte(mapping, 0x77);
+  EXPECT_EQ(custom.kind, CommandIntentKind::CUSTOM);
+  EXPECT_EQ(custom.custom_byte, 0x77);
+}
+
+TEST(CommandDelivery, DeferredLaneDoesNotTransmitUntilReleasedAfterStop) {
+  CommandIntentDelivery active(config());
+  CommandIntentDelivery deferred(config());
+  ASSERT_EQ(active.submit({CommandIntentKind::STOP, 0}), IntentSubmitResult::ACCEPTED);
+  ASSERT_EQ(deferred.submit({CommandIntentKind::OPEN, 0}), IntentSubmitResult::ACCEPTED);
+
+  std::vector<uint8_t> bytes;
+  auto submit = [&](const t_elero_command &packet, bool) {
+    bytes.push_back(packet.payload[4]);
+    return SendResult::OK;
+  };
+  active.advance(1, 0, 1, submit);
+  ASSERT_EQ(bytes, (std::vector<uint8_t>{0x10}));
+  EXPECT_EQ(deferred.size(), 1u);
+
+  EXPECT_EQ(deferred.transfer_front_to(active), IntentSubmitResult::ACCEPTED);
+  active.advance(2, 0, 1, submit);
+  EXPECT_EQ(bytes, (std::vector<uint8_t>{0x10, 0x21}));
+  EXPECT_TRUE(deferred.empty());
+}
+
+TEST(CommandDelivery, FailedDeferredTransferKeepsOldestIntentForRetry) {
+  CommandIntentDelivery active(config());
+  CommandIntentDelivery deferred(config());
+  for (uint8_t i = 0; i < ELERO_MAX_COMMAND_QUEUE; i++)
+    ASSERT_EQ(active.submit(CommandIntent::custom(i)), IntentSubmitResult::ACCEPTED);
+  ASSERT_EQ(deferred.submit({CommandIntentKind::OPEN, 0}), IntentSubmitResult::ACCEPTED);
+
+  EXPECT_EQ(deferred.transfer_front_to(active), IntentSubmitResult::REJECTED);
+  EXPECT_EQ(deferred.size(), 1u);
+  EXPECT_EQ(active.size(), ELERO_MAX_COMMAND_QUEUE);
+}
+
+TEST(TimedAction, StartsOnlyOnFirstRelevantAcceptedPacket) {
+  DeliveryOutcome outcome{};
+  outcome.intent = {CommandIntentKind::DIM_DOWN, 0};
+  outcome.event = DeliveryEvent::WAITING;
+  EXPECT_FALSE(should_start_timed_action(true, CommandIntentKind::DIM_DOWN, outcome));
+
+  outcome.event = DeliveryEvent::PACKET_ACCEPTED;
+  EXPECT_TRUE(should_start_timed_action(true, CommandIntentKind::DIM_DOWN, outcome));
+  EXPECT_FALSE(should_start_timed_action(false, CommandIntentKind::DIM_DOWN, outcome));
+  EXPECT_FALSE(should_start_timed_action(true, CommandIntentKind::DIM_UP, outcome));
+
+  outcome.event = DeliveryEvent::COMPLETED;
+  EXPECT_TRUE(should_start_timed_action(true, CommandIntentKind::DIM_DOWN, outcome));
 }
 
 TEST(CommandDelivery, SubmissionIsThreadSafe) {

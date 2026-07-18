@@ -92,6 +92,20 @@ struct CommandMapping {
   }
 };
 
+inline CommandIntent cover_intent_for_command_byte(const CommandMapping &mapping, uint8_t value) {
+  if (value == mapping.stop)
+    return {CommandIntentKind::STOP, 0};
+  if (value == mapping.open)
+    return {CommandIntentKind::OPEN, 0};
+  if (value == mapping.close)
+    return {CommandIntentKind::CLOSE, 0};
+  if (value == mapping.check)
+    return {CommandIntentKind::CHECK, 0};
+  if (value == mapping.tilt)
+    return {CommandIntentKind::TILT, 0};
+  return CommandIntent::custom(value);
+}
+
 struct CommandDeliveryConfig {
   BlindCommandProfile profile{};
   CommandMapping mapping{};
@@ -259,6 +273,23 @@ class CommandIntentDelivery {
     this->queue_.clear();
     this->accepted_repeats_ = 0;
     this->reset_front_state_();
+  }
+
+  // Move the oldest unsent semantic intent into another delivery lane. The
+  // source is unchanged when the destination has no capacity, so callers can
+  // safely retry without reordering or losing the deferred work.
+  IntentSubmitResult transfer_front_to(CommandIntentDelivery &destination) {
+    if (this == &destination)
+      return IntentSubmitResult::COALESCED;
+    std::scoped_lock lock(this->mutex_, destination.mutex_);
+    if (this->queue_.empty())
+      return IntentSubmitResult::COALESCED;
+    const auto result = destination.submit_locked_(this->queue_.front());
+    if (result != IntentSubmitResult::REJECTED) {
+      this->queue_.pop_front();
+      this->reset_front_state_();
+    }
+    return result;
   }
 
   size_t size() const {

@@ -23,7 +23,8 @@ void EleroScanButton::press_action() {
   if (this->cover_ != nullptr) {
     ESP_LOGD(TAG, "Sending command 0x%02x to cover 0x%06x",
              this->command_byte_, this->cover_->get_blind_address());
-    this->cover_->submit_intent(CommandIntent::custom(this->command_byte_));
+    const auto mapping = this->cover_->get_command_delivery_config().mapping;
+    this->cover_->submit_intent(cover_intent_for_command_byte(mapping, this->command_byte_));
     return;
   }
   if (this->light_ != nullptr) {

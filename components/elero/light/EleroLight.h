@@ -83,6 +83,8 @@ class EleroLight : public light::LightOutput, public Component, public EleroLigh
   float target_brightness_{0.0f};
   bool is_on_{false};
   bool is_dimming_{false};
+  bool pending_dimming_start_{false};
+  CommandIntentKind pending_dimming_kind_{CommandIntentKind::DIM_UP};
   bool dim_up_{true};
   uint32_t dimming_start_{0};
   uint32_t last_recompute_time_{0};

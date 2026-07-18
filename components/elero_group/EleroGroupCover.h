@@ -28,7 +28,7 @@ class EleroGroupCover : public cover::Cover, public Component {
  protected:
   void control(const cover::CoverCall &call) override;
 
-  void submit_group_intent_(const CommandIntent &intent);
+  IntentSubmitResult submit_group_intent_(const CommandIntent &intent);
   void submit_to_members_(const CommandIntent &intent);
   bool can_use_native_group_() const;
   CommandDeliveryConfig build_native_config_() const;

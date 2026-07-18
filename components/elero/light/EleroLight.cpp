@@ -1,5 +1,6 @@
 #include "EleroLight.h"
 #include "../elero_light_logic.h"
+#include "../elero_timed_action.h"
 #include "esphome/core/log.h"
 
 namespace esphome {
@@ -94,12 +95,14 @@ void EleroLight::write_state(LightState *state) {
   this->target_brightness_ = new_brightness;
   this->brightness_ = accepted_brightness;
   this->is_dimming_ = start_dimming;
+  this->pending_dimming_start_ = start_dimming;
   if (start_dimming) {
     ESP_LOGD(TAG, "Dimming %s 0x%06x from %.2f to %.2f", dim_up ? "up" : "down",
              this->command_.blind_addr, this->brightness_, new_brightness);
     this->dim_up_ = dim_up;
-    this->dimming_start_ = millis();
-    this->last_recompute_time_ = this->dimming_start_;
+    this->pending_dimming_kind_ = dim_up ? CommandIntentKind::DIM_UP : CommandIntentKind::DIM_DOWN;
+    this->dimming_start_ = 0;
+    this->last_recompute_time_ = 0;
   }
 }
 
@@ -108,7 +111,7 @@ void EleroLight::loop() {
 
   this->handle_commands(now);
 
-  if (this->is_dimming_ && this->dim_duration_ > 0) {
+  if (this->is_dimming_ && !this->pending_dimming_start_ && this->dim_duration_ > 0) {
     this->recompute_brightness();
 
     bool at_target;
@@ -147,12 +150,26 @@ void EleroLight::handle_commands(uint32_t now) {
 }
 
 void EleroLight::handle_delivery_outcome_(const DeliveryOutcome &outcome) {
+  if (should_start_timed_action(this->pending_dimming_start_, this->pending_dimming_kind_, outcome)) {
+    this->pending_dimming_start_ = false;
+    this->dimming_start_ = millis();
+    this->last_recompute_time_ = this->dimming_start_;
+  }
+
   if (outcome.event == DeliveryEvent::DROPPED) {
     ESP_LOGE(TAG, "Delivery retries exhausted for light 0x%06x", this->command_.blind_addr);
     this->parent_->increment_tx_drop_count();
+    if (this->pending_dimming_start_ && outcome.intent.kind == this->pending_dimming_kind_) {
+      this->pending_dimming_start_ = false;
+      this->is_dimming_ = false;
+    }
   } else if (outcome.event == DeliveryEvent::STALE_CLEARED) {
     ESP_LOGW(TAG, "Stale Command queue cleared for light 0x%06x", this->command_.blind_addr);
     this->parent_->increment_tx_drop_count();
+    if (this->pending_dimming_start_) {
+      this->pending_dimming_start_ = false;
+      this->is_dimming_ = false;
+    }
   }
 #ifdef USE_TEXT_SENSOR
   if (this->queue_full_published_ && outcome.queue_size == 0)

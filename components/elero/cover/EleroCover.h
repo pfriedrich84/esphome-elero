@@ -4,6 +4,7 @@
 #include "esphome/core/automation.h"
 #include "esphome/components/cover/cover.h"
 #include "../elero.h"
+#include <atomic>
 
 namespace esphome {
 namespace elero {
@@ -83,6 +84,8 @@ class EleroCover : public cover::Cover, public Component, public EleroBlindBase 
  protected:
   void control(const cover::CoverCall &call) override;
   void handle_delivery_outcome_(const DeliveryOutcome &outcome);
+  void begin_movement_tracking_(cover::CoverOperation operation, uint32_t now);
+  void finish_stop_verification_();
 
   t_elero_command command_ = {
     .counter = 1,
@@ -110,6 +113,7 @@ class EleroCover : public cover::Cover, public Component, public EleroBlindBase 
   uint8_t command_stop_{0x10};
   uint8_t command_tilt_{0x24};
   CommandIntentDelivery delivery_;
+  CommandIntentDelivery deferred_delivery_;
   cover::CoverOperation last_operation_{cover::COVER_OPERATION_OPENING};
   uint32_t stop_verify_at_{0};          // millis() when to poll for stop confirmation (0 = inactive)
   uint8_t  stop_verify_retries_{ELERO_STOP_VERIFY_MAX_RETRIES};  // verification counter (MAX = inactive)
@@ -119,6 +123,9 @@ class EleroCover : public cover::Cover, public Component, public EleroBlindBase 
   uint32_t stop_trigger_ms_{0};         // millis() when auto-stop was triggered
   bool     stop_urgent_active_{false};  // true if this cover has incremented stop_urgent_count_
   bool     pending_stop_transition_{false};  // wait for first hub-accepted STOP packet
+  bool     pending_movement_start_{false};   // optimistic state, awaiting first accepted movement packet
+  CommandIntentKind pending_movement_kind_{CommandIntentKind::OPEN};
+  std::atomic<bool> stop_verification_active_{false};
 };
 
 } // namespace elero

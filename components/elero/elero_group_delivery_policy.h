@@ -31,8 +31,10 @@ inline Route initial_route(const std::vector<CommandDeliveryConfig> &configs,
   return native_profiles_compatible(configs) ? Route::NATIVE : Route::MEMBERS;
 }
 
-inline Route after_native_submit(IntentSubmitResult result) {
-  return result == IntentSubmitResult::REJECTED ? Route::MEMBERS : Route::NONE;
+inline bool reject_native_submit_without_fanout(IntentSubmitResult result) {
+  // A rejection means the bounded native lane already contains older work.
+  // Fanning only the newest intent out to members would overtake that backlog.
+  return result == IntentSubmitResult::REJECTED;
 }
 
 inline Route after_native_outcome(const DeliveryOutcome &outcome) {

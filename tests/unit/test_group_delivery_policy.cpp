@@ -44,8 +44,8 @@ TEST(GroupDeliveryPolicy, PartialNativeFailureNeverFansOut) {
   EXPECT_EQ(after_native_outcome(outcome), Route::NONE);
 }
 
-TEST(GroupDeliveryPolicy, LocalNativeQueueRejectionFallsBackToMembers) {
-  EXPECT_EQ(after_native_submit(IntentSubmitResult::REJECTED), Route::MEMBERS);
-  EXPECT_EQ(after_native_submit(IntentSubmitResult::ACCEPTED), Route::NONE);
-  EXPECT_EQ(after_native_submit(IntentSubmitResult::COALESCED), Route::NONE);
+TEST(GroupDeliveryPolicy, LocalNativeQueueRejectionPreservesNativeLaneOrder) {
+  EXPECT_TRUE(reject_native_submit_without_fanout(IntentSubmitResult::REJECTED));
+  EXPECT_FALSE(reject_native_submit_without_fanout(IntentSubmitResult::ACCEPTED));
+  EXPECT_FALSE(reject_native_submit_without_fanout(IntentSubmitResult::COALESCED));
 }
