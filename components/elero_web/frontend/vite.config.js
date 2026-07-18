@@ -9,6 +9,5 @@ export default defineConfig({
     outDir: 'dist',
     assetsInlineLimit: Infinity,
     cssCodeSplit: false,
-    minify: 'esbuild',
   },
 })

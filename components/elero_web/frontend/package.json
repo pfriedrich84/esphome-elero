@@ -9,12 +9,12 @@
     "build": "vite build && node scripts/generate_header.mjs"
   },
   "devDependencies": {
-    "@sveltejs/vite-plugin-svelte": "^5.0.0",
-    "@tailwindcss/vite": "^4.0.0",
+    "@sveltejs/vite-plugin-svelte": "^7.2.0",
+    "@tailwindcss/vite": "^4.3.1",
     "svelte": "^5.56.0",
-    "tailwindcss": "^4.0.0",
+    "tailwindcss": "^4.3.1",
     "vite": "^8.1.0",
-    "vite-plugin-singlefile": "^2.0.0"
+    "vite-plugin-singlefile": "^2.3.3"
   },
   "dependencies": {
     "flowbite": "^3.0.0",
