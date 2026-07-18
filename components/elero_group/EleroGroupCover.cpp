@@ -91,8 +91,9 @@ void EleroGroupCover::control(const cover::CoverCall &call) {
                                                               : CommandIntentKind::CLOSE;
         intents.push_back({kind, 0});
       }
-      if (intent_was_accepted(this->submit_member_targets_(intents)))
-        this->current_operation = cover::COVER_OPERATION_OPENING;
+      if (intent_was_accepted(this->submit_member_targets_(intents, pos)))
+        this->current_operation = pos > this->position ? cover::COVER_OPERATION_OPENING
+                                                       : cover::COVER_OPERATION_CLOSING;
     }
     this->publish_state();
   }
@@ -114,6 +115,10 @@ IntentSubmitResult EleroGroupCover::submit_group_intent_(const CommandIntent &in
   if (!this->native_group_)
     return this->submit_to_members_(intent);
   const auto result = this->native_delivery_.submit(intent, millis());
+  if (intent_was_accepted(result)) {
+    std::vector<CommandIntent> intents(this->members_.size(), intent);
+    this->prepare_member_states_(intents);
+  }
   if (group_delivery_policy::reject_native_submit_without_fanout(result)) {
     // Keep all compatible group work in the native lane. Sending only this
     // newest command through members would overtake its older native backlog.
@@ -129,7 +134,8 @@ IntentSubmitResult EleroGroupCover::submit_to_members_(const CommandIntent &inte
   return this->submit_member_targets_(intents);
 }
 
-IntentSubmitResult EleroGroupCover::submit_member_targets_(const std::vector<CommandIntent> &intents) {
+IntentSubmitResult EleroGroupCover::submit_member_targets_(const std::vector<CommandIntent> &intents,
+                                                            float target_position) {
   if (intents.size() != this->members_.size() || intents.empty())
     return IntentSubmitResult::REJECTED;
   std::vector<CommandIntentDelivery::AtomicIntentTarget> targets;
@@ -138,6 +144,8 @@ IntentSubmitResult EleroGroupCover::submit_member_targets_(const std::vector<Com
     targets.push_back({this->members_[i]->get_command_delivery(), intents[i],
                        this->members_[i]->should_defer_intent(intents[i])});
   const auto result = CommandIntentDelivery::submit_atomic(targets.data(), targets.size(), millis());
+  if (intent_was_accepted(result))
+    this->prepare_member_states_(intents, target_position);
   if (result == IntentSubmitResult::REJECTED) {
     ESP_LOGW(TAG, "Atomic member command rejected; no member queue was changed");
     if (this->parent_ != nullptr)
@@ -146,7 +154,15 @@ IntentSubmitResult EleroGroupCover::submit_member_targets_(const std::vector<Com
   return result;
 }
 
+void EleroGroupCover::prepare_member_states_(const std::vector<CommandIntent> &intents,
+                                             float target_position) {
+  for (size_t i = 0; i < this->members_.size(); i++)
+    this->members_[i]->prepare_group_intent(intents[i], target_position);
+}
+
 void EleroGroupCover::handle_native_outcome_(const DeliveryOutcome &outcome) {
+  for (auto *member : this->members_)
+    member->handle_group_delivery_outcome(outcome);
   if (outcome.event == DeliveryEvent::DROPPED ||
       outcome.event == DeliveryEvent::FALLBACK_MEMBER_DROPPED) {
     this->parent_->increment_tx_drop_count();

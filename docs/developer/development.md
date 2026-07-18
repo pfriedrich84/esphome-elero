@@ -694,7 +694,7 @@ Optional parameters:
 - `assumed_state` (default `true`) — when true, open/close buttons are always enabled in HA (no position feedback from group)
 - `hide_members` (default `false`) — marks every listed member internal, hiding its individual Home Assistant entity globally, including membership in other groups
 
-Requires 2–10 distinct members. Compatible RF profiles and command mappings use a dedicated native multi-destination lane on the shared profile coordinator. Incompatible groups atomically admit semantic intents to every member lane or to none. Native final failure falls back only before any repeat was accepted; partial native delivery never automatically fans out.
+Requires 2–10 distinct members. Compatible RF profiles and command mappings use a dedicated native multi-destination lane on the shared profile coordinator. Incompatible groups atomically admit semantic intents to every member lane or to none. Native final failure falls back only before any repeat was accepted; partial native delivery never automatically fans out. Accepted group intents are mirrored into every member's ESPHome cover state so Home Assistant receives the same optimistic operation and dead-reckoned position updates as it does for individual control.
 
 ### Web UI (`elero_web`)
 

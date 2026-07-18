@@ -340,6 +340,7 @@ elero_group:
 - Es müssen mindestens 2 und maximal 10 unterschiedliche Mitglieder angegeben werden (RF-Paketgrößenlimit); doppelte IDs werden bei der YAML-Validierung abgelehnt.
 - Ein natives Multi-Destination-RF-Paket wird nur verwendet, wenn Remote-Adresse, Kanal, Paketprofil, Payload und semantische Befehlszuordnung aller Mitglieder kompatibel sind. Andernfalls wird derselbe semantische Command Intent atomar in alle Mitglieder-Queues aufgenommen; ist eine Queue voll, wird keine davon verändert.
 - Bei einem endgültigen nativen Sendefehler wird nur dann auf Mitglieder zurückgefallen, wenn noch kein natives RF-Paket akzeptiert wurde. Nach teilweiser nativer Übertragung erfolgt kein automatisches Fan-out, um Doppelbefehle zu vermeiden.
+- Angenommene Gruppenbefehle aktualisieren auch den Zustand der einzelnen Cover-Entities in Home Assistant (z. B. `opening`, `closing` oder `idle`); konfigurierte Laufzeiten führen deren Positionsschätzung weiter.
 - Alle Mitglieder müssen als `cover: platform: elero` konfiguriert sein.
 
 **Fehlersuche:** Wenn ESPHome beim Kompilieren meldet, dass ein Mitglied nicht aufgelöst werden kann, prüfe ob das betreffende Cover eine `id:` hat und ob die Schreibweise in `members` exakt übereinstimmt.

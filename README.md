@@ -470,6 +470,7 @@ elero_group:
 - Eine Gruppe benötigt 2–10 unterschiedliche Mitglieder; doppelte IDs werden bei der YAML-Validierung abgelehnt.
 - Nur vollständig kompatible RF- und Befehlsprofile verwenden ein natives Multi-Destination-RF-Paket. Inkompatible Gruppen nehmen semantische Command Intents atomar in alle Mitglieds-Queues oder in keine auf.
 - Ein nativer endgültiger Fehler fällt nur ohne bereits akzeptierte Wiederholung auf Mitglieder zurück; nach teilweiser nativer Übertragung wird nicht automatisch gefächert.
+- Angenommene Gruppenbefehle aktualisieren auch die Zustände und Positionsschätzungen der einzelnen Cover-Entities in Home Assistant.
 - Wenn ESPHome beim Kompilieren meldet, dass ein Mitglied nicht aufgelöst werden kann, prüfe `id:` und Schreibweise in `members`.
 - Vollständige Parameterliste: [Konfigurationsreferenz](docs/user/configuration.md#plattform-elero_group-gruppensteuerung)
 
