@@ -1,12 +1,17 @@
 """Schema and codegen coverage for elero_group hide_members."""
 
 import asyncio
+import importlib
+import sys
 from unittest.mock import AsyncMock, Mock, call, patch
 
 import pytest
 import esphome.config_validation as cv
 
-from components import elero_group
+from components import elero
+
+sys.modules.setdefault("esphome.components.elero", elero)
+elero_group = importlib.import_module("components.elero_group")
 
 
 def test_group_member_bounds():
