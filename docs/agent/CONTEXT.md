@@ -41,8 +41,12 @@ The per-Blind retry path that holds command intents until the Elero hub can tran
 _Avoid_: TX queue when referring to per-Blind retries
 
 **Command intent delivery**:
-The per-device module that owns semantic queueing, coalescing, repeats, retries, stale aging, RF packet construction, and the rolling command counter.
+The per-device module that owns bounded semantic queueing and coalescing for one Blind or compatible Group cover delivery lane.
 _Avoid_: dispatcher, raw command queue
+
+**Delivery profile coordinator**:
+The module that serializes Command intents and owns retries, stale aging, RF packet construction, and rolling counters for delivery lanes sharing one RF remote profile.
+_Avoid_: global queue, hub scheduler
 
 **Command profile**:
 The RF identity and command-shaping data needed to turn a Blind command intent into an RF packet.
@@ -62,7 +66,9 @@ _Avoid_: status when referring to CC1101 MARCSTATE
 - A **Group cover** can use a native group RF packet only when member **Command profiles** are compatible.
 - A **Command queue** belongs to one **Command intent delivery** instance.
 - Configured Blinds, lights, runtime adopted Blinds, and compatible Group covers each own a **Command intent delivery** instance.
-- Incompatible Group covers fan out one semantic **Command intent** through member delivery instances.
+- A **Delivery profile coordinator** orders all **Command intent delivery** instances sharing one RF remote profile.
+- A **Delivery profile coordinator** is the sole rolling-counter and RF submission owner for its RF remote profile.
+- Incompatible Group covers atomically fan out one semantic **Command intent** through member delivery instances.
 - A **Command profile** belongs to one **Blind**.
 - The **Elero hub** interprets **Radio state** before deciding whether to drain RX, advance TX, or recover the **CC1101 radio**.
 - A **Runtime adopted blind** starts from RF discovery data and shares command, polling, and movement concepts with a configured **Blind**.

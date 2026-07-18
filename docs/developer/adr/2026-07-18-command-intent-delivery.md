@@ -10,11 +10,11 @@ Configured Blinds, lights, runtime adopted Blinds, Group covers, buttons, pollin
 
 ## Decision
 
-Use one internally thread-safe `CommandIntentDelivery` instance per configured device and runtime adopted Blind. The queue contains semantic intents and the module owns coalescing, repeat progress, failure budget/backoff, stale aging, packet construction, and the rolling counter. Callers provide monotonic time and a short, non-reentrant RF submission callback returning `OK`, `QUEUE_FULL`, or `FAILED`.
+Use one internally thread-safe `CommandIntentDelivery` lane per configured device and runtime adopted Blind. The lane owns its bounded semantic queue and coalescing. All lanes with the same remote RF profile register with one `ProfileDeliveryCoordinator`, which exclusively owns cross-device ordering, repeat progress, failure budget/backoff, stale aging, packet construction, and the rolling counter. The hub advances coordinators with monotonic time and a short RF submission callback returning `OK`, `QUEUE_FULL`, or `FAILED`.
 
 `STOP` is urgent and replaces pending work. If it interrupts a partially accepted intent, that intent's counter is retired first. `QUEUE_FULL` preserves state and consumes no failure budget. Final failure and stale clearing retire a counter only after partial acceptance.
 
-A compatible Group cover owns a dedicated multi-destination delivery instance. Compatibility includes the shared RF profile and semantic cover command mapping. An incompatible group fans the semantic intent into member delivery instances. A native final failure fans out only if zero repeats were accepted; partial native delivery never automatically fans out.
+A compatible Group cover owns a dedicated multi-destination lane on the same profile coordinator as its members. Compatibility includes the shared RF profile and semantic cover command mapping. An incompatible group admits the semantic intent atomically into all member lanes or changes none. A native final failure falls back through the coordinator only if zero repeats were accepted; partial native delivery never automatically fans out.
 
 The web API, refresh/custom buttons, configured entities, and runtime entities submit semantic intents. Raw-byte delivery interfaces and their shallow policy modules are removed.
 
@@ -22,7 +22,7 @@ The web API, refresh/custom buttons, configured entities, and runtime entities s
 
 ## Consequences
 
-- One dependency-light module defines RF-safe delivery semantics and is unit-testable without ESPHome hardware.
+- Dependency-light lane and profile-coordinator modules define RF-safe delivery semantics and are unit-testable without ESPHome hardware.
 - Submission is safe from both ESPHome loop and AsyncWebServer contexts.
 - The Elero hub still owns shared FreeRTOS TX queues and all post-setup CC1101 SPI work remains on the radio task/Core 0.
 - Native group fallback may deliberately report/drop a partially delivered command rather than risk duplicate member commands.

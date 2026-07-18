@@ -189,7 +189,7 @@ Core 0: Radio Task (FreeRTOS, priority 19, 8KB stack)
 Core 1: ESPHome Main Loop (Elero::loop())
   ├─ Drain rx_queue_ via dispatch_rx_result_()  — route to covers/lights/sensors
   ├─ send_command()         — queue producer (enqueues RadioMessage to tx_queue_)
-  ├─ drain_runtime_queues() — runtime blind command scheduling
+  ├─ advance_delivery_coordinators_() — profile-scoped ordering/counters for all command lanes
   ├─ poll_runtime_blinds_() — periodic status checks
   └─ recompute_runtime_positions_()  — dead-reckoning position updates
 ```
@@ -694,7 +694,7 @@ Optional parameters:
 - `assumed_state` (default `true`) — when true, open/close buttons are always enabled in HA (no position feedback from group)
 - `hide_members` (default `false`) — marks every listed member internal, hiding its individual Home Assistant entity globally, including membership in other groups
 
-Requires 2–10 members. Compatible RF profiles and command mappings use a dedicated native multi-destination delivery instance. Incompatible groups submit semantic intents to each member. Native final failure fans out only before any repeat was accepted; partial native delivery never automatically fans out.
+Requires 2–10 distinct members. Compatible RF profiles and command mappings use a dedicated native multi-destination lane on the shared profile coordinator. Incompatible groups atomically admit semantic intents to every member lane or to none. Native final failure falls back only before any repeat was accepted; partial native delivery never automatically fans out.
 
 ### Web UI (`elero_web`)
 

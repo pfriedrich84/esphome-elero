@@ -6,12 +6,12 @@ This document tracks the intended deep Modules and seams for the ESPHome Elero i
 
 ### Command intent delivery
 
-- **Files**: `components/elero/elero_command_delivery.h`, configured cover/light implementations, runtime management, Group cover, and `tests/unit/test_command_delivery.cpp`
-- **Interface**: `submit(CommandIntent)` and `advance(now, delay, repeats, submitter)`
-- **Implementation owns**: the bounded semantic queue, safe coalescing, repeat progress, retry/backoff state, stale aging, RF packet construction, urgent STOP preemption, and rolling command counter.
-- **Callers own**: RF submission callbacks, logging, diagnostics, entity state, and Group cover zero-repeat fallback.
-- **Concurrency**: each instance is internally mutex-protected. Submitters can run in the ESPHome loop or AsyncWebServer context. The callback is invoked while delivery state is locked and must be short and non-reentrant.
-- **Depth**: high — every configured Blind/light and runtime adopted Blind uses the same delivery rules. Compatible Group covers use a dedicated multi-destination instance; incompatible groups submit semantic intents to members.
+- **Files**: `components/elero/elero_command_delivery.h`, `components/elero/elero_profile_delivery_coordinator.h`, configured cover/light implementations, runtime management, Group cover, and `tests/unit/test_command_delivery.cpp`
+- **Interfaces**: device lanes expose `submit(CommandIntent)`; the hub registers each lane and advances one `ProfileDeliveryCoordinator` per shared remote RF profile.
+- **Implementation owns**: lanes own bounded semantic queues and safe coalescing; the profile coordinator exclusively owns cross-device ordering, repeat/retry state, stale aging, RF packet construction, urgent STOP preemption, and the rolling command counter.
+- **Callers own**: outcome callbacks, logging, diagnostics, entity state, and registration lifetime. Compatible Group fallback is configured on its native lane.
+- **Concurrency**: submission and atomic multi-member admission are mutex-protected. Submitters can run in the ESPHome loop or AsyncWebServer context. Outcome callbacks run after the coordinator lock is released.
+- **Depth**: high — every configured Blind/light, runtime adopted Blind, and compatible native Group lane joins the coordinator for its RF profile. Incompatible Group commands use all-or-none atomic admission into member lanes.
 
 ### Packet parser
 
@@ -34,7 +34,7 @@ This document tracks the intended deep Modules and seams for the ESPHome Elero i
 ### Runtime adopted Blind behaviour
 
 - **Files**: `components/elero/elero_runtime.cpp`, `components/elero/elero_runtime_blind_logic.h`, `tests/unit/test_runtime_blind_logic.cpp`
-- Runtime adopted Blinds own delivery instances created from discovery profiles. Runtime storage remains protected by the hub state mutex; the shared delivery module owns command delivery state.
+- Runtime adopted Blinds own delivery lanes created from discovery profiles and registered with the matching profile coordinator. Runtime storage remains protected by the hub state mutex; the shared delivery modules own command delivery state.
 
 ### Discovery and packet dump management
 
