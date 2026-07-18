@@ -278,7 +278,7 @@ Cover/light access (for web server):
 Discovery and runtime:
 - `get_discovered_blinds()` / `get_discovered_count()` / `clear_discovered()` — manage discovered blinds
 - `adopt_blind(DiscoveredBlind&, name, DeviceType)` — adopt discovered blind/light for runtime control
-- `remove_runtime_blind(addr)` / `send_runtime_command(addr, cmd)` — manage runtime-adopted blinds
+- `remove_runtime_blind(addr)` / `send_runtime_command(addr, CommandIntent)` — manage runtime-adopted Blinds through semantic delivery
 - `update_runtime_blind_settings(addr, open, close, poll)` — update timing at runtime
 - `get_runtime_blinds()` / `is_blind_adopted(addr)` — query runtime blinds
 
@@ -684,6 +684,7 @@ button:
 elero_group:
   - name: "All Blinds"
     assumed_state: true    # Optional: true = buttons always enabled (default true)
+    hide_members: false    # Optional: mark member entities internal (default false)
     members:
       - cover_bedroom
       - cover_living_room
@@ -691,8 +692,9 @@ elero_group:
 
 Optional parameters:
 - `assumed_state` (default `true`) — when true, open/close buttons are always enabled in HA (no position feedback from group)
+- `hide_members` (default `false`) — marks every listed member internal, hiding its individual Home Assistant entity globally, including membership in other groups
 
-Requires at least 2 and at most 10 member covers. When all members share the same `remote_address` and `channel`, a single native multi-destination RF packet is sent (more efficient). Otherwise, falls back to sequential individual commands.
+Requires 2–10 members. Compatible RF profiles and command mappings use a dedicated native multi-destination delivery instance. Incompatible groups submit semantic intents to each member. Native final failure fans out only before any repeat was accepted; partial native delivery never automatically fans out.
 
 ### Web UI (`elero_web`)
 

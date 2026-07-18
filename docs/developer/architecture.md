@@ -1,70 +1,49 @@
 # Elero Architecture Notes
 
-This document tracks the intended deep Modules and seams for the ESPHome Elero integration. Domain vocabulary lives in [`../agent/CONTEXT.md`](../agent/CONTEXT.md).
+This document tracks the intended deep Modules and seams for the ESPHome Elero integration. Domain vocabulary lives in [`../agent/CONTEXT.md`](../agent/CONTEXT.md). The delivery decision is recorded in [ADR 2026-07-18](adr/2026-07-18-command-intent-delivery.md).
 
-## Current deepening sequence
+## Deep Modules
 
-1. **Packet parser** — raw CC1101 FIFO bytes become Elero RF packet fields without hub side effects.
-2. **Group command policy** — Group cover command intent handling has explicit fallback semantics.
-3. **Command profile** — Group cover reads one Blind command profile instead of many unrelated RF getters.
-4. **CC1101 radio orchestration** — in progress: pure state predicates now cover RX drain limits, FIFO completeness, TX progress states, and watchdog state classification.
-5. **Runtime adopted blind behaviour** — in progress: pure polling, counter, direction, and position rules are extracted.
-6. **Elero hub split** — in progress: runtime adopted blind management and discovery/packet-dump management moved out of protocol dispatch into their own translation units.
+### Command intent delivery
 
-## Module status
+- **Files**: `components/elero/elero_command_delivery.h`, configured cover/light implementations, runtime management, Group cover, and `tests/unit/test_command_delivery.cpp`
+- **Interface**: `submit(CommandIntent)` and `advance(now, delay, repeats, submitter)`
+- **Implementation owns**: the bounded semantic queue, safe coalescing, repeat progress, retry/backoff state, stale aging, RF packet construction, urgent STOP preemption, and rolling command counter.
+- **Callers own**: RF submission callbacks, logging, diagnostics, entity state, and Group cover zero-repeat fallback.
+- **Concurrency**: each instance is internally mutex-protected. Submitters can run in the ESPHome loop or AsyncWebServer context. The callback is invoked while delivery state is locked and must be short and non-reentrant.
+- **Depth**: high — every configured Blind/light and runtime adopted Blind uses the same delivery rules. Compatible Group covers use a dedicated multi-destination instance; incompatible groups submit semantic intents to members.
 
 ### Packet parser
 
 - **Files**: `components/elero/elero_packet_parser.h`, `components/elero/elero_protocol.cpp`, `tests/unit/test_packet_parser.cpp`
 - **Interface**: `packet_parser::parse_fifo_packet(raw_fifo)`
-- **Implementation owns**: length checks, destination parsing, CRC/LQI/RSSI extraction, payload decode, status/command classification.
-- **Callers own**: logging, packet dump updates, counters, deduplication, scan state, RX queue dispatch.
-- **Depth**: high — the Elero hub gets a parsed RF packet or a stable reject reason from one call.
+- **Implementation owns**: packet length and destination bounds, CRC/LQI/RSSI extraction, payload decode, and status/command classification.
+- **Callers own**: logging, packet dumps, counters, deduplication, scan state, and entity dispatch.
 
-### Group command policy
+### Command profile and native groups
 
-- **Files**: `components/elero/elero_group_command_logic.h`, `components/elero_group/EleroGroupCover.cpp`, `tests/unit/test_group_command_logic.cpp`
-- **Interface**: small pure predicates for accepted/fallback behaviour and counter wrapping.
-- **Implementation owns**: deciding when hub submission consumes the group counter and when member queues should become the retry path.
-- **Depth**: medium — the policy is small, but it gives tests leverage over previously implicit failure behaviour.
-
-### Command profile
-
-- **Files**: `components/elero/elero_command_profile.h`, `components/elero/elero.h`, `components/elero_group/EleroGroupCover.cpp`
-- **Interface**: `BlindCommandProfile` plus `command_profile::can_share_native_group()`.
-- **Implementation owns**: the compatibility rule for native multi-destination RF packets.
-- **Depth**: medium — Group cover no longer needs to know each individual RF getter for native group eligibility/building.
+- **Files**: `components/elero/elero_command_profile.h`, `components/elero_group/EleroGroupCover.cpp`
+- **Interface**: `BlindCommandProfile`, `CommandDeliveryConfig`, and `command_profile::can_share_native_group()`.
+- **Rule**: native multi-destination delivery requires compatible RF profiles and semantic command mappings. Final native failure falls back only after zero accepted repeats; partial delivery never fans out automatically.
 
 ### Radio state logic
 
 - **Files**: `components/elero/elero_radio_state_logic.h`, `components/elero/elero_cc1101.cpp`, `tests/unit/test_radio_state_logic.cpp`
-- **Interface**: pure predicates for CC1101 MARCSTATE classification, RX drain priority, FIFO bounds, and complete-packet checks.
-- **Implementation owns**: deciding whether a CC1101 state is TX-progress, watchdog-healthy, watchdog-transient, or idle-restartable.
-- **Depth**: medium — hardware I/O stays in the Elero hub, while state interpretation becomes testable without a CC1101 radio.
+- Pure predicates classify RX/TX/watchdog states. Hardware I/O remains in the Elero hub, and all post-setup CC1101 SPI access stays on the radio task/Core 0.
 
-### Runtime blind logic
+### Runtime adopted Blind behaviour
 
-- **Files**: `components/elero/elero_runtime_blind_logic.h`, `components/elero/elero_runtime.cpp`, `tests/unit/test_runtime_blind_logic.cpp`
-- **Interface**: pure predicates and calculations for runtime polling, command counter wrapping, direction from Elero state, and dead-reckoned position updates.
-- **Implementation owns**: behaviour rules for runtime adopted blind timing and movement.
-- **Depth**: medium — the Elero hub still owns storage and locking, but runtime blind behaviour is no longer embedded directly in protocol dispatch.
-
-### Runtime blind management
-
-- **Files**: `components/elero/elero_runtime.cpp`, `components/elero/elero_protocol.cpp`
-- **Interface**: existing Elero hub methods for adopt/remove/update/send runtime blinds.
-- **Implementation owns**: runtime adopted blind storage loops, queue draining, polling, and position recompute orchestration.
-- **Depth**: low-to-medium — the public hub Interface is unchanged, but locality improves because RF packet dispatch and runtime adopted blind management no longer share one file.
+- **Files**: `components/elero/elero_runtime.cpp`, `components/elero/elero_runtime_blind_logic.h`, `tests/unit/test_runtime_blind_logic.cpp`
+- Runtime adopted Blinds own delivery instances created from discovery profiles. Runtime storage remains protected by the hub state mutex; the shared delivery module owns command delivery state.
 
 ### Discovery and packet dump management
 
 - **Files**: `components/elero/elero_discovery.cpp`, `components/elero/elero_protocol.cpp`, `components/elero/elero_cc1101.cpp`
-- **Interface**: existing Elero hub methods for scan/discovery snapshots and packet dump capture.
-- **Implementation owns**: discovered blind tracking, packet dump lifecycle, and raw packet ring-buffer updates.
-- **Depth**: low-to-medium — the public hub Interface is unchanged, but protocol dispatch now focuses on packet-to-entity routing.
+- Discovery snapshots and packet dump capture are separate from packet parsing and command delivery.
 
 ## Review notes
 
-- Keep ESPHome/FreeRTOS dependencies out of pure logic Modules whenever possible so unit tests stay cheap.
-- A new seam is only worth keeping when it has at least test leverage or multiple real callers.
-- Prefer adding stable domain terms to `../agent/CONTEXT.md` as soon as a refactor names them.
+- Keep ESPHome/FreeRTOS dependencies out of pure logic Modules whenever possible.
+- Never reintroduce raw-byte delivery callers; custom bytes must be explicit `CUSTOM` semantic intents.
+- Preserve queue bounds, partial-counter retirement, STOP urgency, native Group cover compatibility, and no-fan-out-after-partial-delivery.
+- Keep the RF submission callback short and non-reentrant.

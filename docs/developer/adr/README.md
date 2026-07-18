@@ -10,6 +10,10 @@ Suggested filename format:
 YYYY-MM-DD-short-title.md
 ```
 
+## Records
+
+- [2026-07-18 — Command intent delivery](2026-07-18-command-intent-delivery.md)
+
 Suggested ADR sections:
 
 - Status
