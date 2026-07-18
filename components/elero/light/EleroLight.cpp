@@ -31,11 +31,12 @@ void EleroLight::setup() {
     this->mark_failed();
     return;
   }
+  this->delivery_.configure(this->get_command_delivery_config());
   this->parent_->register_light(this);
   // Queue an initial status CHECK so the text sensor populates shortly after
   // boot instead of waiting for the first external event.
   if (this->command_check_ != 0x00) {
-    this->enqueue_command(this->command_check_);
+    this->submit_intent({CommandIntentKind::CHECK, 0});
   }
 }
 
@@ -55,35 +56,9 @@ void EleroLight::write_state(LightState *state) {
 
   bool new_on = state->current_values.is_on();
   float new_brightness = state->current_values.get_brightness();
-  auto planned_action = light_logic::determine_action(new_on, new_brightness,
-                                                      this->brightness_, this->dim_duration_);
-  if (light_logic::should_reject_action_before_state_update(
-          planned_action.action, static_cast<uint8_t>(this->commands_to_send_.size()),
-          ELERO_MAX_COMMAND_QUEUE)) {
-    ESP_LOGW(TAG, "Command queue lacks capacity for light 0x%06x state action",
-             this->command_.blind_addr);
-#ifdef USE_TEXT_SENSOR
-    if (!this->queue_full_published_) {
-      this->parent_->publish_text_sensor_state(this->command_.blind_addr, "queue_full");
-      this->queue_full_published_ = true;
-    }
-#endif
-    return;
-  }
-
   if (!new_on) {
-    if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE) {
-      this->commands_to_send_.push(this->command_off_);
-    } else {
-      ESP_LOGW(TAG, "Command queue full for light 0x%06x, dropping OFF command",
-               this->command_.blind_addr);
-#ifdef USE_TEXT_SENSOR
-      if (!this->queue_full_published_) {
-        this->parent_->publish_text_sensor_state(this->command_.blind_addr, "queue_full");
-        this->queue_full_published_ = true;
-      }
-#endif
-    }
+    if (!intent_was_accepted(this->submit_intent({CommandIntentKind::OFF, 0})))
+      return;
     this->is_on_ = false;
     this->is_dimming_ = false;
     this->brightness_ = 0.0f;
@@ -95,18 +70,8 @@ void EleroLight::write_state(LightState *state) {
 
   if (this->dim_duration_ == 0) {
     // No brightness support: just toggle on
-    if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE) {
-      this->commands_to_send_.push(this->command_on_);
-    } else {
-      ESP_LOGW(TAG, "Command queue full for light 0x%06x, dropping ON command",
-               this->command_.blind_addr);
-#ifdef USE_TEXT_SENSOR
-      if (!this->queue_full_published_) {
-        this->parent_->publish_text_sensor_state(this->command_.blind_addr, "queue_full");
-        this->queue_full_published_ = true;
-      }
-#endif
-    }
+    if (!intent_was_accepted(this->submit_intent({CommandIntentKind::ON, 0})))
+      return;
     this->brightness_ = 1.0f;
     return;
   }
@@ -117,16 +82,16 @@ void EleroLight::write_state(LightState *state) {
 
   if (new_brightness >= 1.0f) {
     // Full brightness shortcut
-    if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE)
-      this->commands_to_send_.push(this->command_on_);
+    if (!intent_was_accepted(this->submit_intent({CommandIntentKind::ON, 0})))
+      return;
     this->brightness_ = 1.0f;
     return;
   }
 
   if (this->brightness_ < 0.01f) {
     // Currently off; turn on to full first, then dim down
-    if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE)
-      this->commands_to_send_.push(this->command_on_);
+    if (!intent_was_accepted(this->submit_intent({CommandIntentKind::ON, 0})))
+      return;
     this->brightness_ = 1.0f;
     // Now fall through and initiate dim-down
   }
@@ -134,8 +99,8 @@ void EleroLight::write_state(LightState *state) {
   if (new_brightness > this->brightness_ + 0.01f) {
     ESP_LOGD(TAG, "Dimming up 0x%06x from %.2f to %.2f",
              this->command_.blind_addr, this->brightness_, new_brightness);
-    if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE)
-      this->commands_to_send_.push(this->command_dim_up_);
+    if (!intent_was_accepted(this->submit_intent({CommandIntentKind::DIM_UP, 0})))
+      return;
     this->is_dimming_ = true;
     this->dim_up_ = true;
     this->dimming_start_ = millis();
@@ -143,8 +108,8 @@ void EleroLight::write_state(LightState *state) {
   } else if (new_brightness < this->brightness_ - 0.01f) {
     ESP_LOGD(TAG, "Dimming down 0x%06x from %.2f to %.2f",
              this->command_.blind_addr, this->brightness_, new_brightness);
-    if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE)
-      this->commands_to_send_.push(this->command_dim_down_);
+    if (!intent_was_accepted(this->submit_intent({CommandIntentKind::DIM_DOWN, 0})))
+      return;
     this->is_dimming_ = true;
     this->dim_up_ = false;
     this->dimming_start_ = millis();
@@ -169,8 +134,7 @@ void EleroLight::loop() {
     }
 
     if (at_target) {
-      if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE)
-        this->commands_to_send_.push(this->command_stop_);
+      this->submit_intent({CommandIntentKind::STOP, 0});
       this->brightness_ = this->target_brightness_;
       this->is_dimming_ = false;
     }
@@ -184,27 +148,73 @@ void EleroLight::loop() {
   }
 }
 
-static void light_increase_counter(void *ctx) {
-  static_cast<EleroLight *>(ctx)->increase_counter();
+void EleroLight::handle_commands(uint32_t now) {
+  if (this->parent_->is_failed())
+    return;
+  auto outcome = this->delivery_.advance(
+      now, this->parent_->get_send_delay(), this->parent_->get_send_repeats(),
+      [this](const t_elero_command &packet, bool priority) {
+        t_elero_command copy = packet;
+        if (!priority)
+          return this->parent_->send_command(&copy);
+        if (this->parent_->send_command_priority(&copy))
+          return SendResult::OK;
+        return this->parent_->is_failed() ? SendResult::FAILED : SendResult::QUEUE_FULL;
+      });
+  this->handle_delivery_outcome_(outcome);
 }
 
-void EleroLight::handle_commands(uint32_t now) {
-  dispatch_commands(this->parent_, this->commands_to_send_, this->command_,
-                    this->send_packets_, this->send_retries_, this->last_command_,
-                    this->queue_full_published_, now, TAG, this->command_.blind_addr,
-                    &light_increase_counter, this, false,
-                    &this->last_queue_drain_ms_);
+void EleroLight::handle_delivery_outcome_(const DeliveryOutcome &outcome) {
+  if (outcome.event == DeliveryEvent::DROPPED) {
+    ESP_LOGE(TAG, "Delivery retries exhausted for light 0x%06x", this->command_.blind_addr);
+    this->parent_->increment_tx_drop_count();
+  } else if (outcome.event == DeliveryEvent::STALE_CLEARED) {
+    ESP_LOGW(TAG, "Stale Command queue cleared for light 0x%06x", this->command_.blind_addr);
+  }
+#ifdef USE_TEXT_SENSOR
+  if (this->queue_full_published_ && outcome.queue_size == 0)
+    this->queue_full_published_ = false;
+#endif
+}
+
+CommandDeliveryConfig EleroLight::get_command_delivery_config() const {
+  CommandDeliveryConfig config{};
+  config.profile.blind_address = this->command_.blind_addr;
+  config.profile.remote_address = this->command_.remote_addr;
+  config.profile.channel = this->command_.channel;
+  config.profile.pck_inf[0] = this->command_.pck_inf[0];
+  config.profile.pck_inf[1] = this->command_.pck_inf[1];
+  config.profile.hop = this->command_.hop;
+  config.profile.payload_1 = this->command_.payload[0];
+  config.profile.payload_2 = this->command_.payload[1];
+  config.mapping.on = this->command_on_;
+  config.mapping.off = this->command_off_;
+  config.mapping.dim_up = this->command_dim_up_;
+  config.mapping.dim_down = this->command_dim_down_;
+  config.mapping.stop = this->command_stop_;
+  config.mapping.check = this->command_check_;
+  return config;
+}
+
+IntentSubmitResult EleroLight::submit_intent(const CommandIntent &intent) {
+  auto result = this->delivery_.submit(intent);
+  if (result == IntentSubmitResult::REJECTED) {
+    ESP_LOGW(TAG, "Command queue full for light 0x%06x", this->command_.blind_addr);
+#ifdef USE_TEXT_SENSOR
+    if (!this->queue_full_published_) {
+      this->parent_->publish_text_sensor_state(this->command_.blind_addr, "queue_full");
+      this->queue_full_published_ = true;
+    }
+#endif
+  }
+  return result;
 }
 
 void EleroLight::schedule_immediate_poll() {
   uint32_t now = millis();
-  if (light_logic::should_schedule_immediate_poll(
-          this->command_check_, static_cast<uint8_t>(this->commands_to_send_.size()),
-          ELERO_MAX_COMMAND_QUEUE, now, this->last_immediate_poll_ms_,
-          ELERO_IMMEDIATE_POLL_MIN_INTERVAL_MS)) {
-    this->commands_to_send_.push(this->command_check_);
+  if ((now - this->last_immediate_poll_ms_) >= ELERO_IMMEDIATE_POLL_MIN_INTERVAL_MS &&
+      intent_was_accepted(this->submit_intent({CommandIntentKind::CHECK, 0})))
     this->last_immediate_poll_ms_ = now;
-  }
 }
 
 void EleroLight::recompute_brightness() {
@@ -273,13 +283,6 @@ void EleroLight::set_rx_state(uint8_t state) {
     this->parent_->publish_text_sensor_state(this->command_.blind_addr, "timeout");
 #endif
   }
-}
-
-void EleroLight::increase_counter() {
-  if (this->command_.counter == 0xff)
-    this->command_.counter = 1;
-  else
-    this->command_.counter += 1;
 }
 
 }  // namespace elero

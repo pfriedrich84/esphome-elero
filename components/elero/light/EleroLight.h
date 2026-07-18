@@ -5,7 +5,6 @@
 #include "esphome/components/light/light_state.h"
 #include "esphome/components/light/light_traits.h"
 #include "../elero.h"
-#include <queue>
 
 namespace esphome {
 namespace elero {
@@ -27,20 +26,8 @@ class EleroLight : public light::LightOutput, public Component, public EleroLigh
     this->last_seen_ms_ = ms;
     this->last_rssi_ = rssi;
   }
-  void enqueue_command(uint8_t cmd_byte) override {
-    if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE) {
-      this->commands_to_send_.push(cmd_byte);
-    } else {
-      ESP_LOGW("elero.light", "Command queue full for light 0x%06x, dropping cmd 0x%02x",
-               this->command_.blind_addr, cmd_byte);
-#ifdef USE_TEXT_SENSOR
-      if (!this->queue_full_published_) {
-        this->parent_->publish_text_sensor_state(this->command_.blind_addr, "queue_full");
-        this->queue_full_published_ = true;
-      }
-#endif
-    }
-  }
+  IntentSubmitResult submit_intent(const CommandIntent &intent) override;
+  CommandDeliveryConfig get_command_delivery_config() const override;
   void schedule_immediate_poll() override;
 
   // Web API helpers (EleroLightBase interface)
@@ -60,11 +47,6 @@ class EleroLight : public light::LightOutput, public Component, public EleroLigh
   uint8_t get_channel() const override { return this->command_.channel; }
   uint32_t get_remote_address() const override { return this->command_.remote_addr; }
   uint32_t get_dim_duration_ms() const override { return this->dim_duration_; }
-  uint8_t get_command_on() const override { return this->command_on_; }
-  uint8_t get_command_off() const override { return this->command_off_; }
-  uint8_t get_command_stop() const override { return this->command_stop_; }
-  uint8_t get_command_check() const override { return this->command_check_; }
-
   // RF parameter setters
   void set_elero_parent(Elero *parent) { this->parent_ = parent; }
   void set_blind_address(uint32_t address) { this->command_.blind_addr = address; }
@@ -85,7 +67,7 @@ class EleroLight : public light::LightOutput, public Component, public EleroLigh
 
   void handle_commands(uint32_t now);
   void recompute_brightness();
-  void increase_counter();
+  void handle_delivery_outcome_(const DeliveryOutcome &outcome);
 
  protected:
 
@@ -106,12 +88,7 @@ class EleroLight : public light::LightOutput, public Component, public EleroLigh
   uint32_t last_publish_{0};
   uint32_t dim_duration_{0};
 
-  // Command queue / TX state (mirrors EleroCover)
-  std::queue<uint8_t> commands_to_send_;
-  uint32_t last_command_{0};
-  uint8_t send_retries_{0};
-  uint8_t send_packets_{0};
-  uint32_t last_queue_drain_ms_{0};  // for command queue aging
+  CommandIntentDelivery delivery_;
 
   // Metadata
   uint32_t last_seen_ms_{0};

@@ -1,6 +1,7 @@
 #include "elero_web/elero_web_utils.h"
 #include <gtest/gtest.h>
 
+using namespace esphome::elero;
 using namespace esphome::elero::web_utils;
 
 // --- json_escape ---
@@ -40,6 +41,34 @@ TEST(JsonEscape, NonAsciiPassthrough) {
 
 TEST(JsonEscape, MixedContent) {
   EXPECT_EQ(json_escape("Name: \"Test\"\nValue: 42"), "Name: \\\"Test\\\"\\nValue: 42");
+}
+
+// --- semantic command intents ---
+
+TEST(ParseCommandIntent, CoverAliasesRemainSemantic) {
+  CommandIntent intent;
+  EXPECT_TRUE(parse_cover_intent("up", intent));
+  EXPECT_EQ(intent.kind, CommandIntentKind::OPEN);
+  EXPECT_TRUE(parse_cover_intent("close", intent));
+  EXPECT_EQ(intent.kind, CommandIntentKind::CLOSE);
+  EXPECT_TRUE(parse_cover_intent("tilt", intent));
+  EXPECT_EQ(intent.kind, CommandIntentKind::TILT);
+  EXPECT_TRUE(parse_cover_intent("int", intent));
+  EXPECT_EQ(intent.kind, CommandIntentKind::CUSTOM);
+  EXPECT_EQ(intent.custom_byte, 0x44);
+  EXPECT_FALSE(parse_cover_intent("on", intent));
+}
+
+TEST(ParseCommandIntent, LightAliasesRemainSemantic) {
+  CommandIntent intent;
+  EXPECT_TRUE(parse_light_intent("on", intent));
+  EXPECT_EQ(intent.kind, CommandIntentKind::ON);
+  EXPECT_TRUE(parse_light_intent("down", intent));
+  EXPECT_EQ(intent.kind, CommandIntentKind::OFF);
+  EXPECT_TRUE(parse_light_intent("stop", intent));
+  EXPECT_EQ(intent.kind, CommandIntentKind::STOP);
+  EXPECT_FALSE(parse_light_intent("tilt", intent));
+  EXPECT_FALSE(parse_light_intent("int", intent));
 }
 
 // --- parse_addr_url ---

@@ -6,9 +6,6 @@
 
 #define ELERO_HAS_COVER_POLL_HELPER 1
 #define ELERO_HAS_COVER_PUBLISH_HELPER 1
-#define ELERO_HAS_COVER_IMMEDIATE_POLL_HELPER 1
-#define ELERO_HAS_COVER_MOVEMENT_QUEUE_HELPER 1
-#define ELERO_HAS_COVER_TILT_QUEUE_HELPER 1
 #define ELERO_HAS_COVER_STOP_PRIORITY_HELPER 1
 #define ELERO_HAS_COVER_AUTO_STOP_PRIORITY_HELPER 1
 
@@ -23,31 +20,6 @@ inline bool should_poll(uint32_t now, uint32_t last_poll_ms, uint32_t poll_inter
 inline bool should_publish_position(uint32_t now, uint32_t last_publish_ms,
                                     uint32_t publish_interval_ms) {
   return (now - last_publish_ms) >= publish_interval_ms;
-}
-
-inline bool should_schedule_immediate_poll(uint8_t command_check, uint8_t queue_size,
-                                           uint8_t max_queue_size, uint32_t now,
-                                           uint32_t last_immediate_ms,
-                                           uint32_t min_interval_ms) {
-  return command_check != 0x00 && queue_size < max_queue_size &&
-         (now - last_immediate_ms) >= min_interval_ms;
-}
-
-inline bool can_enqueue_movement(uint8_t queue_size, uint8_t max_queue_size) {
-  return queue_size < max_queue_size;
-}
-
-inline bool should_reject_movement_before_state_update(uint8_t queue_size,
-                                                       uint8_t max_queue_size) {
-  return !can_enqueue_movement(queue_size, max_queue_size);
-}
-
-inline bool can_enqueue_tilt_command(uint8_t queue_size, uint8_t max_queue_size) {
-  return queue_size < max_queue_size;
-}
-
-inline bool should_publish_queue_full_for_tilt(uint8_t queue_size, uint8_t max_queue_size) {
-  return !can_enqueue_tilt_command(queue_size, max_queue_size);
 }
 
 inline bool should_apply_stop_after_priority_result(bool priority_enqueued) {

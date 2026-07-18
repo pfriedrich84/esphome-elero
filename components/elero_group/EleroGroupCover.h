@@ -9,9 +9,9 @@ namespace esphome {
 namespace elero {
 
 /// A virtual cover that groups multiple EleroCover entities.
-/// On open/close/stop/tilt it sends a single multi-destination RF packet when all
-/// members share the same remote_address and channel, otherwise falls back to
-/// sequential individual commands.
+/// Compatible members share a dedicated native multi-destination delivery
+/// module; incompatible members receive the same semantic intent through their
+/// own delivery modules.
 class EleroGroupCover : public cover::Cover, public Component {
  public:
   void setup() override;
@@ -22,29 +22,26 @@ class EleroGroupCover : public cover::Cover, public Component {
 
   void set_elero_parent(Elero *parent) { parent_ = parent; }
   void set_assumed_state(bool assumed) { assumed_state_ = assumed; }
+  void set_hide_members(bool hide) { hide_members_ = hide; }
   void add_member(EleroBlindBase *member) { members_.push_back(member); }
 
  protected:
   void control(const cover::CoverCall &call) override;
-  enum class GroupCommandAction : uint8_t { OPEN, CLOSE, STOP, TILT };
 
-  /// Send an action to all group members via native multi-dest or sequential fallback.
-  void send_group_command_(GroupCommandAction action);
-  uint8_t command_byte_for_(EleroBlindBase *member, GroupCommandAction action) const;
-  bool members_share_command_byte_(GroupCommandAction action, uint8_t &cmd_byte) const;
-  /// True if all members share remote_address and channel (native multi-dest possible).
+  void submit_group_intent_(const CommandIntent &intent);
+  void submit_to_members_(const CommandIntent &intent);
   bool can_use_native_group_() const;
-  /// Build a multi-dest t_elero_command from the first member's RF params.
-  void build_group_command_(t_elero_command &cmd, uint8_t cmd_byte);
-  /// Update group position from member positions.
+  CommandDeliveryConfig build_native_config_() const;
+  void handle_native_outcome_(const DeliveryOutcome &outcome);
   void update_position_();
 
   Elero *parent_{nullptr};
   std::vector<EleroBlindBase *> members_;
-  uint8_t group_counter_{1};
+  CommandIntentDelivery native_delivery_;
   uint32_t last_position_update_{0};
-  bool native_group_{false};  // cached result of can_use_native_group_()
+  bool native_group_{false};
   bool assumed_state_{true};
+  bool hide_members_{false};
 };
 
 }  // namespace elero

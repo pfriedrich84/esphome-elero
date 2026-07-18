@@ -1,6 +1,5 @@
 #include "elero.h"
 #include "elero_runtime_blind_logic.h"
-#include "elero_dispatch_logic.h"
 #include "esphome/core/log.h"
 #include <mutex>
 
@@ -15,48 +14,26 @@ static const char *TAG = "elero";
 
 void Elero::drain_runtime_queues() {
   std::lock_guard<std::mutex> lock(state_mutex_);
-  uint32_t now = millis();
+  const uint32_t now = millis();
   for (auto &entry : this->runtime_blinds_) {
     auto &rb = entry.second;
-    if (rb.command_queue.empty()) {
-      rb.last_queue_drain_ms = now;  // reset timer while idle
-    } else {
-      // Queue aging: clear stale commands if blind is offline
-      if (dispatch_logic::should_clear_stale_queue(now, rb.last_queue_drain_ms,
-                                                    ELERO_COMMAND_QUEUE_MAX_AGE_MS)) {
-        ESP_LOGW(TAG, "Runtime blind 0x%06x queue stale, clearing %d commands",
-                 rb.blind_address, (int)rb.command_queue.size());
-        if (runtime_blind_logic::should_advance_counter_on_stale_clear(rb.send_packets_count)) {
-          rb.cmd_counter = runtime_blind_logic::next_command_counter(rb.cmd_counter);
-        }
-        while (!rb.command_queue.empty()) rb.command_queue.pop();
-        rb.send_packets_count = 0;
-        rb.last_queue_drain_ms = now;
-        continue;
-      }
-      uint8_t cmd_byte = rb.command_queue.front();
-      t_elero_command cmd{};
-      cmd.counter = rb.cmd_counter;
-      cmd.blind_addr = rb.blind_address;
-      cmd.remote_addr = rb.remote_address;
-      cmd.channel = rb.channel;
-      cmd.pck_inf[0] = rb.pck_inf[0];
-      cmd.pck_inf[1] = rb.pck_inf[1];
-      cmd.hop = rb.hop;
-      cmd.payload[0] = rb.payload_1;
-      cmd.payload[1] = rb.payload_2;
-      cmd.payload[4] = cmd_byte;
-      if (this->send_command(&cmd) == SendResult::OK) {
-        rb.send_packets_count++;
-        if (rb.send_packets_count >= this->send_repeats_) {
-          rb.command_queue.pop();
-          rb.send_packets_count = 0;
-          rb.last_queue_drain_ms = now;
-          rb.cmd_counter = runtime_blind_logic::next_command_counter(rb.cmd_counter);
-        }
-      } else {
-        break;  // TX queue full or failed — stop enqueuing, retry next loop
-      }
+    if (!rb.delivery)
+      continue;
+    auto outcome = rb.delivery->advance(
+        now, this->send_delay_, this->send_repeats_,
+        [this](const t_elero_command &packet, bool priority) {
+          t_elero_command copy = packet;
+          if (!priority)
+            return this->send_command(&copy);
+          if (this->send_command_priority(&copy))
+            return SendResult::OK;
+          return this->is_failed() ? SendResult::FAILED : SendResult::QUEUE_FULL;
+        });
+    if (outcome.event == DeliveryEvent::DROPPED) {
+      ESP_LOGE(TAG, "Delivery retries exhausted for runtime blind 0x%06x", rb.blind_address);
+      this->increment_tx_drop_count();
+    } else if (outcome.event == DeliveryEvent::STALE_CLEARED) {
+      ESP_LOGW(TAG, "Stale Command queue cleared for runtime blind 0x%06x", rb.blind_address);
     }
   }
 }
@@ -66,11 +43,10 @@ void Elero::poll_runtime_blinds_() {
   uint32_t now = millis();
   for (auto &entry : this->runtime_blinds_) {
     auto &rb = entry.second;
-    if (runtime_blind_logic::should_poll_runtime_blind(now, rb.last_poll_ms,
-                                                       rb.poll_intvl_ms, rb.command_queue.empty())) {
-      rb.last_poll_ms = now;
-      if (rb.command_queue.size() < ELERO_MAX_COMMAND_QUEUE) {
-        rb.command_queue.push(ELERO_COMMAND_COVER_CHECK);
+    if (rb.delivery && runtime_blind_logic::should_poll_runtime_blind(
+                           now, rb.last_poll_ms, rb.poll_intvl_ms, rb.delivery->empty())) {
+      if (intent_was_accepted(rb.delivery->submit({CommandIntentKind::CHECK, 0}))) {
+        rb.last_poll_ms = now;
         ESP_LOGD(TAG, "Periodic poll for runtime blind 0x%06x", rb.blind_address);
       }
     }
@@ -149,6 +125,16 @@ bool Elero::adopt_blind(const DiscoveredBlind &discovered, const std::string &na
   rb.last_seen_ms = discovered.last_seen;
   rb.last_rssi = discovered.rssi;
   rb.last_state = discovered.last_state;
+  CommandDeliveryConfig delivery_config{};
+  delivery_config.profile.blind_address = discovered.blind_address;
+  delivery_config.profile.remote_address = discovered.remote_address;
+  delivery_config.profile.channel = discovered.channel;
+  delivery_config.profile.pck_inf[0] = discovered.pck_inf[0];
+  delivery_config.profile.pck_inf[1] = discovered.pck_inf[1];
+  delivery_config.profile.hop = discovered.hop;
+  delivery_config.profile.payload_1 = discovered.payload_1;
+  delivery_config.profile.payload_2 = discovered.payload_2;
+  rb.delivery = std::make_shared<CommandIntentDelivery>(delivery_config);
   this->runtime_blinds_.insert({discovered.blind_address, std::move(rb)});
   this->own_remote_addresses_.insert(discovered.remote_address);
   ESP_LOGI(TAG, "Adopted runtime %s 0x%06x as \"%s\"",
@@ -168,17 +154,12 @@ bool Elero::remove_runtime_blind(uint32_t addr) {
   return false;
 }
 
-bool Elero::send_runtime_command(uint32_t addr, uint8_t cmd_byte) {
+IntentSubmitResult Elero::send_runtime_command(uint32_t addr, const CommandIntent &intent) {
   std::lock_guard<std::mutex> lock(state_mutex_);
   auto it = this->runtime_blinds_.find(addr);
-  if (it != this->runtime_blinds_.end()) {
-    if (it->second.command_queue.size() < ELERO_MAX_COMMAND_QUEUE) {
-      it->second.command_queue.push(cmd_byte);
-      return true;
-    }
-    return false;
-  }
-  return false;
+  if (it == this->runtime_blinds_.end() || !it->second.delivery)
+    return IntentSubmitResult::REJECTED;
+  return it->second.delivery->submit(intent);
 }
 
 bool Elero::update_runtime_blind_settings(uint32_t addr, uint32_t open_dur_ms,

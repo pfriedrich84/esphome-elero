@@ -23,13 +23,13 @@ void EleroScanButton::press_action() {
   if (this->cover_ != nullptr) {
     ESP_LOGD(TAG, "Sending command 0x%02x to cover 0x%06x",
              this->command_byte_, this->cover_->get_blind_address());
-    this->cover_->enqueue_command(this->command_byte_);
+    this->cover_->submit_intent(CommandIntent::custom(this->command_byte_));
     return;
   }
   if (this->light_ != nullptr) {
     ESP_LOGD(TAG, "Sending command 0x%02x to light 0x%06x",
              this->command_byte_, this->light_->get_blind_address());
-    this->light_->enqueue_command(this->command_byte_);
+    this->light_->submit_intent(CommandIntent::custom(this->command_byte_));
     return;
   }
   if (this->parent_ == nullptr) {

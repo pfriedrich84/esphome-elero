@@ -3,8 +3,6 @@
 
 #include <cstdint>
 
-#define ELERO_HAS_RUNTIME_STALE_COUNTER_HELPER 1
-
 namespace esphome {
 namespace elero {
 namespace runtime_blind_logic {
@@ -17,14 +15,6 @@ inline bool should_poll_runtime_blind(uint32_t now, uint32_t last_poll_ms,
                                       uint32_t poll_interval_ms, bool queue_empty) {
   return is_poll_enabled(poll_interval_ms) && queue_empty &&
          (now - last_poll_ms) >= poll_interval_ms;
-}
-
-inline uint8_t next_command_counter(uint8_t current) {
-  return current == 0xFF ? 1 : static_cast<uint8_t>(current + 1);
-}
-
-inline bool should_advance_counter_on_stale_clear(uint8_t send_packets_count) {
-  return send_packets_count > 0;
 }
 
 inline int8_t direction_for_state(uint8_t state, uint8_t top_state, uint8_t bottom_state,
