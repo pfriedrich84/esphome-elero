@@ -12,6 +12,7 @@ EleroCover = elero_ns.class_("EleroCover")
 
 CONF_MEMBERS = "members"
 CONF_ASSUMED_STATE = "assumed_state"
+CONF_HIDE_MEMBERS = "hide_members"
 
 
 def _validate_members(config):
@@ -33,6 +34,7 @@ CONFIG_SCHEMA = cv.All(
                 cv.GenerateID(CONF_ELERO_ID): cv.use_id(elero),
                 cv.Required(CONF_MEMBERS): cv.ensure_list(cv.use_id(EleroCover)),
                 cv.Optional(CONF_ASSUMED_STATE, default=True): cv.boolean,
+                cv.Optional(CONF_HIDE_MEMBERS, default=False): cv.boolean,
             }
         )
         .extend(cv.COMPONENT_SCHEMA)
@@ -48,6 +50,9 @@ async def to_code(config):
         parent = await cg.get_variable(group_conf[CONF_ELERO_ID])
         cg.add(var.set_elero_parent(parent))
         cg.add(var.set_assumed_state(group_conf[CONF_ASSUMED_STATE]))
+        cg.add(var.set_hide_members(group_conf[CONF_HIDE_MEMBERS]))
         for member_id in group_conf[CONF_MEMBERS]:
             member = await cg.get_variable(member_id)
             cg.add(var.add_member(member))
+            if group_conf[CONF_HIDE_MEMBERS]:
+                cg.add(member.set_internal(True))
