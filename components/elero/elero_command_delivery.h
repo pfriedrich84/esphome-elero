@@ -211,7 +211,7 @@ class CommandIntentDelivery {
   QueueState queue_{};
   ProfileDeliveryCoordinator *coordinator_{nullptr};
   OutcomeCallback outcome_callback_{};
-  std::array<CommandIntentDelivery *, ELERO_MAX_DESTS> fallback_members_{};
+  std::array<CommandDeliveryConfig, ELERO_MAX_DESTS> fallback_configs_{};
   uint8_t fallback_member_count_{0};
   uint32_t not_before_ms_{0};
 };

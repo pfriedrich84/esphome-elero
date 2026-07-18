@@ -408,6 +408,10 @@ TEST(ProfileCoordinator, NativeFailureFallsBackInOrderBeforeAnyAcceptance) {
   ASSERT_TRUE(coordinator.attach(&second));
   CommandIntentDelivery *members[] = {&first, &second};
   ASSERT_TRUE(native.set_native_fallback(members, 2));
+  // Fallback owns immutable packet configurations rather than member-lane
+  // pointers that can dangle after detach or destruction.
+  ASSERT_TRUE(coordinator.detach(&first));
+  ASSERT_TRUE(coordinator.detach(&second));
   ASSERT_EQ(native.submit({CommandIntentKind::OPEN, 0}, 0), IntentSubmitResult::ACCEPTED);
 
   std::vector<uint8_t> destination_counts;

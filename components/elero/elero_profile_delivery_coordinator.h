@@ -257,10 +257,8 @@ class ProfileDeliveryCoordinator {
   }
 
   const CommandDeliveryConfig &active_config_locked_(const CommandIntentDelivery::QueuedIntent &entry) const {
-    if (entry.fallback_active) {
-      auto *member = this->active_lane_->fallback_members_[entry.fallback_index];
-      return member->config_;
-    }
+    if (entry.fallback_active)
+      return this->active_lane_->fallback_configs_[entry.fallback_index];
     return this->active_lane_->config_;
   }
 
@@ -632,7 +630,7 @@ inline bool CommandIntentDelivery::set_native_fallback(CommandIntentDelivery *co
   }
   this->fallback_member_count_ = static_cast<uint8_t>(count);
   for (size_t i = 0; i < count; i++)
-    this->fallback_members_[i] = members[i];
+    this->fallback_configs_[i] = members[i]->config_;
   return true;
 }
 
