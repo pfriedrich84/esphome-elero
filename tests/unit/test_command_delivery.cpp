@@ -1,4 +1,4 @@
-#include "elero/elero_command_delivery.h"
+#include "elero/elero_profile_delivery_coordinator.h"
 #include "elero/elero_timed_action.h"
 #include <gtest/gtest.h>
 #include <atomic>
@@ -6,6 +6,32 @@
 #include <vector>
 
 using namespace esphome::elero;
+
+class AttachedDelivery {
+ public:
+  explicit AttachedDelivery(const CommandDeliveryConfig &config)
+      : coordinator(DeliveryProfileKey::from(config.profile)), delivery(config) {
+    EXPECT_TRUE(coordinator.attach(&delivery));
+  }
+
+  IntentSubmitResult submit(const CommandIntent &intent, bool deferred = false) {
+    return delivery.submit(intent, deferred);
+  }
+  IntentSubmitResult submit_batch(std::initializer_list<CommandIntent> intents) {
+    return delivery.submit_batch(intents.begin(), intents.size());
+  }
+  DeliveryOutcome advance(uint32_t now, uint32_t delay, uint8_t repeats,
+                          const ProfileDeliveryCoordinator::SubmitCallback &submitter) {
+    return coordinator.advance(now, delay, repeats, submitter);
+  }
+  size_t size() const { return delivery.size(); }
+  bool empty() const { return delivery.empty(); }
+  uint8_t counter() const { return coordinator.counter(); }
+  void release_deferred() { delivery.release_deferred(); }
+
+  ProfileDeliveryCoordinator coordinator;
+  CommandIntentDelivery delivery;
+};
 
 static CommandDeliveryConfig config() {
   CommandDeliveryConfig c{};
@@ -36,7 +62,7 @@ TEST(CommandProfile, NativeGroupRequiresEverySharedRfField) {
 }
 
 TEST(CommandDelivery, BuildsSemanticMultiDestinationPacketAndCompletesRepeats) {
-  CommandIntentDelivery delivery(config());
+  AttachedDelivery delivery(config());
   ASSERT_EQ(delivery.submit({CommandIntentKind::OPEN, 0}), IntentSubmitResult::ACCEPTED);
   std::vector<t_elero_command> packets;
   auto submit = [&](const t_elero_command &packet, bool priority) {
@@ -56,7 +82,7 @@ TEST(CommandDelivery, BuildsSemanticMultiDestinationPacketAndCompletesRepeats) {
 }
 
 TEST(CommandDelivery, CoalescesChecksAndUnsentTargetChanges) {
-  CommandIntentDelivery delivery(config());
+  AttachedDelivery delivery(config());
   EXPECT_EQ(delivery.submit({CommandIntentKind::CHECK, 0}), IntentSubmitResult::ACCEPTED);
   EXPECT_EQ(delivery.submit({CommandIntentKind::CHECK, 0}), IntentSubmitResult::COALESCED);
   EXPECT_EQ(delivery.submit({CommandIntentKind::OPEN, 0}), IntentSubmitResult::ACCEPTED);
@@ -65,7 +91,7 @@ TEST(CommandDelivery, CoalescesChecksAndUnsentTargetChanges) {
 }
 
 TEST(CommandDelivery, CoalescingDoesNotCrossOrderedIntentBarriers) {
-  CommandIntentDelivery delivery(config());
+  AttachedDelivery delivery(config());
   delivery.submit({CommandIntentKind::OPEN, 0});
   delivery.submit(CommandIntent::custom(0x77));
   delivery.submit({CommandIntentKind::CLOSE, 0});
@@ -83,7 +109,7 @@ TEST(CommandDelivery, CoalescingDoesNotCrossOrderedIntentBarriers) {
 }
 
 TEST(CommandDelivery, ReplacingUnsentFrontResetsRetryAndAgeState) {
-  CommandIntentDelivery delivery(config());
+  AttachedDelivery delivery(config());
   delivery.submit({CommandIntentKind::OPEN, 0});
   EXPECT_EQ(delivery.advance(1, 0, 1, [](const auto &, bool) { return SendResult::FAILED; }).event,
             DeliveryEvent::RETRY_SCHEDULED);
@@ -99,7 +125,7 @@ TEST(CommandDelivery, ReplacingUnsentFrontResetsRetryAndAgeState) {
 }
 
 TEST(CommandDelivery, NeverRewritesPartiallyDeliveredTarget) {
-  CommandIntentDelivery delivery(config());
+  AttachedDelivery delivery(config());
   delivery.submit({CommandIntentKind::OPEN, 0});
   EXPECT_EQ(delivery.advance(1, 0, 2, [](const auto &, bool) { return SendResult::OK; }).event,
             DeliveryEvent::PACKET_ACCEPTED);
@@ -117,7 +143,7 @@ TEST(CommandDelivery, NeverRewritesPartiallyDeliveredTarget) {
 }
 
 TEST(CommandDelivery, StopIsNotAcceptedWhilePriorityQueueIsCongested) {
-  CommandIntentDelivery delivery(config());
+  AttachedDelivery delivery(config());
   delivery.submit({CommandIntentKind::STOP, 0});
   auto queued = delivery.advance(1, 0, 1, [](const auto &, bool priority) {
     EXPECT_TRUE(priority);
@@ -131,7 +157,7 @@ TEST(CommandDelivery, StopIsNotAcceptedWhilePriorityQueueIsCongested) {
 }
 
 TEST(CommandDelivery, StopPreemptsAndRetiresPartialCounter) {
-  CommandIntentDelivery delivery(config());
+  AttachedDelivery delivery(config());
   delivery.submit({CommandIntentKind::OPEN, 0});
   delivery.advance(1, 0, 2, [](const auto &, bool) { return SendResult::OK; });
   EXPECT_EQ(delivery.submit({CommandIntentKind::STOP, 0}), IntentSubmitResult::ACCEPTED);
@@ -150,7 +176,7 @@ TEST(CommandDelivery, StopPreemptsAndRetiresPartialCounter) {
 }
 
 TEST(CommandDelivery, AcceptedRepeatsRefreshStaleProgress) {
-  CommandIntentDelivery delivery(config());
+  AttachedDelivery delivery(config());
   delivery.submit({CommandIntentKind::OPEN, 0});
   auto ok = [](const auto &, bool) { return SendResult::OK; };
   EXPECT_EQ(delivery.advance(1, 0, 3, ok).event, DeliveryEvent::PACKET_ACCEPTED);
@@ -161,7 +187,7 @@ TEST(CommandDelivery, AcceptedRepeatsRefreshStaleProgress) {
 }
 
 TEST(CommandDelivery, QueueFullPreservesIntentCounterAndFailureBudget) {
-  CommandIntentDelivery delivery(config());
+  AttachedDelivery delivery(config());
   delivery.submit({CommandIntentKind::OPEN, 0});
   for (uint32_t now = 1; now < 10; now++)
     EXPECT_EQ(delivery.advance(now, 0, 1, [](const auto &, bool) { return SendResult::QUEUE_FULL; }).event,
@@ -173,7 +199,7 @@ TEST(CommandDelivery, QueueFullPreservesIntentCounterAndFailureBudget) {
 }
 
 TEST(CommandDelivery, FinalFailureFallsOutWithoutRetiringUnusedCounter) {
-  CommandIntentDelivery delivery(config());
+  AttachedDelivery delivery(config());
   delivery.submit({CommandIntentKind::OPEN, 0});
   DeliveryOutcome outcome;
   for (uint32_t now : {1u, 22u, 63u, 144u})
@@ -184,7 +210,7 @@ TEST(CommandDelivery, FinalFailureFallsOutWithoutRetiringUnusedCounter) {
 }
 
 TEST(CommandDelivery, FinalFailureAfterPartialRepeatRetiresCounter) {
-  CommandIntentDelivery delivery(config());
+  AttachedDelivery delivery(config());
   delivery.submit({CommandIntentKind::OPEN, 0});
   delivery.advance(1, 0, 2, [](const auto &, bool) { return SendResult::OK; });
   DeliveryOutcome outcome;
@@ -196,7 +222,7 @@ TEST(CommandDelivery, FinalFailureAfterPartialRepeatRetiresCounter) {
 }
 
 TEST(CommandDelivery, StaleClearRetiresOnlyPartiallyUsedCounter) {
-  CommandIntentDelivery delivery(config());
+  AttachedDelivery delivery(config());
   delivery.submit({CommandIntentKind::OPEN, 0});
   delivery.advance(1, 0, 2, [](const auto &, bool) { return SendResult::OK; });
   auto outcome = delivery.advance(ELERO_COMMAND_QUEUE_MAX_AGE_MS + 2, 0, 2,
@@ -208,14 +234,14 @@ TEST(CommandDelivery, StaleClearRetiresOnlyPartiallyUsedCounter) {
 }
 
 TEST(CommandDelivery, RejectsNewestWhenCapacityCannotBeCoalesced) {
-  CommandIntentDelivery delivery(config());
+  AttachedDelivery delivery(config());
   for (uint8_t i = 0; i < ELERO_MAX_COMMAND_QUEUE; i++)
     EXPECT_EQ(delivery.submit(CommandIntent::custom(i)), IntentSubmitResult::ACCEPTED);
   EXPECT_EQ(delivery.submit(CommandIntent::custom(0xFE)), IntentSubmitResult::REJECTED);
 }
 
 TEST(CommandDelivery, BatchSubmissionRollsBackWhenWholeSequenceDoesNotFit) {
-  CommandIntentDelivery delivery(config());
+  AttachedDelivery delivery(config());
   for (uint8_t i = 0; i < ELERO_MAX_COMMAND_QUEUE - 1; i++)
     ASSERT_EQ(delivery.submit(CommandIntent::custom(i)), IntentSubmitResult::ACCEPTED);
   EXPECT_EQ(delivery.submit_batch({{CommandIntentKind::ON, 0},
@@ -225,7 +251,7 @@ TEST(CommandDelivery, BatchSubmissionRollsBackWhenWholeSequenceDoesNotFit) {
 }
 
 TEST(CommandDelivery, BatchSubmissionPreservesMultiIntentOrder) {
-  CommandIntentDelivery delivery(config());
+  AttachedDelivery delivery(config());
   ASSERT_TRUE(intent_was_accepted(delivery.submit_batch({{CommandIntentKind::ON, 0},
                                                           {CommandIntentKind::DIM_DOWN, 0}})));
   std::vector<uint8_t> bytes;
@@ -247,37 +273,115 @@ TEST(CommandDelivery, CoverButtonBytesPreserveStopUrgencyAndSemanticDeferral) {
   EXPECT_EQ(custom.custom_byte, 0x77);
 }
 
-TEST(CommandDelivery, DeferredLaneDoesNotTransmitUntilReleasedAfterStop) {
-  CommandIntentDelivery active(config());
-  CommandIntentDelivery deferred(config());
-  ASSERT_EQ(active.submit({CommandIntentKind::STOP, 0}), IntentSubmitResult::ACCEPTED);
-  ASSERT_EQ(deferred.submit({CommandIntentKind::OPEN, 0}), IntentSubmitResult::ACCEPTED);
+TEST(CommandDelivery, DeferredIntentDoesNotTransmitUntilReleasedAfterStop) {
+  AttachedDelivery delivery(config());
+  ASSERT_EQ(delivery.submit({CommandIntentKind::STOP, 0}), IntentSubmitResult::ACCEPTED);
+  ASSERT_EQ(delivery.submit({CommandIntentKind::OPEN, 0}, true), IntentSubmitResult::ACCEPTED);
 
   std::vector<uint8_t> bytes;
   auto submit = [&](const t_elero_command &packet, bool) {
     bytes.push_back(packet.payload[4]);
     return SendResult::OK;
   };
-  active.advance(1, 0, 1, submit);
+  delivery.advance(1, 0, 1, submit);
   ASSERT_EQ(bytes, (std::vector<uint8_t>{0x10}));
-  EXPECT_EQ(deferred.size(), 1u);
+  EXPECT_EQ(delivery.size(), 1u);
+  EXPECT_EQ(delivery.advance(2, 0, 1, submit).event, DeliveryEvent::IDLE);
 
-  EXPECT_EQ(deferred.transfer_front_to(active), IntentSubmitResult::ACCEPTED);
-  active.advance(2, 0, 1, submit);
+  delivery.release_deferred();
+  delivery.advance(3, 0, 1, submit);
   EXPECT_EQ(bytes, (std::vector<uint8_t>{0x10, 0x21}));
-  EXPECT_TRUE(deferred.empty());
+  EXPECT_TRUE(delivery.empty());
 }
 
-TEST(CommandDelivery, FailedDeferredTransferKeepsOldestIntentForRetry) {
-  CommandIntentDelivery active(config());
-  CommandIntentDelivery deferred(config());
+TEST(CommandDelivery, DeferredIntentsCountAgainstTheSameBound) {
+  AttachedDelivery delivery(config());
   for (uint8_t i = 0; i < ELERO_MAX_COMMAND_QUEUE; i++)
-    ASSERT_EQ(active.submit(CommandIntent::custom(i)), IntentSubmitResult::ACCEPTED);
-  ASSERT_EQ(deferred.submit({CommandIntentKind::OPEN, 0}), IntentSubmitResult::ACCEPTED);
+    ASSERT_EQ(delivery.submit(CommandIntent::custom(i), true), IntentSubmitResult::ACCEPTED);
+  EXPECT_EQ(delivery.submit({CommandIntentKind::OPEN, 0}, true), IntentSubmitResult::REJECTED);
+  EXPECT_EQ(delivery.size(), ELERO_MAX_COMMAND_QUEUE);
+}
 
-  EXPECT_EQ(deferred.transfer_front_to(active), IntentSubmitResult::REJECTED);
-  EXPECT_EQ(deferred.size(), 1u);
-  EXPECT_EQ(active.size(), ELERO_MAX_COMMAND_QUEUE);
+TEST(ProfileCoordinator, SerializesLanesWithOneRollingCounter) {
+  auto first_config = config();
+  first_config.destination_count = 1;
+  auto second_config = first_config;
+  second_config.profile.blind_address = 0x222222;
+  second_config.destinations[0] = 0x222222;
+  ProfileDeliveryCoordinator coordinator(DeliveryProfileKey::from(first_config.profile));
+  CommandIntentDelivery first(first_config);
+  CommandIntentDelivery second(second_config);
+  ASSERT_TRUE(coordinator.attach(&first));
+  ASSERT_TRUE(coordinator.attach(&second));
+  ASSERT_EQ(first.submit({CommandIntentKind::OPEN, 0}), IntentSubmitResult::ACCEPTED);
+  ASSERT_EQ(second.submit({CommandIntentKind::CLOSE, 0}), IntentSubmitResult::ACCEPTED);
+
+  std::vector<std::pair<uint32_t, uint8_t>> packets;
+  auto submit = [&](const t_elero_command &packet, bool) {
+    packets.push_back({packet.blind_addr, packet.counter});
+    return SendResult::OK;
+  };
+  coordinator.advance(1, 0, 1, submit);
+  coordinator.advance(2, 0, 1, submit);
+  EXPECT_EQ(packets, (std::vector<std::pair<uint32_t, uint8_t>>{{0x111111, 1}, {0x222222, 2}}));
+  EXPECT_EQ(coordinator.counter(), 3);
+}
+
+TEST(ProfileCoordinator, AtomicMemberSubmissionRollsBackEveryLane) {
+  auto first_config = config();
+  first_config.destination_count = 1;
+  auto second_config = first_config;
+  second_config.profile.remote_address++;
+  ProfileDeliveryCoordinator first_coordinator(DeliveryProfileKey::from(first_config.profile));
+  ProfileDeliveryCoordinator second_coordinator(DeliveryProfileKey::from(second_config.profile));
+  CommandIntentDelivery first(first_config);
+  CommandIntentDelivery second(second_config);
+  ASSERT_TRUE(first_coordinator.attach(&first));
+  ASSERT_TRUE(second_coordinator.attach(&second));
+  for (uint8_t i = 0; i < ELERO_MAX_COMMAND_QUEUE; i++)
+    ASSERT_EQ(second.submit(CommandIntent::custom(i)), IntentSubmitResult::ACCEPTED);
+  CommandIntentDelivery::AtomicIntentTarget targets[] = {
+      {&first, {CommandIntentKind::OPEN, 0}, false},
+      {&second, {CommandIntentKind::OPEN, 0}, false},
+  };
+  EXPECT_EQ(CommandIntentDelivery::submit_atomic(targets, 2), IntentSubmitResult::REJECTED);
+  EXPECT_TRUE(first.empty());
+  EXPECT_EQ(second.size(), ELERO_MAX_COMMAND_QUEUE);
+}
+
+TEST(ProfileCoordinator, NativeFailureFallsBackInOrderBeforeAnyAcceptance) {
+  auto native_config = config();
+  auto first_config = native_config;
+  first_config.destination_count = 1;
+  first_config.destinations[0] = 0x111111;
+  auto second_config = first_config;
+  second_config.profile.blind_address = 0x222222;
+  second_config.destinations[0] = 0x222222;
+  ProfileDeliveryCoordinator coordinator(DeliveryProfileKey::from(native_config.profile));
+  CommandIntentDelivery native(native_config);
+  CommandIntentDelivery first(first_config);
+  CommandIntentDelivery second(second_config);
+  ASSERT_TRUE(coordinator.attach(&native));
+  ASSERT_TRUE(coordinator.attach(&first));
+  ASSERT_TRUE(coordinator.attach(&second));
+  CommandIntentDelivery *members[] = {&first, &second};
+  ASSERT_TRUE(native.set_native_fallback(members, 2));
+  ASSERT_EQ(native.submit({CommandIntentKind::OPEN, 0}), IntentSubmitResult::ACCEPTED);
+
+  std::vector<uint8_t> destination_counts;
+  auto submit = [&](const t_elero_command &packet, bool) {
+    destination_counts.push_back(packet.num_dests);
+    return packet.num_dests == 2 ? SendResult::FAILED : SendResult::OK;
+  };
+  DeliveryOutcome outcome;
+  for (uint32_t now : {1u, 22u, 63u, 144u})
+    outcome = coordinator.advance(now, 0, 1, submit);
+  EXPECT_EQ(outcome.event, DeliveryEvent::FALLBACK_STARTED);
+  coordinator.advance(145, 0, 1, submit);
+  coordinator.advance(146, 0, 1, submit);
+  EXPECT_EQ(destination_counts.back(), 1);
+  EXPECT_TRUE(native.empty());
+  EXPECT_EQ(coordinator.counter(), 3);
 }
 
 TEST(TimedAction, StartsOnlyOnFirstRelevantAcceptedPacket) {
@@ -296,7 +400,7 @@ TEST(TimedAction, StartsOnlyOnFirstRelevantAcceptedPacket) {
 }
 
 TEST(CommandDelivery, SubmissionIsThreadSafe) {
-  CommandIntentDelivery delivery(config());
+  AttachedDelivery delivery(config());
   std::atomic<int> accepted{0};
   std::vector<std::thread> threads;
   for (int i = 0; i < 8; i++) {

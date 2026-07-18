@@ -8,7 +8,7 @@
 #include "esphome/components/button/button.h"
 #endif
 #include "cc1101.h"
-#include "elero_command_delivery.h"
+#include "elero_profile_delivery_coordinator.h"
 #include <RadioLib.h>
 #include <string>
 #include <vector>
@@ -264,6 +264,7 @@ class EleroLightBase {
   virtual void notify_rx_meta(uint32_t ms, float rssi) {}
   virtual IntentSubmitResult submit_intent(const CommandIntent &intent) = 0;
   virtual CommandDeliveryConfig get_command_delivery_config() const = 0;
+  virtual CommandIntentDelivery *get_command_delivery() = 0;
   /// Called by the hub when a remote command packet (0x6a/0x69) targets this
   /// device, so it can poll the blind immediately instead of waiting for the
   /// normal poll interval.  Default no-op; concrete classes override.
@@ -308,6 +309,8 @@ class EleroBlindBase {
   virtual bool get_supports_tilt() const = 0;
   virtual IntentSubmitResult submit_intent(const CommandIntent &intent) = 0;
   virtual CommandDeliveryConfig get_command_delivery_config() const = 0;
+  virtual CommandIntentDelivery *get_command_delivery() = 0;
+  virtual bool should_defer_intent(const CommandIntent &) const { return false; }
   // RF params retained for configuration/status serialization
   virtual uint8_t get_hop() const = 0;
   virtual uint8_t get_pck_inf0() const = 0;
@@ -417,6 +420,8 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   bool is_tx_idle() const { return tx_state_.load(std::memory_order_acquire) == TxState::IDLE; }
   void register_cover(EleroBlindBase *cover);
   void register_light(EleroLightBase *light);
+  bool register_command_delivery(CommandIntentDelivery *delivery);
+  void unregister_command_delivery(CommandIntentDelivery *delivery);
   SendResult send_command(t_elero_command *cmd);
   /// Priority TX: bypasses the normal queue for time-critical commands (e.g. stop).
   SendResult send_command_priority(t_elero_command *cmd);
@@ -603,7 +608,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void process_rx();
   void advance_tx();
   void dispatch_rx_result_(const RxResult &rx);  // runs on Core 1 main loop
-  void drain_runtime_queues();
+  void advance_delivery_coordinators_();
   void poll_runtime_blinds_();
   void recompute_runtime_positions_();
   void update_runtime_blind_direction_(RuntimeBlind &rb, uint8_t state);
@@ -685,6 +690,8 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   std::vector<RawPacket> raw_packets_;              // protected by packet_dump_mutex_
   uint16_t raw_packet_write_idx_{0};
   std::map<uint32_t, RuntimeBlind> runtime_blinds_; // protected by state_mutex_
+  std::map<DeliveryProfileKey, std::unique_ptr<ProfileDeliveryCoordinator>> delivery_coordinators_;
+  mutable std::mutex delivery_coordinators_mutex_;
   std::set<uint32_t> own_remote_addresses_;  // remote addrs we TX as — echoes are filtered
 
   // Packet deduplication: O(1) hash lookup keyed by (src << 8 | cnt) → timestamp

@@ -185,13 +185,10 @@ void Elero::loop() {
   if (this->spi_failed_.load(std::memory_order_acquire))
     return;
 
-  // 1. Drain runtime blind command queues (enqueues to TX queue).
-  //    TX-first: prioritise outgoing commands over incoming results so group
-  //    commands fill the TX pipeline as early as possible.
-  //    No is_tx_idle() gate: the FreeRTOS TX queue (depth 16) buffers commands
-  //    while the radio is busy.  send_command() returns false if the queue is
-  //    full, and callers retry next loop.
-  this->drain_runtime_queues();
+  // 1. Advance every remote-profile coordinator. Coordinators are the sole
+  //    owners of RF ordering and rolling counters across configured devices,
+  //    runtime devices, and compatible native groups.
+  this->advance_delivery_coordinators_();
   this->poll_runtime_blinds_();
 
   // 2. Drain RX results from radio task (Core 0 → Core 1 via queue).
@@ -473,6 +470,43 @@ void Elero::setup() {
     this->dispatch_latency_sensor_->publish_state(0.0f);
   this->last_hub_sensor_update_ms_ = millis();
 #endif
+}
+
+bool Elero::register_command_delivery(CommandIntentDelivery *delivery) {
+  if (delivery == nullptr)
+    return false;
+  const DeliveryProfileKey key = DeliveryProfileKey::from(delivery->config().profile);
+  std::lock_guard<std::mutex> lock(this->delivery_coordinators_mutex_);
+  auto &coordinator = this->delivery_coordinators_[key];
+  if (!coordinator)
+    coordinator = std::make_unique<ProfileDeliveryCoordinator>(key);
+  return coordinator->attach(delivery);
+}
+
+void Elero::unregister_command_delivery(CommandIntentDelivery *delivery) {
+  if (delivery == nullptr)
+    return;
+  std::lock_guard<std::mutex> lock(this->delivery_coordinators_mutex_);
+  for (auto it = this->delivery_coordinators_.begin(); it != this->delivery_coordinators_.end(); ++it) {
+    if (!it->second->detach(delivery))
+      continue;
+    if (it->second->empty())
+      this->delivery_coordinators_.erase(it);
+    break;
+  }
+}
+
+void Elero::advance_delivery_coordinators_() {
+  const uint32_t now = millis();
+  std::lock_guard<std::mutex> lock(this->delivery_coordinators_mutex_);
+  for (auto &entry : this->delivery_coordinators_) {
+    entry.second->advance(
+        now, this->send_delay_, this->send_repeats_,
+        [this](const t_elero_command &packet, bool priority) {
+          t_elero_command copy = packet;
+          return priority ? this->send_command_priority(&copy) : this->send_command(&copy);
+        });
+  }
 }
 
 // ---------------------------------------------------------------------------

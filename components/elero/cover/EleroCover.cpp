@@ -34,7 +34,13 @@ void EleroCover::setup() {
     return;
   }
   this->delivery_.configure(this->get_command_delivery_config());
-  this->deferred_delivery_.configure(this->get_command_delivery_config());
+  this->delivery_.set_outcome_callback(
+      [this](const DeliveryOutcome &outcome) { this->handle_delivery_outcome_(outcome); });
+  if (!this->parent_->register_command_delivery(&this->delivery_)) {
+    ESP_LOGE(TAG, "Failed to register command delivery");
+    this->mark_failed();
+    return;
+  }
   this->parent_->register_cover(this);
   // Apply stagger offset: shift initial last_poll_ backwards so the first poll
   // is delayed by poll_offset_ milliseconds relative to other covers.
@@ -106,23 +112,19 @@ void EleroCover::loop() {
       // current_operation gets stuck, the poll queue fills, and group
       // commands are silently dropped.
       this->current_operation = cover::COVER_OPERATION_IDLE;
-      // Clear queued polls to prevent rapid-fire flooding.
-      this->delivery_.discard_pending();
+      // Clear queued polls to prevent rapid-fire flooding while preserving
+      // deferred user movement intents.
+      this->delivery_.discard_checks();
       // Cooldown: prevent delivery from sending anything for 3s,
       // giving the blind time to settle after the stop command storm.
       this->command_cooldown_until_ = now + 3000;
+      this->delivery_.postpone_until(this->command_cooldown_until_);
       this->publish_state(false);
     }
   }
 
-  if (!this->stop_verification_active_.load() && !this->deferred_delivery_.empty()) {
-    const auto released = this->deferred_delivery_.transfer_front_to(this->delivery_);
-    if (released == IntentSubmitResult::REJECTED)
-      ESP_LOGW(TAG, "Waiting for command queue capacity to release deferred blind command 0x%06x",
-               this->command_.blind_addr);
-  }
-
-  this->handle_commands(now);
+  if (!this->stop_verification_active_.load())
+    this->delivery_.release_deferred();
 
   if (!this->pending_movement_start_ &&
       (this->current_operation != COVER_OPERATION_IDLE) &&
@@ -180,23 +182,6 @@ bool EleroCover::is_at_target() {
                                    ELERO_TX_LATENCY_COMPENSATION_MS);
 }
 
-void EleroCover::handle_commands(uint32_t now) {
-  if (this->parent_->is_failed())
-    return;
-  if (cover_logic::command_cooldown_active(now, this->command_cooldown_until_))
-    return;
-  this->command_cooldown_until_ = 0;
-  auto outcome = this->delivery_.advance(
-      now, this->parent_->get_send_delay(), this->parent_->get_send_repeats(),
-      [this](const t_elero_command &packet, bool priority) {
-        t_elero_command copy = packet;
-        if (!priority)
-          return this->parent_->send_command(&copy);
-        return this->parent_->send_command_priority(&copy);
-      });
-  this->handle_delivery_outcome_(outcome);
-}
-
 void EleroCover::handle_delivery_outcome_(const DeliveryOutcome &outcome) {
   const bool packet_accepted = delivery_packet_was_accepted(outcome.event);
   if (should_start_timed_action(this->pending_movement_start_, this->pending_movement_kind_, outcome)) {
@@ -215,8 +200,7 @@ void EleroCover::handle_delivery_outcome_(const DeliveryOutcome &outcome) {
       this->parent_->increment_stop_urgent();
       this->stop_urgent_active_ = true;
     }
-    if (this->deferred_delivery_.empty())
-      this->current_operation = COVER_OPERATION_IDLE;
+    this->current_operation = COVER_OPERATION_IDLE;
     this->stop_verify_at_ = millis() + ELERO_STOP_VERIFY_DELAY_MS;
     this->stop_verify_retries_ = 0;
     this->publish_state(false);
@@ -275,11 +259,8 @@ CommandDeliveryConfig EleroCover::get_command_delivery_config() const {
 }
 
 IntentSubmitResult EleroCover::submit_intent(const CommandIntent &intent) {
-  CommandIntentDelivery *lane = &this->delivery_;
-  if (this->stop_verification_active_.load() && intent.kind != CommandIntentKind::CHECK &&
-      intent.kind != CommandIntentKind::STOP)
-    lane = &this->deferred_delivery_;
-  auto result = lane->submit(intent);
+  const bool deferred = this->should_defer_intent(intent);
+  auto result = this->delivery_.submit(intent, deferred);
   if (result == IntentSubmitResult::REJECTED) {
     ESP_LOGW(TAG, "Command queue full for blind 0x%06x", this->command_.blind_addr);
 #ifdef USE_TEXT_SENSOR
@@ -521,7 +502,6 @@ void EleroCover::start_movement(CoverOperation dir) {
       this->stop_trigger_position_ = this->position;
       this->stop_trigger_ms_ = millis();
       this->stop_verification_active_.store(true);
-      this->deferred_delivery_.discard_pending();
       if (!intent_was_accepted(this->submit_intent({CommandIntentKind::STOP, 0}))) {
         this->stop_trigger_ms_ = 0;
         this->stop_verification_active_.store(false);

@@ -12,31 +12,6 @@ static const char *TAG = "elero";
 // Runtime blind management
 // ---------------------------------------------------------------------------
 
-void Elero::drain_runtime_queues() {
-  std::lock_guard<std::mutex> lock(state_mutex_);
-  const uint32_t now = millis();
-  for (auto &entry : this->runtime_blinds_) {
-    auto &rb = entry.second;
-    if (!rb.delivery)
-      continue;
-    auto outcome = rb.delivery->advance(
-        now, this->send_delay_, this->send_repeats_,
-        [this](const t_elero_command &packet, bool priority) {
-          t_elero_command copy = packet;
-          if (!priority)
-            return this->send_command(&copy);
-          return this->send_command_priority(&copy);
-        });
-    if (outcome.event == DeliveryEvent::DROPPED) {
-      ESP_LOGE(TAG, "Delivery retries exhausted for runtime blind 0x%06x", rb.blind_address);
-      this->increment_tx_drop_count();
-    } else if (outcome.event == DeliveryEvent::STALE_CLEARED) {
-      ESP_LOGW(TAG, "Stale Command queue cleared for runtime blind 0x%06x", rb.blind_address);
-      this->increment_tx_drop_count();
-    }
-  }
-}
-
 void Elero::poll_runtime_blinds_() {
   std::lock_guard<std::mutex> lock(state_mutex_);
   uint32_t now = millis();
@@ -134,11 +109,23 @@ bool Elero::adopt_blind(const DiscoveredBlind &discovered, const std::string &na
   delivery_config.profile.payload_1 = discovered.payload_1;
   delivery_config.profile.payload_2 = discovered.payload_2;
   rb.delivery = std::make_shared<CommandIntentDelivery>(delivery_config);
+  rb.delivery->set_outcome_callback([this, address = discovered.blind_address](const DeliveryOutcome &outcome) {
+    if (outcome.event == DeliveryEvent::DROPPED) {
+      ESP_LOGE(TAG, "Delivery retries exhausted for runtime blind 0x%06x", address);
+      this->increment_tx_drop_count();
+    } else if (outcome.event == DeliveryEvent::STALE_CLEARED) {
+      ESP_LOGW(TAG, "Stale Command queue cleared for runtime blind 0x%06x", address);
+      this->increment_tx_drop_count();
+    }
+  });
+  if (!this->register_command_delivery(rb.delivery.get()))
+    return false;
+  const std::string adopted_name = rb.name;
   this->runtime_blinds_.insert({discovered.blind_address, std::move(rb)});
   this->own_remote_addresses_.insert(discovered.remote_address);
   ESP_LOGI(TAG, "Adopted runtime %s 0x%06x as \"%s\"",
            type == DeviceType::LIGHT ? "light" : "blind",
-           discovered.blind_address, rb.name.c_str());
+           discovered.blind_address, adopted_name.c_str());
   return true;
 }
 
@@ -147,6 +134,7 @@ bool Elero::remove_runtime_blind(uint32_t addr) {
   auto it = this->runtime_blinds_.find(addr);
   if (it != this->runtime_blinds_.end()) {
     ESP_LOGI(TAG, "Removed runtime blind 0x%06x", addr);
+    this->unregister_command_delivery(it->second.delivery.get());
     this->runtime_blinds_.erase(it);
     return true;
   }

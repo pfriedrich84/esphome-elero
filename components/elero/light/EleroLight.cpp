@@ -33,6 +33,13 @@ void EleroLight::setup() {
     return;
   }
   this->delivery_.configure(this->get_command_delivery_config());
+  this->delivery_.set_outcome_callback(
+      [this](const DeliveryOutcome &outcome) { this->handle_delivery_outcome_(outcome); });
+  if (!this->parent_->register_command_delivery(&this->delivery_)) {
+    ESP_LOGE(TAG, "Failed to register command delivery");
+    this->mark_failed();
+    return;
+  }
   this->parent_->register_light(this);
   // Queue an initial status CHECK so the text sensor populates shortly after
   // boot instead of waiting for the first external event.
@@ -109,8 +116,6 @@ void EleroLight::write_state(LightState *state) {
 void EleroLight::loop() {
   const uint32_t now = millis();
 
-  this->handle_commands(now);
-
   if (this->is_dimming_ && !this->pending_dimming_start_ && this->dim_duration_ > 0) {
     this->recompute_brightness();
 
@@ -133,20 +138,6 @@ void EleroLight::loop() {
       this->last_publish_ = now;
     }
   }
-}
-
-void EleroLight::handle_commands(uint32_t now) {
-  if (this->parent_->is_failed())
-    return;
-  auto outcome = this->delivery_.advance(
-      now, this->parent_->get_send_delay(), this->parent_->get_send_repeats(),
-      [this](const t_elero_command &packet, bool priority) {
-        t_elero_command copy = packet;
-        if (!priority)
-          return this->parent_->send_command(&copy);
-        return this->parent_->send_command_priority(&copy);
-      });
-  this->handle_delivery_outcome_(outcome);
 }
 
 void EleroLight::handle_delivery_outcome_(const DeliveryOutcome &outcome) {
@@ -201,7 +192,7 @@ IntentSubmitResult EleroLight::submit_intent(const CommandIntent &intent) {
 }
 
 IntentSubmitResult EleroLight::submit_intents_(const std::vector<CommandIntent> &intents) {
-  auto result = this->delivery_.submit_batch(intents);
+  auto result = this->delivery_.submit_batch(intents.data(), intents.size());
   if (result == IntentSubmitResult::REJECTED) {
     ESP_LOGW(TAG, "Command queue full for light 0x%06x", this->command_.blind_addr);
 #ifdef USE_TEXT_SENSOR

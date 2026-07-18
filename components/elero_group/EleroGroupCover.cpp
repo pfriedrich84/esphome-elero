@@ -10,8 +10,22 @@ static const char *const TAG = "elero.group";
 
 void EleroGroupCover::setup() {
   this->native_group_ = this->can_use_native_group_();
-  if (this->native_group_)
+  if (this->native_group_) {
     this->native_delivery_.configure(this->build_native_config_());
+    this->native_delivery_.set_outcome_callback(
+        [this](const DeliveryOutcome &outcome) { this->handle_native_outcome_(outcome); });
+    std::vector<CommandIntentDelivery *> member_deliveries;
+    member_deliveries.reserve(this->members_.size());
+    for (auto *member : this->members_)
+      member_deliveries.push_back(member->get_command_delivery());
+    if (this->parent_ == nullptr || !this->parent_->register_command_delivery(&this->native_delivery_) ||
+        !this->native_delivery_.set_native_fallback(member_deliveries.data(), member_deliveries.size())) {
+      if (this->parent_ != nullptr)
+        this->parent_->unregister_command_delivery(&this->native_delivery_);
+      ESP_LOGW(TAG, "Native group coordinator wiring failed; using atomic member delivery");
+      this->native_group_ = false;
+    }
+  }
   ESP_LOGD(TAG, "Group '%s' with %d members, native_group=%s, hide_members=%s",
            this->get_name().c_str(), (int) this->members_.size(),
            this->native_group_ ? "true" : "false", this->hide_members_ ? "true" : "false");
@@ -20,17 +34,6 @@ void EleroGroupCover::setup() {
 
 void EleroGroupCover::loop() {
   const uint32_t now = millis();
-  if (this->native_group_ && this->parent_ != nullptr && !this->parent_->is_failed()) {
-    auto outcome = this->native_delivery_.advance(
-        now, this->parent_->get_send_delay(), this->parent_->get_send_repeats(),
-        [this](const t_elero_command &packet, bool priority) {
-          t_elero_command copy = packet;
-          if (!priority)
-            return this->parent_->send_command(&copy);
-          return this->parent_->send_command_priority(&copy);
-        });
-    this->handle_native_outcome_(outcome);
-  }
   if (now - this->last_position_update_ >= 1000) {
     this->last_position_update_ = now;
     this->update_position_();
@@ -79,12 +82,15 @@ void EleroGroupCover::control(const cover::CoverCall &call) {
       if (intent_was_accepted(this->submit_group_intent_({CommandIntentKind::CLOSE, 0})))
         this->current_operation = cover::COVER_OPERATION_CLOSING;
     } else {
+      std::vector<CommandIntent> intents;
+      intents.reserve(this->members_.size());
       for (auto *member : this->members_) {
         const auto kind = pos > member->get_cover_position() ? CommandIntentKind::OPEN
                                                               : CommandIntentKind::CLOSE;
-        member->submit_intent({kind, 0});
+        intents.push_back({kind, 0});
       }
-      this->current_operation = cover::COVER_OPERATION_OPENING;
+      if (intent_was_accepted(this->submit_member_targets_(intents)))
+        this->current_operation = cover::COVER_OPERATION_OPENING;
     }
     this->publish_state();
   }
@@ -103,10 +109,8 @@ void EleroGroupCover::control(const cover::CoverCall &call) {
 }
 
 IntentSubmitResult EleroGroupCover::submit_group_intent_(const CommandIntent &intent) {
-  if (!this->native_group_) {
-    this->submit_to_members_(intent);
-    return IntentSubmitResult::ACCEPTED;
-  }
+  if (!this->native_group_)
+    return this->submit_to_members_(intent);
   const auto result = this->native_delivery_.submit(intent);
   if (group_delivery_policy::reject_native_submit_without_fanout(result)) {
     // Keep all compatible group work in the native lane. Sending only this
@@ -118,22 +122,38 @@ IntentSubmitResult EleroGroupCover::submit_group_intent_(const CommandIntent &in
   return result;
 }
 
-void EleroGroupCover::submit_to_members_(const CommandIntent &intent) {
-  for (auto *member : this->members_) {
-    if (member->submit_intent(intent) == IntentSubmitResult::REJECTED)
-      ESP_LOGW(TAG, "Member command queue full for blind 0x%06x", member->get_blind_address());
+IntentSubmitResult EleroGroupCover::submit_to_members_(const CommandIntent &intent) {
+  std::vector<CommandIntent> intents(this->members_.size(), intent);
+  return this->submit_member_targets_(intents);
+}
+
+IntentSubmitResult EleroGroupCover::submit_member_targets_(const std::vector<CommandIntent> &intents) {
+  if (intents.size() != this->members_.size() || intents.empty())
+    return IntentSubmitResult::REJECTED;
+  std::vector<CommandIntentDelivery::AtomicIntentTarget> targets;
+  targets.reserve(this->members_.size());
+  for (size_t i = 0; i < this->members_.size(); i++)
+    targets.push_back({this->members_[i]->get_command_delivery(), intents[i],
+                       this->members_[i]->should_defer_intent(intents[i])});
+  const auto result = CommandIntentDelivery::submit_atomic(targets.data(), targets.size());
+  if (result == IntentSubmitResult::REJECTED) {
+    ESP_LOGW(TAG, "Atomic member command rejected; no member queue was changed");
+    if (this->parent_ != nullptr)
+      this->parent_->increment_tx_drop_count();
   }
+  return result;
 }
 
 void EleroGroupCover::handle_native_outcome_(const DeliveryOutcome &outcome) {
-  if (outcome.event == DeliveryEvent::DROPPED) {
+  if (outcome.event == DeliveryEvent::DROPPED ||
+      outcome.event == DeliveryEvent::FALLBACK_MEMBER_DROPPED) {
     this->parent_->increment_tx_drop_count();
-    if (group_delivery_policy::after_native_outcome(outcome) == group_delivery_policy::Route::MEMBERS) {
-      ESP_LOGW(TAG, "Native group delivery failed before RF acceptance; falling back to members");
-      this->submit_to_members_(outcome.intent);
-    } else {
+    if (outcome.had_partial_delivery)
       ESP_LOGE(TAG, "Native group delivery failed after partial RF acceptance; not fanning out");
-    }
+    else
+      ESP_LOGE(TAG, "Native group/member fallback delivery exhausted retries");
+  } else if (outcome.event == DeliveryEvent::FALLBACK_STARTED) {
+    ESP_LOGW(TAG, "Native group delivery failed before RF acceptance; falling back to members");
   } else if (outcome.event == DeliveryEvent::STALE_CLEARED) {
     ESP_LOGW(TAG, "Stale native group command queue cleared without fan-out");
     this->parent_->increment_tx_drop_count();

@@ -28,6 +28,7 @@ class EleroLight : public light::LightOutput, public Component, public EleroLigh
   }
   IntentSubmitResult submit_intent(const CommandIntent &intent) override;
   CommandDeliveryConfig get_command_delivery_config() const override;
+  CommandIntentDelivery *get_command_delivery() override { return &this->delivery_; }
   void schedule_immediate_poll() override;
 
   // Web API helpers (EleroLightBase interface)
@@ -65,7 +66,6 @@ class EleroLight : public light::LightOutput, public Component, public EleroLigh
   void set_command_stop(uint8_t cmd) { this->command_stop_ = cmd; }
   void set_command_check(uint8_t cmd) { this->command_check_ = cmd; }
 
-  void handle_commands(uint32_t now);
   void recompute_brightness();
   void handle_delivery_outcome_(const DeliveryOutcome &outcome);
   IntentSubmitResult submit_intents_(const std::vector<CommandIntent> &intents);

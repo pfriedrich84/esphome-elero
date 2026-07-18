@@ -19,6 +19,8 @@ def test_group_member_bounds():
         elero_group._validate_members([{"members": ["one"]}])
     with pytest.raises(cv.Invalid, match="more than 10"):
         elero_group._validate_members([{"members": list(range(11))}])
+    with pytest.raises(cv.Invalid, match="same member"):
+        elero_group._validate_members([{"members": ["one", "one"]}])
     config = [{"members": ["one", "two"]}]
     assert elero_group._validate_members(config) is config
 

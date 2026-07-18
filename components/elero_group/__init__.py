@@ -23,6 +23,9 @@ def _validate_members(config):
             raise cv.Invalid("A group must have at least 2 members")
         if len(members) > 10:
             raise cv.Invalid("A group cannot have more than 10 members (RF packet limit)")
+        member_ids = [str(member) for member in members]
+        if len(set(member_ids)) != len(member_ids):
+            raise cv.Invalid("A group cannot contain the same member more than once")
     return config
 
 

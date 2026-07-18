@@ -68,6 +68,11 @@ class EleroCover : public cover::Cover, public Component, public EleroBlindBase 
   uint8_t get_payload_2() const override { return this->command_.payload[1]; }
   IntentSubmitResult submit_intent(const CommandIntent &intent) override;
   CommandDeliveryConfig get_command_delivery_config() const override;
+  CommandIntentDelivery *get_command_delivery() override { return &this->delivery_; }
+  bool should_defer_intent(const CommandIntent &intent) const override {
+    return this->stop_verification_active_.load() && intent.kind != CommandIntentKind::CHECK &&
+           intent.kind != CommandIntentKind::STOP;
+  }
   void apply_runtime_settings(uint32_t open_dur_ms, uint32_t close_dur_ms,
                               uint32_t poll_intvl_ms) override {
     this->open_duration_ = open_dur_ms;
@@ -76,7 +81,6 @@ class EleroCover : public cover::Cover, public Component, public EleroBlindBase 
   }
 
   void schedule_immediate_poll() override;
-  void handle_commands(uint32_t now);
   void recompute_position();
   void start_movement(cover::CoverOperation op);
   bool is_at_target();
@@ -113,7 +117,6 @@ class EleroCover : public cover::Cover, public Component, public EleroBlindBase 
   uint8_t command_stop_{0x10};
   uint8_t command_tilt_{0x24};
   CommandIntentDelivery delivery_;
-  CommandIntentDelivery deferred_delivery_;
   cover::CoverOperation last_operation_{cover::COVER_OPERATION_OPENING};
   uint32_t stop_verify_at_{0};          // millis() when to poll for stop confirmation (0 = inactive)
   uint8_t  stop_verify_retries_{ELERO_STOP_VERIFY_MAX_RETRIES};  // verification counter (MAX = inactive)
