@@ -6,8 +6,7 @@
 
 #define ELERO_HAS_COVER_POLL_HELPER 1
 #define ELERO_HAS_COVER_PUBLISH_HELPER 1
-#define ELERO_HAS_COVER_STOP_PRIORITY_HELPER 1
-#define ELERO_HAS_COVER_AUTO_STOP_PRIORITY_HELPER 1
+#define ELERO_HAS_COVER_COOLDOWN_HELPER 1
 
 namespace esphome {
 namespace elero {
@@ -22,16 +21,8 @@ inline bool should_publish_position(uint32_t now, uint32_t last_publish_ms,
   return (now - last_publish_ms) >= publish_interval_ms;
 }
 
-inline bool should_apply_stop_after_priority_result(bool priority_enqueued) {
-  return priority_enqueued;
-}
-
-inline bool should_schedule_stop_verification(bool priority_enqueued) {
-  return priority_enqueued;
-}
-
-inline bool should_apply_auto_stop_after_priority_result(bool priority_enqueued) {
-  return priority_enqueued;
+inline bool command_cooldown_active(uint32_t now, uint32_t cooldown_until) {
+  return cooldown_until != 0 && static_cast<int32_t>(now - cooldown_until) < 0;
 }
 
 // Returns the updated position after dead-reckoning.

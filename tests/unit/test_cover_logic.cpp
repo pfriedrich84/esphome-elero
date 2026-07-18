@@ -6,6 +6,14 @@ using namespace esphome::elero::cover_logic;
 static constexpr uint32_t TIMEOUT = 120000;  // ELERO_TIMEOUT_MOVEMENT
 static constexpr uint32_t BASE_COMP = 300;   // ELERO_TX_LATENCY_COMPENSATION_MS
 
+TEST(CommandCooldown, BlocksUntilDeadlineIncludingMillisWrap) {
+  EXPECT_FALSE(command_cooldown_active(1000, 0));
+  EXPECT_TRUE(command_cooldown_active(1000, 4000));
+  EXPECT_FALSE(command_cooldown_active(4000, 4000));
+  EXPECT_TRUE(command_cooldown_active(0xFFFFFFF0u, 20));
+  EXPECT_FALSE(command_cooldown_active(20, 20));
+}
+
 // ─── recompute_position ──────────────────────────────────────────────────────
 
 TEST(RecomputePosition, Idle_NoChange) {

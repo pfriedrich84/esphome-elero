@@ -68,6 +68,7 @@ class EleroLight : public light::LightOutput, public Component, public EleroLigh
   void handle_commands(uint32_t now);
   void recompute_brightness();
   void handle_delivery_outcome_(const DeliveryOutcome &outcome);
+  IntentSubmitResult submit_intents_(const std::vector<CommandIntent> &intents);
 
  protected:
 

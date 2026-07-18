@@ -110,7 +110,7 @@ void EleroCover::loop() {
       this->delivery_.discard_pending();
       // Cooldown: prevent delivery from sending anything for 3s,
       // giving the blind time to settle after the stop command storm.
-      this->last_command_ = now + 3000;
+      this->command_cooldown_until_ = now + 3000;
       this->publish_state(false);
     }
   }
@@ -122,33 +122,18 @@ void EleroCover::loop() {
     if(this->is_at_target()) {
       ESP_LOGI(TAG, "Blind 0x%06x reached target (pos=%.2f, target=%.2f), sending stop",
                this->command_.blind_addr, this->position, this->target_position_);
-      // Record position at stop trigger for post-verification correction
-      this->stop_trigger_position_ = this->position;
-      this->stop_trigger_ms_ = now;
-      // Urgent STOP replaces pending work and uses priority submission.
-      if (!cover_logic::should_apply_auto_stop_after_priority_result(
-              intent_was_accepted(this->submit_intent({CommandIntentKind::STOP, 0})))) {
-        this->stop_trigger_ms_ = 0;
-        return;
+      if (!this->pending_stop_transition_) {
+        // Queueing locally is not proof that the hub accepted the priority
+        // packet. Keep tracking movement until advance() reports first RF queue
+        // acceptance; only then transition to idle and start verification.
+        this->stop_trigger_position_ = this->position;
+        this->stop_trigger_ms_ = now;
+        if (!intent_was_accepted(this->submit_intent({CommandIntentKind::STOP, 0}))) {
+          this->stop_trigger_ms_ = 0;
+        } else {
+          this->pending_stop_transition_ = true;
+        }
       }
-      // Signal other covers to defer their non-stop commands
-      this->parent_->increment_stop_urgent();
-      this->stop_urgent_active_ = true;
-      this->current_operation = COVER_OPERATION_IDLE;
-      // Keep target_position_ at the user's requested value — do NOT reset
-      // to COVER_OPEN here.  If the motor is still decelerating, set_rx_state()
-      // may reactivate CLOSING.  With the original target preserved,
-      // is_at_target() will fire again and re-send stop.  Resetting to
-      // COVER_OPEN caused is_at_target() to return false (early exit for
-      // COVER_OPEN/COVER_CLOSED), letting the cover run to bottom.
-      // Schedule verification poll to confirm motor actually stopped
-      this->stop_verify_at_ = now + ELERO_STOP_VERIFY_DELAY_MS;
-      this->stop_verify_retries_ = 0;
-      // Publish final position immediately — the 1-second throttle below may
-      // skip this, and the next loop() won't enter this block (operation is IDLE),
-      // leaving HA stuck showing "opening/closing" with a stale position.
-      this->publish_state(false);
-      this->last_publish_ = now;
     }
 
     // Endpoint arrival: position dead-reckoned to 0.0 or 1.0 (clamped).
@@ -187,25 +172,50 @@ bool EleroCover::is_at_target() {
 void EleroCover::handle_commands(uint32_t now) {
   if (this->parent_->is_failed())
     return;
+  if (cover_logic::command_cooldown_active(now, this->command_cooldown_until_))
+    return;
+  this->command_cooldown_until_ = 0;
   auto outcome = this->delivery_.advance(
       now, this->parent_->get_send_delay(), this->parent_->get_send_repeats(),
       [this](const t_elero_command &packet, bool priority) {
         t_elero_command copy = packet;
         if (!priority)
           return this->parent_->send_command(&copy);
-        if (this->parent_->send_command_priority(&copy))
-          return SendResult::OK;
-        return this->parent_->is_failed() ? SendResult::FAILED : SendResult::QUEUE_FULL;
+        return this->parent_->send_command_priority(&copy);
       });
   this->handle_delivery_outcome_(outcome);
 }
 
 void EleroCover::handle_delivery_outcome_(const DeliveryOutcome &outcome) {
+  const bool first_stop_accepted = this->pending_stop_transition_ &&
+      outcome.intent.kind == CommandIntentKind::STOP && delivery_packet_was_accepted(outcome.event);
+  if (first_stop_accepted) {
+    this->pending_stop_transition_ = false;
+    if (!this->stop_urgent_active_) {
+      this->parent_->increment_stop_urgent();
+      this->stop_urgent_active_ = true;
+    }
+    this->current_operation = COVER_OPERATION_IDLE;
+    this->stop_verify_at_ = millis() + ELERO_STOP_VERIFY_DELAY_MS;
+    this->stop_verify_retries_ = 0;
+    this->publish_state(false);
+    this->last_publish_ = millis();
+  }
+
   if (outcome.event == DeliveryEvent::DROPPED) {
     ESP_LOGE(TAG, "Delivery retries exhausted for blind 0x%06x", this->command_.blind_addr);
     this->parent_->increment_tx_drop_count();
+    if (outcome.intent.kind == CommandIntentKind::STOP && this->pending_stop_transition_) {
+      this->pending_stop_transition_ = false;
+      this->stop_trigger_ms_ = 0;
+    }
   } else if (outcome.event == DeliveryEvent::STALE_CLEARED) {
     ESP_LOGW(TAG, "Stale Command queue cleared for blind 0x%06x", this->command_.blind_addr);
+    this->parent_->increment_tx_drop_count();
+    if (outcome.intent.kind == CommandIntentKind::STOP && this->pending_stop_transition_) {
+      this->pending_stop_transition_ = false;
+      this->stop_trigger_ms_ = 0;
+    }
   }
 #ifdef USE_TEXT_SENSOR
   if (this->queue_full_published_ && outcome.queue_size == 0)
@@ -453,6 +463,7 @@ void EleroCover::control(const cover::CoverCall &call) {
 
 void EleroCover::start_movement(CoverOperation dir) {
   // Cancel any pending stop verification — a new movement command supersedes it
+  this->pending_stop_transition_ = false;
   this->stop_verify_at_ = 0;
   this->stop_verify_retries_ = ELERO_STOP_VERIFY_MAX_RETRIES;
   this->stop_trigger_ms_ = 0;
@@ -483,19 +494,14 @@ void EleroCover::start_movement(CoverOperation dir) {
                this->command_.blind_addr, this->position);
       this->stop_trigger_position_ = this->position;
       this->stop_trigger_ms_ = millis();
-      if (!cover_logic::should_apply_stop_after_priority_result(
-              intent_was_accepted(this->submit_intent({CommandIntentKind::STOP, 0})))) {
+      if (!intent_was_accepted(this->submit_intent({CommandIntentKind::STOP, 0}))) {
         this->stop_trigger_ms_ = 0;
         return;
       }
-      this->parent_->increment_stop_urgent();
-      this->stop_urgent_active_ = true;
-      // Schedule verification to confirm motor actually stopped
-      if (cover_logic::should_schedule_stop_verification(true)) {
-        this->stop_verify_at_ = millis() + ELERO_STOP_VERIFY_DELAY_MS;
-        this->stop_verify_retries_ = 0;
-      }
-    break;
+      this->pending_stop_transition_ = true;
+      // The operation and verification state are committed by
+      // handle_delivery_outcome_ after the first priority packet is accepted.
+      return;
   }
 
   if(dir == this->current_operation)

@@ -89,7 +89,7 @@ class EleroCover : public cover::Cover, public Component, public EleroBlindBase 
   };
   Elero *parent_;
   uint32_t last_poll_{0};
-  uint32_t last_command_{0};
+  uint32_t command_cooldown_until_{0};
   uint32_t poll_offset_{0};
   uint32_t movement_start_{0};
   uint32_t open_duration_{0};
@@ -118,6 +118,7 @@ class EleroCover : public cover::Cover, public Component, public EleroBlindBase 
   float    stop_trigger_position_{0};   // position when auto-stop was triggered (for correction)
   uint32_t stop_trigger_ms_{0};         // millis() when auto-stop was triggered
   bool     stop_urgent_active_{false};  // true if this cover has incremented stop_urgent_count_
+  bool     pending_stop_transition_{false};  // wait for first hub-accepted STOP packet
 };
 
 } // namespace elero

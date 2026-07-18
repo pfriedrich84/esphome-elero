@@ -419,7 +419,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void register_light(EleroLightBase *light);
   SendResult send_command(t_elero_command *cmd);
   /// Priority TX: bypasses the normal queue for time-critical commands (e.g. stop).
-  bool send_command_priority(t_elero_command *cmd);
+  SendResult send_command_priority(t_elero_command *cmd);
   /// Current number of messages waiting in the normal TX queue (for dynamic latency compensation).
   uint32_t get_tx_queue_depth() const {
     return tx_queue_ ? uxQueueMessagesWaiting(tx_queue_) : 0;

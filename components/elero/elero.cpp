@@ -506,11 +506,11 @@ SendResult Elero::send_command(t_elero_command *cmd) {
 // send_command_priority — public API (Core 1): enqueue a high-priority TX
 // command (e.g. stop) that bypasses the normal queue.
 // ---------------------------------------------------------------------------
-bool Elero::send_command_priority(t_elero_command *cmd) {
+SendResult Elero::send_command_priority(t_elero_command *cmd) {
   if (this->spi_failed_.load(std::memory_order_acquire))
-    return false;
+    return SendResult::FAILED;
   if (!this->tx_priority_queue_)
-    return false;
+    return SendResult::FAILED;
 
   // Backward compat: single-dest callers only set blind_addr, not dest_addrs[]
   if (cmd->num_dests <= 1 && cmd->dest_addrs[0] == 0) {
@@ -524,11 +524,10 @@ bool Elero::send_command_priority(t_elero_command *cmd) {
   msg.tx.enqueued_at_ms = millis();
   if (xQueueSend(this->tx_priority_queue_, &msg, pdMS_TO_TICKS(10)) == pdTRUE) {
     this->observe_tx_queue_depth_();
-    return true;
+    return SendResult::OK;
   }
-  ESP_LOGW(TAG, "Priority TX queue full, command to 0x%06x dropped", cmd->blind_addr);
-  this->tx_drop_count_.fetch_add(1, std::memory_order_relaxed);
-  return false;
+  ESP_LOGV(TAG, "Priority TX queue full, will retry for 0x%06x", cmd->blind_addr);
+  return SendResult::QUEUE_FULL;
 }
 
 void Elero::increment_parser_drop_count(const char *reason) {

@@ -63,6 +63,40 @@ TEST(CommandDelivery, CoalescesChecksAndUnsentTargetChanges) {
   EXPECT_EQ(delivery.size(), 2u);
 }
 
+TEST(CommandDelivery, CoalescingDoesNotCrossOrderedIntentBarriers) {
+  CommandIntentDelivery delivery(config());
+  delivery.submit({CommandIntentKind::OPEN, 0});
+  delivery.submit(CommandIntent::custom(0x77));
+  delivery.submit({CommandIntentKind::CLOSE, 0});
+  delivery.submit({CommandIntentKind::TILT, 0});
+  delivery.submit({CommandIntentKind::OPEN, 0});
+
+  std::vector<uint8_t> bytes;
+  auto submit = [&](const t_elero_command &packet, bool) {
+    bytes.push_back(packet.payload[4]);
+    return SendResult::OK;
+  };
+  for (uint32_t now = 1; !delivery.empty(); now++)
+    delivery.advance(now, 0, 1, submit);
+  EXPECT_EQ(bytes, (std::vector<uint8_t>{0x21, 0x77, 0x41, 0x24, 0x21}));
+}
+
+TEST(CommandDelivery, ReplacingUnsentFrontResetsRetryAndAgeState) {
+  CommandIntentDelivery delivery(config());
+  delivery.submit({CommandIntentKind::OPEN, 0});
+  EXPECT_EQ(delivery.advance(1, 0, 1, [](const auto &, bool) { return SendResult::FAILED; }).event,
+            DeliveryEvent::RETRY_SCHEDULED);
+  EXPECT_EQ(delivery.submit({CommandIntentKind::CLOSE, 0}), IntentSubmitResult::COALESCED);
+
+  uint8_t byte = 0;
+  auto outcome = delivery.advance(2, 0, 1, [&](const auto &packet, bool) {
+    byte = packet.payload[4];
+    return SendResult::OK;
+  });
+  EXPECT_EQ(outcome.event, DeliveryEvent::COMPLETED);
+  EXPECT_EQ(byte, 0x41);
+}
+
 TEST(CommandDelivery, NeverRewritesPartiallyDeliveredTarget) {
   CommandIntentDelivery delivery(config());
   delivery.submit({CommandIntentKind::OPEN, 0});
@@ -79,6 +113,20 @@ TEST(CommandDelivery, NeverRewritesPartiallyDeliveredTarget) {
   ASSERT_EQ(bytes.size(), 2u);
   EXPECT_EQ(bytes[0], 0x21);
   EXPECT_EQ(bytes[1], 0x41);
+}
+
+TEST(CommandDelivery, StopIsNotAcceptedWhilePriorityQueueIsCongested) {
+  CommandIntentDelivery delivery(config());
+  delivery.submit({CommandIntentKind::STOP, 0});
+  auto queued = delivery.advance(1, 0, 1, [](const auto &, bool priority) {
+    EXPECT_TRUE(priority);
+    return SendResult::QUEUE_FULL;
+  });
+  EXPECT_FALSE(delivery_packet_was_accepted(queued.event));
+  EXPECT_EQ(delivery.size(), 1u);
+
+  auto accepted = delivery.advance(2, 0, 1, [](const auto &, bool) { return SendResult::OK; });
+  EXPECT_TRUE(delivery_packet_was_accepted(accepted.event));
 }
 
 TEST(CommandDelivery, StopPreemptsAndRetiresPartialCounter) {
@@ -98,6 +146,17 @@ TEST(CommandDelivery, StopPreemptsAndRetiresPartialCounter) {
   EXPECT_TRUE(priority);
   EXPECT_EQ(observed.counter, 2);
   EXPECT_EQ(observed.payload[4], 0x10);
+}
+
+TEST(CommandDelivery, AcceptedRepeatsRefreshStaleProgress) {
+  CommandIntentDelivery delivery(config());
+  delivery.submit({CommandIntentKind::OPEN, 0});
+  auto ok = [](const auto &, bool) { return SendResult::OK; };
+  EXPECT_EQ(delivery.advance(1, 0, 3, ok).event, DeliveryEvent::PACKET_ACCEPTED);
+  EXPECT_EQ(delivery.advance(ELERO_COMMAND_QUEUE_MAX_AGE_MS, 0, 3, ok).event,
+            DeliveryEvent::PACKET_ACCEPTED);
+  EXPECT_EQ(delivery.advance(2 * ELERO_COMMAND_QUEUE_MAX_AGE_MS - 1, 0, 3, ok).event,
+            DeliveryEvent::COMPLETED);
 }
 
 TEST(CommandDelivery, QueueFullPreservesIntentCounterAndFailureBudget) {
@@ -152,6 +211,30 @@ TEST(CommandDelivery, RejectsNewestWhenCapacityCannotBeCoalesced) {
   for (uint8_t i = 0; i < ELERO_MAX_COMMAND_QUEUE; i++)
     EXPECT_EQ(delivery.submit(CommandIntent::custom(i)), IntentSubmitResult::ACCEPTED);
   EXPECT_EQ(delivery.submit(CommandIntent::custom(0xFE)), IntentSubmitResult::REJECTED);
+}
+
+TEST(CommandDelivery, BatchSubmissionRollsBackWhenWholeSequenceDoesNotFit) {
+  CommandIntentDelivery delivery(config());
+  for (uint8_t i = 0; i < ELERO_MAX_COMMAND_QUEUE - 1; i++)
+    ASSERT_EQ(delivery.submit(CommandIntent::custom(i)), IntentSubmitResult::ACCEPTED);
+  EXPECT_EQ(delivery.submit_batch({{CommandIntentKind::ON, 0},
+                                   {CommandIntentKind::DIM_DOWN, 0}}),
+            IntentSubmitResult::REJECTED);
+  EXPECT_EQ(delivery.size(), ELERO_MAX_COMMAND_QUEUE - 1);
+}
+
+TEST(CommandDelivery, BatchSubmissionPreservesMultiIntentOrder) {
+  CommandIntentDelivery delivery(config());
+  ASSERT_TRUE(intent_was_accepted(delivery.submit_batch({{CommandIntentKind::ON, 0},
+                                                          {CommandIntentKind::DIM_DOWN, 0}})));
+  std::vector<uint8_t> bytes;
+  auto submit = [&](const t_elero_command &packet, bool) {
+    bytes.push_back(packet.payload[4]);
+    return SendResult::OK;
+  };
+  delivery.advance(1, 0, 1, submit);
+  delivery.advance(2, 0, 1, submit);
+  EXPECT_EQ(bytes, (std::vector<uint8_t>{0x20, 0x40}));
 }
 
 TEST(CommandDelivery, SubmissionIsThreadSafe) {

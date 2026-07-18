@@ -11,6 +11,7 @@
 #include <deque>
 #include <functional>
 #include <mutex>
+#include <vector>
 
 namespace esphome {
 namespace elero {
@@ -143,54 +144,41 @@ class CommandIntentDelivery {
 
   IntentSubmitResult submit(const CommandIntent &intent) {
     std::lock_guard<std::mutex> lock(this->mutex_);
+    return this->submit_locked_(intent);
+  }
 
-    // STOP supersedes all older intent. A partially accepted intent consumed
-    // its rolling counter even though it never completed.
-    if (intent.kind == CommandIntentKind::STOP) {
-      if (this->queue_.size() == 1 && this->accepted_repeats_ == 0 && this->queue_.front() == intent)
-        return IntentSubmitResult::COALESCED;
-      if (this->accepted_repeats_ > 0)
-        this->advance_counter_();
-      this->queue_.clear();
-      this->accepted_repeats_ = 0;
-      this->failure_count_ = 0;
-      this->age_started_ = false;
-      this->queue_.push_back(intent);
-      return IntentSubmitResult::ACCEPTED;
-    }
+  // Atomically enqueue a sequence of semantic intents. This is used for
+  // operations such as "turn on, then dim down", where accepting only part of
+  // the sequence would leave both RF and entity state inconsistent.
+  IntentSubmitResult submit_batch(const std::vector<CommandIntent> &intents) {
+    std::lock_guard<std::mutex> lock(this->mutex_);
+    const auto queue = this->queue_;
+    const uint8_t counter = this->counter_;
+    const uint8_t accepted_repeats = this->accepted_repeats_;
+    const uint8_t failure_count = this->failure_count_;
+    const uint32_t last_attempt_ms = this->last_attempt_ms_;
+    const uint32_t last_progress_ms = this->last_progress_ms_;
+    const bool age_started = this->age_started_;
+    const bool attempt_started = this->attempt_started_;
 
-    // CHECK is polling, not ordered user work. One pending CHECK is enough.
-    if (intent.kind == CommandIntentKind::CHECK) {
-      for (const auto &queued : this->queue_) {
-        if (queued.kind == CommandIntentKind::CHECK)
-          return IntentSubmitResult::COALESCED;
+    IntentSubmitResult combined = IntentSubmitResult::COALESCED;
+    for (const auto &intent : intents) {
+      const auto result = this->submit_locked_(intent);
+      if (result == IntentSubmitResult::REJECTED) {
+        this->queue_ = queue;
+        this->counter_ = counter;
+        this->accepted_repeats_ = accepted_repeats;
+        this->failure_count_ = failure_count;
+        this->last_attempt_ms_ = last_attempt_ms;
+        this->last_progress_ms_ = last_progress_ms;
+        this->age_started_ = age_started;
+        this->attempt_started_ = attempt_started;
+        return result;
       }
+      if (result == IntentSubmitResult::ACCEPTED)
+        combined = result;
     }
-
-    // Identical unsent semantic intents collapse. CUSTOM intentionally remains
-    // ordered because its meaning is not known to this Module.
-    if (intent.kind != CommandIntentKind::CUSTOM) {
-      for (size_t i = 0; i < this->queue_.size(); i++) {
-        if (this->queue_[i] == intent && !(i == 0 && this->accepted_repeats_ > 0))
-          return IntentSubmitResult::COALESCED;
-      }
-    }
-
-    // A newer conflicting target state replaces only an unsent older target.
-    for (size_t i = this->queue_.size(); i > 0; i--) {
-      const size_t index = i - 1;
-      if (this->conflicts_(this->queue_[index].kind, intent.kind)) {
-        if (index == 0 && this->accepted_repeats_ > 0)
-          break;
-        this->queue_[index] = intent;
-        return IntentSubmitResult::COALESCED;
-      }
-    }
-
-    if (this->queue_.size() >= ELERO_MAX_COMMAND_QUEUE)
-      return IntentSubmitResult::REJECTED;
-    this->queue_.push_back(intent);
-    return IntentSubmitResult::ACCEPTED;
+    return combined;
   }
 
   DeliveryOutcome advance(uint32_t now, uint32_t base_delay_ms, uint8_t required_repeats,
@@ -250,6 +238,7 @@ class CommandIntentDelivery {
 
     this->failure_count_ = 0;
     this->accepted_repeats_++;
+    this->last_progress_ms_ = now;
     const uint8_t repeats = required_repeats == 0 ? 1 : required_repeats;
     if (this->accepted_repeats_ < repeats)
       return this->outcome_(DeliveryEvent::PACKET_ACCEPTED, intent, true);
@@ -269,8 +258,7 @@ class CommandIntentDelivery {
       this->advance_counter_();
     this->queue_.clear();
     this->accepted_repeats_ = 0;
-    this->failure_count_ = 0;
-    this->age_started_ = false;
+    this->reset_front_state_();
   }
 
   size_t size() const {
@@ -292,6 +280,76 @@ class CommandIntentDelivery {
   }
 
  private:
+  IntentSubmitResult submit_locked_(const CommandIntent &intent) {
+    // STOP supersedes all older intent. A partially accepted intent consumed
+    // its rolling counter even though it never completed.
+    if (intent.kind == CommandIntentKind::STOP) {
+      if (this->queue_.size() == 1 && this->accepted_repeats_ == 0 && this->queue_.front() == intent)
+        return IntentSubmitResult::COALESCED;
+      if (this->accepted_repeats_ > 0)
+        this->advance_counter_();
+      this->queue_.clear();
+      this->accepted_repeats_ = 0;
+      this->reset_front_state_();
+      this->queue_.push_back(intent);
+      return IntentSubmitResult::ACCEPTED;
+    }
+
+    // CHECK is polling, not ordered user work. One pending CHECK is enough.
+    if (intent.kind == CommandIntentKind::CHECK) {
+      for (const auto &queued : this->queue_) {
+        if (queued.kind == CommandIntentKind::CHECK)
+          return IntentSubmitResult::COALESCED;
+      }
+    } else if (this->is_target_(intent.kind)) {
+      // Only rewrite the nearest unsent target in the same ordered segment.
+      // CHECK may be crossed because it is polling; CUSTOM, TILT and intents
+      // from another semantic family are ordering barriers.
+      for (size_t i = this->queue_.size(); i > 0; i--) {
+        const size_t index = i - 1;
+        const auto queued_kind = this->queue_[index].kind;
+        if (queued_kind == CommandIntentKind::CHECK)
+          continue;
+        if (!this->same_target_family_(queued_kind, intent.kind))
+          break;
+        if (index == 0 && this->accepted_repeats_ > 0)
+          break;
+        if (this->queue_[index] == intent)
+          return IntentSubmitResult::COALESCED;
+        this->queue_[index] = intent;
+        if (index == 0)
+          this->reset_front_state_();
+        return IntentSubmitResult::COALESCED;
+      }
+    } else if (intent.kind != CommandIntentKind::CUSTOM) {
+      // Non-target semantic work only coalesces within its current ordered
+      // segment; never jump over a CUSTOM or another meaningful intent.
+      for (size_t i = this->queue_.size(); i > 0; i--) {
+        const size_t index = i - 1;
+        if (this->queue_[index].kind == CommandIntentKind::CHECK)
+          continue;
+        if (this->queue_[index] == intent && !(index == 0 && this->accepted_repeats_ > 0))
+          return IntentSubmitResult::COALESCED;
+        break;
+      }
+    }
+
+    if (this->queue_.size() >= ELERO_MAX_COMMAND_QUEUE)
+      return IntentSubmitResult::REJECTED;
+    this->queue_.push_back(intent);
+    return IntentSubmitResult::ACCEPTED;
+  }
+
+  static bool is_target_(CommandIntentKind kind) {
+    return kind == CommandIntentKind::OPEN || kind == CommandIntentKind::CLOSE ||
+           kind == CommandIntentKind::ON || kind == CommandIntentKind::OFF ||
+           kind == CommandIntentKind::DIM_UP || kind == CommandIntentKind::DIM_DOWN;
+  }
+
+  static bool same_target_family_(CommandIntentKind current, CommandIntentKind next) {
+    return current == next || conflicts_(current, next);
+  }
+
   static bool conflicts_(CommandIntentKind current, CommandIntentKind next) {
     return ((current == CommandIntentKind::OPEN || current == CommandIntentKind::CLOSE) &&
             (next == CommandIntentKind::OPEN || next == CommandIntentKind::CLOSE)) ||
@@ -299,6 +357,14 @@ class CommandIntentDelivery {
             (next == CommandIntentKind::ON || next == CommandIntentKind::OFF)) ||
            ((current == CommandIntentKind::DIM_UP || current == CommandIntentKind::DIM_DOWN) &&
             (next == CommandIntentKind::DIM_UP || next == CommandIntentKind::DIM_DOWN));
+  }
+
+  void reset_front_state_() {
+    this->failure_count_ = 0;
+    this->age_started_ = false;
+    this->attempt_started_ = false;
+    this->last_attempt_ms_ = 0;
+    this->last_progress_ms_ = 0;
   }
 
   void normalise_destinations_() {
@@ -353,6 +419,10 @@ class CommandIntentDelivery {
 
 inline bool intent_was_accepted(IntentSubmitResult result) {
   return result != IntentSubmitResult::REJECTED;
+}
+
+inline bool delivery_packet_was_accepted(DeliveryEvent event) {
+  return event == DeliveryEvent::PACKET_ACCEPTED || event == DeliveryEvent::COMPLETED;
 }
 
 }  // namespace elero

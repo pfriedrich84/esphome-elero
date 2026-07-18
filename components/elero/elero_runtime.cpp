@@ -25,15 +25,14 @@ void Elero::drain_runtime_queues() {
           t_elero_command copy = packet;
           if (!priority)
             return this->send_command(&copy);
-          if (this->send_command_priority(&copy))
-            return SendResult::OK;
-          return this->is_failed() ? SendResult::FAILED : SendResult::QUEUE_FULL;
+          return this->send_command_priority(&copy);
         });
     if (outcome.event == DeliveryEvent::DROPPED) {
       ESP_LOGE(TAG, "Delivery retries exhausted for runtime blind 0x%06x", rb.blind_address);
       this->increment_tx_drop_count();
     } else if (outcome.event == DeliveryEvent::STALE_CLEARED) {
       ESP_LOGW(TAG, "Stale Command queue cleared for runtime blind 0x%06x", rb.blind_address);
+      this->increment_tx_drop_count();
     }
   }
 }

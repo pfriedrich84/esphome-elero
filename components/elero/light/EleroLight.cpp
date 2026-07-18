@@ -54,68 +54,53 @@ void EleroLight::write_state(LightState *state) {
   if (this->ignore_write_state_) return;
   this->state_ = state;
 
-  bool new_on = state->current_values.is_on();
-  float new_brightness = state->current_values.get_brightness();
+  const bool new_on = state->current_values.is_on();
+  const float new_brightness = state->current_values.get_brightness();
+  std::vector<CommandIntent> intents;
+  bool start_dimming = false;
+  bool dim_up = true;
+  float accepted_brightness = this->brightness_;
+
   if (!new_on) {
-    if (!intent_was_accepted(this->submit_intent({CommandIntentKind::OFF, 0})))
-      return;
-    this->is_on_ = false;
-    this->is_dimming_ = false;
-    this->brightness_ = 0.0f;
-    return;
-  }
-
-  // Light should be on
-  this->is_on_ = true;
-
-  if (this->dim_duration_ == 0) {
-    // No brightness support: just toggle on
-    if (!intent_was_accepted(this->submit_intent({CommandIntentKind::ON, 0})))
-      return;
-    this->brightness_ = 1.0f;
-    return;
-  }
-
-  // Brightness control via timing
-  this->target_brightness_ = new_brightness;
-  this->is_dimming_ = false;
-
-  if (new_brightness >= 1.0f) {
-    // Full brightness shortcut
-    if (!intent_was_accepted(this->submit_intent({CommandIntentKind::ON, 0})))
-      return;
-    this->brightness_ = 1.0f;
-    return;
-  }
-
-  if (this->brightness_ < 0.01f) {
-    // Currently off; turn on to full first, then dim down
-    if (!intent_was_accepted(this->submit_intent({CommandIntentKind::ON, 0})))
-      return;
-    this->brightness_ = 1.0f;
-    // Now fall through and initiate dim-down
-  }
-
-  if (new_brightness > this->brightness_ + 0.01f) {
-    ESP_LOGD(TAG, "Dimming up 0x%06x from %.2f to %.2f",
-             this->command_.blind_addr, this->brightness_, new_brightness);
-    if (!intent_was_accepted(this->submit_intent({CommandIntentKind::DIM_UP, 0})))
-      return;
-    this->is_dimming_ = true;
-    this->dim_up_ = true;
-    this->dimming_start_ = millis();
-    this->last_recompute_time_ = millis();
+    intents.push_back({CommandIntentKind::OFF, 0});
+    accepted_brightness = 0.0f;
+  } else if (this->dim_duration_ == 0 || new_brightness >= 1.0f) {
+    intents.push_back({CommandIntentKind::ON, 0});
+    accepted_brightness = 1.0f;
+  } else if (this->brightness_ < 0.01f) {
+    // This pair must be accepted atomically: DIM_DOWN without its preceding ON
+    // would act on an unknown starting brightness.
+    intents.push_back({CommandIntentKind::ON, 0});
+    intents.push_back({CommandIntentKind::DIM_DOWN, 0});
+    accepted_brightness = 1.0f;
+    start_dimming = true;
+    dim_up = false;
+  } else if (new_brightness > this->brightness_ + 0.01f) {
+    intents.push_back({CommandIntentKind::DIM_UP, 0});
+    start_dimming = true;
+    dim_up = true;
   } else if (new_brightness < this->brightness_ - 0.01f) {
-    ESP_LOGD(TAG, "Dimming down 0x%06x from %.2f to %.2f",
-             this->command_.blind_addr, this->brightness_, new_brightness);
-    if (!intent_was_accepted(this->submit_intent({CommandIntentKind::DIM_DOWN, 0})))
-      return;
-    this->is_dimming_ = true;
-    this->dim_up_ = false;
-    this->dimming_start_ = millis();
-    this->last_recompute_time_ = millis();
+    intents.push_back({CommandIntentKind::DIM_DOWN, 0});
+    start_dimming = true;
+    dim_up = false;
   }
-  // If within tolerance: no action needed, current level is already correct
+
+  if (!intents.empty() && !intent_was_accepted(this->submit_intents_(intents)))
+    return;
+
+  // Commit local state only after the complete RF intent transaction has queue
+  // capacity. A rejected batch leaves all prior state untouched.
+  this->is_on_ = new_on;
+  this->target_brightness_ = new_brightness;
+  this->brightness_ = accepted_brightness;
+  this->is_dimming_ = start_dimming;
+  if (start_dimming) {
+    ESP_LOGD(TAG, "Dimming %s 0x%06x from %.2f to %.2f", dim_up ? "up" : "down",
+             this->command_.blind_addr, this->brightness_, new_brightness);
+    this->dim_up_ = dim_up;
+    this->dimming_start_ = millis();
+    this->last_recompute_time_ = this->dimming_start_;
+  }
 }
 
 void EleroLight::loop() {
@@ -133,8 +118,7 @@ void EleroLight::loop() {
       at_target = this->brightness_ <= this->target_brightness_;
     }
 
-    if (at_target) {
-      this->submit_intent({CommandIntentKind::STOP, 0});
+    if (at_target && intent_was_accepted(this->submit_intent({CommandIntentKind::STOP, 0}))) {
       this->brightness_ = this->target_brightness_;
       this->is_dimming_ = false;
     }
@@ -157,9 +141,7 @@ void EleroLight::handle_commands(uint32_t now) {
         t_elero_command copy = packet;
         if (!priority)
           return this->parent_->send_command(&copy);
-        if (this->parent_->send_command_priority(&copy))
-          return SendResult::OK;
-        return this->parent_->is_failed() ? SendResult::FAILED : SendResult::QUEUE_FULL;
+        return this->parent_->send_command_priority(&copy);
       });
   this->handle_delivery_outcome_(outcome);
 }
@@ -170,6 +152,7 @@ void EleroLight::handle_delivery_outcome_(const DeliveryOutcome &outcome) {
     this->parent_->increment_tx_drop_count();
   } else if (outcome.event == DeliveryEvent::STALE_CLEARED) {
     ESP_LOGW(TAG, "Stale Command queue cleared for light 0x%06x", this->command_.blind_addr);
+    this->parent_->increment_tx_drop_count();
   }
 #ifdef USE_TEXT_SENSOR
   if (this->queue_full_published_ && outcome.queue_size == 0)
@@ -197,7 +180,11 @@ CommandDeliveryConfig EleroLight::get_command_delivery_config() const {
 }
 
 IntentSubmitResult EleroLight::submit_intent(const CommandIntent &intent) {
-  auto result = this->delivery_.submit(intent);
+  return this->submit_intents_({intent});
+}
+
+IntentSubmitResult EleroLight::submit_intents_(const std::vector<CommandIntent> &intents) {
+  auto result = this->delivery_.submit_batch(intents);
   if (result == IntentSubmitResult::REJECTED) {
     ESP_LOGW(TAG, "Command queue full for light 0x%06x", this->command_.blind_addr);
 #ifdef USE_TEXT_SENSOR

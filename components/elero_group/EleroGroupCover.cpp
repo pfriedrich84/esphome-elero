@@ -1,4 +1,5 @@
 #include "EleroGroupCover.h"
+#include "../elero/elero_group_delivery_policy.h"
 #include "esphome/core/log.h"
 #include <cmath>
 
@@ -26,9 +27,7 @@ void EleroGroupCover::loop() {
           t_elero_command copy = packet;
           if (!priority)
             return this->parent_->send_command(&copy);
-          if (this->parent_->send_command_priority(&copy))
-            return SendResult::OK;
-          return this->parent_->is_failed() ? SendResult::FAILED : SendResult::QUEUE_FULL;
+          return this->parent_->send_command_priority(&copy);
         });
     this->handle_native_outcome_(outcome);
   }
@@ -109,7 +108,7 @@ void EleroGroupCover::submit_group_intent_(const CommandIntent &intent) {
     return;
   }
   const auto result = this->native_delivery_.submit(intent);
-  if (result == IntentSubmitResult::REJECTED) {
+  if (group_delivery_policy::after_native_submit(result) == group_delivery_policy::Route::MEMBERS) {
     ESP_LOGW(TAG, "Native group command queue full; using member delivery");
     this->submit_to_members_(intent);
   }
@@ -125,7 +124,7 @@ void EleroGroupCover::submit_to_members_(const CommandIntent &intent) {
 void EleroGroupCover::handle_native_outcome_(const DeliveryOutcome &outcome) {
   if (outcome.event == DeliveryEvent::DROPPED) {
     this->parent_->increment_tx_drop_count();
-    if (!outcome.had_partial_delivery) {
+    if (group_delivery_policy::after_native_outcome(outcome) == group_delivery_policy::Route::MEMBERS) {
       ESP_LOGW(TAG, "Native group delivery failed before RF acceptance; falling back to members");
       this->submit_to_members_(outcome.intent);
     } else {
@@ -133,21 +132,16 @@ void EleroGroupCover::handle_native_outcome_(const DeliveryOutcome &outcome) {
     }
   } else if (outcome.event == DeliveryEvent::STALE_CLEARED) {
     ESP_LOGW(TAG, "Stale native group command queue cleared without fan-out");
+    this->parent_->increment_tx_drop_count();
   }
 }
 
 bool EleroGroupCover::can_use_native_group_() const {
-  if (this->members_.size() < 2 || this->members_.size() > ELERO_MAX_DESTS)
-    return false;
-  const auto first = this->members_[0]->get_command_delivery_config();
-  for (size_t i = 1; i < this->members_.size(); i++) {
-    const auto other = this->members_[i]->get_command_delivery_config();
-    if (!command_profile::can_share_native_group(first.profile, other.profile) ||
-        first.mapping.open != other.mapping.open || first.mapping.close != other.mapping.close ||
-        first.mapping.stop != other.mapping.stop || first.mapping.tilt != other.mapping.tilt)
-      return false;
-  }
-  return true;
+  std::vector<CommandDeliveryConfig> configs;
+  configs.reserve(this->members_.size());
+  for (auto *member : this->members_)
+    configs.push_back(member->get_command_delivery_config());
+  return group_delivery_policy::native_profiles_compatible(configs);
 }
 
 CommandDeliveryConfig EleroGroupCover::build_native_config_() const {
