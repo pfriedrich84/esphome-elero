@@ -249,6 +249,20 @@ TEST(CommandDelivery, DetachingActiveLaneRetiresPartiallyUsedCounter) {
   EXPECT_TRUE(delivery.empty());
 }
 
+TEST(CommandDelivery, DiscardingActiveCheckRetiresPartiallyUsedCounter) {
+  auto delivery_config = config();
+  ProfileDeliveryCoordinator coordinator(DeliveryProfileKey::from(delivery_config.profile));
+  CommandIntentDelivery delivery(delivery_config);
+  ASSERT_TRUE(coordinator.attach(&delivery));
+  ASSERT_EQ(delivery.submit({CommandIntentKind::CHECK, 0}, 0), IntentSubmitResult::ACCEPTED);
+  EXPECT_EQ(coordinator.advance(1, 0, 2, [](const auto &, bool) { return SendResult::OK; }).event,
+            DeliveryEvent::PACKET_ACCEPTED);
+
+  delivery.discard_checks();
+  EXPECT_EQ(coordinator.counter(), 2);
+  EXPECT_TRUE(delivery.empty());
+}
+
 TEST(CommandDelivery, RejectsNewestWhenCapacityCannotBeCoalesced) {
   AttachedDelivery delivery(config());
   for (uint8_t i = 0; i < ELERO_MAX_COMMAND_QUEUE; i++)

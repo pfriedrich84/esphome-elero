@@ -591,8 +591,11 @@ inline void CommandIntentDelivery::discard_checks() {
   for (size_t i = this->queue_.size; i > 0; i--) {
     const size_t index = i - 1;
     if (this->queue_.entries[index].intent.kind == CommandIntentKind::CHECK) {
-      if (this->coordinator_->active_lane_ == this && this->coordinator_->active_index_ == index)
+      if (this->coordinator_->active_lane_ == this && this->coordinator_->active_index_ == index) {
+        if (this->coordinator_->accepted_repeats_ > 0)
+          this->coordinator_->advance_counter_();
         this->coordinator_->reset_active_();
+      }
       this->erase_at_(index);
     }
   }
