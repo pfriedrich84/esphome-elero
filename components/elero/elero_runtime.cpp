@@ -21,7 +21,8 @@ void Elero::poll_runtime_blinds_() {
                            now, rb.last_poll_ms, rb.poll_intvl_ms, rb.delivery->empty())) {
       if (intent_was_accepted(rb.delivery->submit({CommandIntentKind::CHECK, 0}, now))) {
         rb.last_poll_ms = now;
-        ESP_LOGD(TAG, "Periodic poll for runtime blind 0x%06x", rb.blind_address);
+        ESP_LOGD(TAG, "Periodic poll for runtime blind 0x%06lx",
+                 static_cast<unsigned long>(rb.blind_address));
       }
     }
   }
@@ -111,10 +112,12 @@ bool Elero::adopt_blind(const DiscoveredBlind &discovered, const std::string &na
   rb.delivery = std::make_shared<CommandIntentDelivery>(delivery_config);
   rb.delivery->set_outcome_callback([this, address = discovered.blind_address](const DeliveryOutcome &outcome) {
     if (outcome.event == DeliveryEvent::DROPPED) {
-      ESP_LOGE(TAG, "Delivery retries exhausted for runtime blind 0x%06x", address);
+      ESP_LOGE(TAG, "Delivery retries exhausted for runtime blind 0x%06lx",
+               static_cast<unsigned long>(address));
       this->increment_tx_drop_count();
     } else if (outcome.event == DeliveryEvent::STALE_CLEARED) {
-      ESP_LOGW(TAG, "Stale Command queue cleared for runtime blind 0x%06x", address);
+      ESP_LOGW(TAG, "Stale Command queue cleared for runtime blind 0x%06lx",
+               static_cast<unsigned long>(address));
       this->increment_tx_drop_count();
     }
   });
@@ -123,9 +126,9 @@ bool Elero::adopt_blind(const DiscoveredBlind &discovered, const std::string &na
   const std::string adopted_name = rb.name;
   this->runtime_blinds_.insert({discovered.blind_address, std::move(rb)});
   this->own_remote_addresses_.insert(discovered.remote_address);
-  ESP_LOGI(TAG, "Adopted runtime %s 0x%06x as \"%s\"",
+  ESP_LOGI(TAG, "Adopted runtime %s 0x%06lx as \"%s\"",
            type == DeviceType::LIGHT ? "light" : "blind",
-           discovered.blind_address, adopted_name.c_str());
+           static_cast<unsigned long>(discovered.blind_address), adopted_name.c_str());
   return true;
 }
 
@@ -133,7 +136,7 @@ bool Elero::remove_runtime_blind(uint32_t addr) {
   std::lock_guard<std::mutex> lock(state_mutex_);
   auto it = this->runtime_blinds_.find(addr);
   if (it != this->runtime_blinds_.end()) {
-    ESP_LOGI(TAG, "Removed runtime blind 0x%06x", addr);
+    ESP_LOGI(TAG, "Removed runtime blind 0x%06lx", static_cast<unsigned long>(addr));
     this->unregister_command_delivery(it->second.delivery.get());
     this->runtime_blinds_.erase(it);
     return true;

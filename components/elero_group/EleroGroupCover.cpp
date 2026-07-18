@@ -42,12 +42,14 @@ void EleroGroupCover::loop() {
 
 void EleroGroupCover::dump_config() {
   ESP_LOGCONFIG(TAG, "Elero Group Cover '%s':", this->get_name().c_str());
-  ESP_LOGCONFIG(TAG, "  Members: %d", (int) this->members_.size());
+  ESP_LOGCONFIG(TAG, "  Members: %d", static_cast<int>(this->members_.size()));
   ESP_LOGCONFIG(TAG, "  Native multi-dest: %s", this->native_group_ ? "yes" : "no (incompatible profiles)");
   ESP_LOGCONFIG(TAG, "  Hide members: %s", YESNO(this->hide_members_));
-  for (auto *member : this->members_)
-    ESP_LOGCONFIG(TAG, "    - 0x%06x (ch=%d, remote=0x%06x)", member->get_blind_address(),
-                  member->get_channel(), member->get_remote_address());
+  for (auto *member : this->members_) {
+    ESP_LOGCONFIG(TAG, "    - 0x%06lx (ch=%d, remote=0x%06lx)",
+                  static_cast<unsigned long>(member->get_blind_address()), member->get_channel(),
+                  static_cast<unsigned long>(member->get_remote_address()));
+  }
 }
 
 cover::CoverTraits EleroGroupCover::get_traits() {

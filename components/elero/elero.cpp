@@ -159,7 +159,12 @@ Elero::~Elero() {
   if (this->gdo0_pin_ != nullptr) {
     this->gdo0_pin_->detach_interrupt();
   }
+  // RadioLib's CC1101 is polymorphic but this pointer always owns the exact
+  // concrete type, so deleting it here is safe despite its non-virtual destructor.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdelete-non-virtual-dtor"
   delete this->radio_;
+#pragma GCC diagnostic pop
   this->radio_ = nullptr;
   delete this->radio_module_;
   this->radio_module_ = nullptr;
@@ -358,14 +363,15 @@ void Elero::dump_config() {
   ESP_LOGCONFIG(TAG, "Elero CC1101:");
   LOG_PIN("  GDO0 Pin: ", this->gdo0_pin_);
   ESP_LOGCONFIG(TAG, "  freq2: 0x%02x, freq1: 0x%02x, freq0: 0x%02x", this->freq2_, this->freq1_, this->freq0_);
-  ESP_LOGCONFIG(TAG, "  Send repeats: %d, send delay: %d ms, dedup window: %lu ms",
-                this->send_repeats_, this->send_delay_, (unsigned long) this->dedup_window_ms_);
+  ESP_LOGCONFIG(TAG, "  Send repeats: %d, send delay: %lu ms, dedup window: %lu ms",
+                this->send_repeats_, static_cast<unsigned long>(this->send_delay_),
+                static_cast<unsigned long>(this->dedup_window_ms_));
   ESP_LOGCONFIG(TAG, "  RadioLib: begin() + standby() + setFrequency(); direct SPI for register access");
   if (this->spi_failed_.load(std::memory_order_acquire)) {
     ESP_LOGCONFIG(TAG, "  SPI Status: FAILED — CC1101 communication broken");
     ESP_LOGCONFIG(TAG, "  Check SPI pin assignments — avoid ESP32 strapping pins (GPIO0/2/5/12/15)");
   }
-  ESP_LOGCONFIG(TAG, "  Registered covers: %d", this->address_to_cover_mapping_.size());
+  ESP_LOGCONFIG(TAG, "  Registered covers: %d", static_cast<int>(this->address_to_cover_mapping_.size()));
 }
 
 void Elero::setup() {
@@ -532,7 +538,7 @@ SendResult Elero::send_command(t_elero_command *cmd) {
     this->observe_tx_queue_depth_();
     return SendResult::OK;
   }
-  ESP_LOGV(TAG, "TX queue full, will retry for 0x%06x", cmd->blind_addr);
+  ESP_LOGV(TAG, "TX queue full, will retry for 0x%06lx", static_cast<unsigned long>(cmd->blind_addr));
   return SendResult::QUEUE_FULL;
 }
 
@@ -560,7 +566,7 @@ SendResult Elero::send_command_priority(t_elero_command *cmd) {
     this->observe_tx_queue_depth_();
     return SendResult::OK;
   }
-  ESP_LOGV(TAG, "Priority TX queue full, will retry for 0x%06x", cmd->blind_addr);
+  ESP_LOGV(TAG, "Priority TX queue full, will retry for 0x%06lx", static_cast<unsigned long>(cmd->blind_addr));
   return SendResult::QUEUE_FULL;
 }
 
@@ -620,18 +626,22 @@ void Elero::observe_dispatch_latency_(uint32_t decoded_at_ms) {
 void EleroRefreshButton::dump_config() {
   LOG_BUTTON("", "Elero Refresh Button", this);
   if (this->blind_ != nullptr) {
-    ESP_LOGCONFIG(TAG, "  Target: cover 0x%06x", this->blind_->get_blind_address());
+    ESP_LOGCONFIG(TAG, "  Target: cover 0x%06lx",
+                  static_cast<unsigned long>(this->blind_->get_blind_address()));
   } else if (this->light_ != nullptr) {
-    ESP_LOGCONFIG(TAG, "  Target: light 0x%06x", this->light_->get_blind_address());
+    ESP_LOGCONFIG(TAG, "  Target: light 0x%06lx",
+                  static_cast<unsigned long>(this->light_->get_blind_address()));
   }
 }
 
 void EleroRefreshButton::press_action() {
   if (this->blind_ != nullptr) {
-    ESP_LOGD(TAG, "Refresh: CHECK → cover 0x%06x", this->blind_->get_blind_address());
+    ESP_LOGD(TAG, "Refresh: CHECK → cover 0x%06lx",
+             static_cast<unsigned long>(this->blind_->get_blind_address()));
     this->blind_->submit_intent({CommandIntentKind::CHECK, 0});
   } else if (this->light_ != nullptr) {
-    ESP_LOGD(TAG, "Refresh: CHECK → light 0x%06x", this->light_->get_blind_address());
+    ESP_LOGD(TAG, "Refresh: CHECK → light 0x%06lx",
+             static_cast<unsigned long>(this->light_->get_blind_address()));
     this->light_->submit_intent({CommandIntentKind::CHECK, 0});
   }
 }
