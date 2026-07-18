@@ -14,8 +14,8 @@ class AttachedDelivery {
     EXPECT_TRUE(coordinator.attach(&delivery));
   }
 
-  IntentSubmitResult submit(const CommandIntent &intent, bool deferred = false,
-                            uint32_t submitted_at_ms = 0) {
+  IntentSubmitResult submit(const CommandIntent &intent, uint32_t submitted_at_ms = 0,
+                            bool deferred = false) {
     return delivery.submit(intent, submitted_at_ms, deferred);
   }
   IntentSubmitResult submit_batch(std::initializer_list<CommandIntent> intents) {
