@@ -103,6 +103,22 @@ inline CommandIntent cover_intent_for_command_byte(const CommandMapping &mapping
   return CommandIntent::custom(value);
 }
 
+inline CommandIntent light_intent_for_command_byte(const CommandMapping &mapping, uint8_t value) {
+  if (value == mapping.stop)
+    return {CommandIntentKind::STOP, 0};
+  if (value == mapping.check)
+    return {CommandIntentKind::CHECK, 0};
+  if (value == mapping.on)
+    return {CommandIntentKind::ON, 0};
+  if (value == mapping.off)
+    return {CommandIntentKind::OFF, 0};
+  if (value == mapping.dim_up)
+    return {CommandIntentKind::DIM_UP, 0};
+  if (value == mapping.dim_down)
+    return {CommandIntentKind::DIM_DOWN, 0};
+  return CommandIntent::custom(value);
+}
+
 struct CommandDeliveryConfig {
   BlindCommandProfile profile{};
   CommandMapping mapping{};

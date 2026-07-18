@@ -280,13 +280,18 @@ TEST(CommandDelivery, BatchSubmissionPreservesMultiIntentOrder) {
   EXPECT_EQ(bytes, (std::vector<uint8_t>{0x20, 0x40}));
 }
 
-TEST(CommandDelivery, CoverButtonBytesPreserveStopUrgencyAndSemanticDeferral) {
+TEST(CommandDelivery, ButtonBytesPreserveStopUrgencyAndSemanticDeferral) {
   const auto mapping = config().mapping;
   EXPECT_EQ(cover_intent_for_command_byte(mapping, mapping.stop).kind, CommandIntentKind::STOP);
   EXPECT_EQ(cover_intent_for_command_byte(mapping, mapping.open).kind, CommandIntentKind::OPEN);
-  const auto custom = cover_intent_for_command_byte(mapping, 0x77);
-  EXPECT_EQ(custom.kind, CommandIntentKind::CUSTOM);
-  EXPECT_EQ(custom.custom_byte, 0x77);
+  EXPECT_EQ(light_intent_for_command_byte(mapping, mapping.stop).kind, CommandIntentKind::STOP);
+  EXPECT_EQ(light_intent_for_command_byte(mapping, mapping.on).kind, CommandIntentKind::ON);
+  const auto cover_custom = cover_intent_for_command_byte(mapping, 0x77);
+  EXPECT_EQ(cover_custom.kind, CommandIntentKind::CUSTOM);
+  EXPECT_EQ(cover_custom.custom_byte, 0x77);
+  const auto light_custom = light_intent_for_command_byte(mapping, 0x77);
+  EXPECT_EQ(light_custom.kind, CommandIntentKind::CUSTOM);
+  EXPECT_EQ(light_custom.custom_byte, 0x77);
 }
 
 TEST(CommandDelivery, DeferredIntentDoesNotTransmitUntilReleasedAfterStop) {
