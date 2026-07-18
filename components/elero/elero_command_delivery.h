@@ -152,15 +152,19 @@ class CommandIntentDelivery {
 
   // Deferred intents count against the same per-device bound. CHECK and STOP
   // remain eligible while deferred movement work waits for verification.
-  IntentSubmitResult submit(const CommandIntent &intent, bool deferred = false);
-  IntentSubmitResult submit_batch(const CommandIntent *intents, size_t count, bool deferred = false);
+  // submitted_at_ms must use the monotonic clock passed to coordinator.advance().
+  IntentSubmitResult submit(const CommandIntent &intent, uint32_t submitted_at_ms,
+                            bool deferred = false);
+  IntentSubmitResult submit_batch(const CommandIntent *intents, size_t count,
+                                  uint32_t submitted_at_ms, bool deferred = false);
 
   struct AtomicIntentTarget {
     CommandIntentDelivery *delivery;
     CommandIntent intent;
     bool deferred{false};
   };
-  static IntentSubmitResult submit_atomic(const AtomicIntentTarget *targets, size_t count);
+  static IntentSubmitResult submit_atomic(const AtomicIntentTarget *targets, size_t count,
+                                          uint32_t submitted_at_ms);
 
   void release_deferred();
   void postpone_until(uint32_t not_before_ms);
@@ -181,6 +185,7 @@ class CommandIntentDelivery {
   struct QueuedIntent {
     CommandIntent intent{};
     uint64_t sequence{0};
+    uint32_t last_progress_ms{0};
     bool deferred{false};
     bool fallback_active{false};
     uint8_t fallback_index{0};
@@ -196,6 +201,7 @@ class CommandIntentDelivery {
   static bool conflicts_(CommandIntentKind current, CommandIntentKind next);
   IntentSubmitResult submit_to_state_(QueueState &state, const CommandIntent &intent,
                                       bool deferred, uint64_t sequence,
+                                      uint32_t submitted_at_ms,
                                       uint64_t protected_sequence = 0) const;
   void erase_at_(size_t index);
   void normalise_destinations_();

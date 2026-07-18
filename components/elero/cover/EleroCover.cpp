@@ -260,7 +260,7 @@ CommandDeliveryConfig EleroCover::get_command_delivery_config() const {
 
 IntentSubmitResult EleroCover::submit_intent(const CommandIntent &intent) {
   const bool deferred = this->should_defer_intent(intent);
-  auto result = this->delivery_.submit(intent, deferred);
+  auto result = this->delivery_.submit(intent, millis(), deferred);
   if (result == IntentSubmitResult::REJECTED) {
     ESP_LOGW(TAG, "Command queue full for blind 0x%06x", this->command_.blind_addr);
 #ifdef USE_TEXT_SENSOR

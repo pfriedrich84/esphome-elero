@@ -111,7 +111,7 @@ void EleroGroupCover::control(const cover::CoverCall &call) {
 IntentSubmitResult EleroGroupCover::submit_group_intent_(const CommandIntent &intent) {
   if (!this->native_group_)
     return this->submit_to_members_(intent);
-  const auto result = this->native_delivery_.submit(intent);
+  const auto result = this->native_delivery_.submit(intent, millis());
   if (group_delivery_policy::reject_native_submit_without_fanout(result)) {
     // Keep all compatible group work in the native lane. Sending only this
     // newest command through members would overtake its older native backlog.
@@ -135,7 +135,7 @@ IntentSubmitResult EleroGroupCover::submit_member_targets_(const std::vector<Com
   for (size_t i = 0; i < this->members_.size(); i++)
     targets.push_back({this->members_[i]->get_command_delivery(), intents[i],
                        this->members_[i]->should_defer_intent(intents[i])});
-  const auto result = CommandIntentDelivery::submit_atomic(targets.data(), targets.size());
+  const auto result = CommandIntentDelivery::submit_atomic(targets.data(), targets.size(), millis());
   if (result == IntentSubmitResult::REJECTED) {
     ESP_LOGW(TAG, "Atomic member command rejected; no member queue was changed");
     if (this->parent_ != nullptr)

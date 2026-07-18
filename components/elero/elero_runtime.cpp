@@ -19,7 +19,7 @@ void Elero::poll_runtime_blinds_() {
     auto &rb = entry.second;
     if (rb.delivery && runtime_blind_logic::should_poll_runtime_blind(
                            now, rb.last_poll_ms, rb.poll_intvl_ms, rb.delivery->empty())) {
-      if (intent_was_accepted(rb.delivery->submit({CommandIntentKind::CHECK, 0}))) {
+      if (intent_was_accepted(rb.delivery->submit({CommandIntentKind::CHECK, 0}, now))) {
         rb.last_poll_ms = now;
         ESP_LOGD(TAG, "Periodic poll for runtime blind 0x%06x", rb.blind_address);
       }
@@ -146,7 +146,7 @@ IntentSubmitResult Elero::send_runtime_command(uint32_t addr, const CommandInten
   auto it = this->runtime_blinds_.find(addr);
   if (it == this->runtime_blinds_.end() || !it->second.delivery)
     return IntentSubmitResult::REJECTED;
-  return it->second.delivery->submit(intent);
+  return it->second.delivery->submit(intent, millis());
 }
 
 bool Elero::update_runtime_blind_settings(uint32_t addr, uint32_t open_dur_ms,

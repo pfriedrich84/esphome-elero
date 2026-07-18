@@ -192,7 +192,7 @@ IntentSubmitResult EleroLight::submit_intent(const CommandIntent &intent) {
 }
 
 IntentSubmitResult EleroLight::submit_intents_(const std::vector<CommandIntent> &intents) {
-  auto result = this->delivery_.submit_batch(intents.data(), intents.size());
+  auto result = this->delivery_.submit_batch(intents.data(), intents.size(), millis());
   if (result == IntentSubmitResult::REJECTED) {
     ESP_LOGW(TAG, "Command queue full for light 0x%06x", this->command_.blind_addr);
 #ifdef USE_TEXT_SENSOR

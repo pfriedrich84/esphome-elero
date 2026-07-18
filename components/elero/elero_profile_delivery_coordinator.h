@@ -79,8 +79,11 @@ class ProfileDeliveryCoordinator {
     auto it = std::find(this->lanes_.begin(), this->lanes_.end(), delivery);
     if (it == this->lanes_.end())
       return false;
-    if (this->active_lane_ == delivery)
+    if (this->active_lane_ == delivery) {
+      if (this->accepted_repeats_ > 0)
+        this->advance_counter_();
       this->reset_active_();
+    }
     this->lanes_.erase(it);
     delivery->queue_.size = 0;
     delivery->coordinator_ = nullptr;
@@ -97,10 +100,7 @@ class ProfileDeliveryCoordinator {
         return outcome;
 
       auto &entry = this->active_lane_->queue_.entries[this->active_index_];
-      if (!this->age_started_) {
-        this->last_progress_ms_ = now;
-        this->age_started_ = true;
-      } else if ((now - this->last_progress_ms_) > ELERO_COMMAND_QUEUE_MAX_AGE_MS) {
+      if ((now - entry.last_progress_ms) > ELERO_COMMAND_QUEUE_MAX_AGE_MS) {
         const CommandIntent stale = entry.intent;
         const bool partial = this->accepted_repeats_ > 0;
         if (partial)
@@ -144,12 +144,12 @@ class ProfileDeliveryCoordinator {
         if (!entry.fallback_active && !partial && this->active_lane_->fallback_member_count_ > 0) {
           entry.fallback_active = true;
           entry.fallback_index = 0;
-          this->reset_attempt_state_(now);
+          this->reset_attempt_state_();
           outcome = this->outcome_locked_(DeliveryEvent::FALLBACK_STARTED, intent);
         } else if (entry.fallback_active &&
                    entry.fallback_index + 1 < this->active_lane_->fallback_member_count_) {
           entry.fallback_index++;
-          this->reset_attempt_state_(now);
+          this->reset_attempt_state_();
           outcome = this->outcome_locked_(DeliveryEvent::FALLBACK_MEMBER_DROPPED, intent, partial);
         } else {
           const bool fallback_active = entry.fallback_active;
@@ -174,7 +174,7 @@ class ProfileDeliveryCoordinator {
 
       this->failure_count_ = 0;
       this->accepted_repeats_++;
-      this->last_progress_ms_ = now;
+      entry.last_progress_ms = now;
       const uint8_t repeats = required_repeats == 0 ? 1 : required_repeats;
       if (this->accepted_repeats_ < repeats) {
         outcome = this->outcome_locked_(DeliveryEvent::PACKET_ACCEPTED, intent, true);
@@ -190,7 +190,7 @@ class ProfileDeliveryCoordinator {
       if (entry.fallback_active &&
           entry.fallback_index + 1 < this->active_lane_->fallback_member_count_) {
         entry.fallback_index++;
-        this->reset_attempt_state_(now);
+        this->reset_attempt_state_();
         outcome = this->outcome_locked_(DeliveryEvent::PACKET_ACCEPTED, intent, true);
       } else {
         this->active_lane_->erase_at_(this->active_index_);
@@ -252,7 +252,7 @@ class ProfileDeliveryCoordinator {
     this->active_lane_ = best;
     this->active_lane_->not_before_ms_ = 0;
     this->active_index_ = best_index;
-    this->reset_attempt_state_(0);
+    this->reset_attempt_state_();
     return true;
   }
 
@@ -278,19 +278,17 @@ class ProfileDeliveryCoordinator {
     this->reset_active_();
   }
 
-  void reset_attempt_state_(uint32_t now) {
+  void reset_attempt_state_() {
     this->accepted_repeats_ = 0;
     this->failure_count_ = 0;
     this->last_attempt_ms_ = 0;
-    this->last_progress_ms_ = now;
-    this->age_started_ = false;
     this->attempt_started_ = false;
   }
 
   void reset_active_() {
     this->active_lane_ = nullptr;
     this->active_index_ = 0;
-    this->reset_attempt_state_(0);
+    this->reset_attempt_state_();
   }
 
   void advance_counter_() { this->counter_ = this->counter_ == 0xFF ? 1 : this->counter_ + 1; }
@@ -335,8 +333,6 @@ class ProfileDeliveryCoordinator {
   uint8_t accepted_repeats_{0};
   uint8_t failure_count_{0};
   uint32_t last_attempt_ms_{0};
-  uint32_t last_progress_ms_{0};
-  bool age_started_{false};
   bool attempt_started_{false};
 };
 
@@ -368,12 +364,13 @@ inline IntentSubmitResult CommandIntentDelivery::submit_to_state_(QueueState &st
                                                                    const CommandIntent &intent,
                                                                    bool deferred,
                                                                    uint64_t sequence,
+                                                                   uint32_t submitted_at_ms,
                                                                    uint64_t protected_sequence) const {
   if (intent.kind == CommandIntentKind::STOP) {
     if (state.size == 1 && state.entries[0].intent == intent)
       return IntentSubmitResult::COALESCED;
     state.size = 1;
-    state.entries[0] = {intent, sequence, false, false, 0};
+    state.entries[0] = {intent, sequence, submitted_at_ms, false, false, 0};
     return IntentSubmitResult::ACCEPTED;
   }
 
@@ -395,6 +392,7 @@ inline IntentSubmitResult CommandIntentDelivery::submit_to_state_(QueueState &st
       if (state.entries[index].intent == intent)
         return IntentSubmitResult::COALESCED;
       state.entries[index].intent = intent;
+      state.entries[index].last_progress_ms = submitted_at_ms;
       state.entries[index].deferred = deferred;
       return IntentSubmitResult::COALESCED;
     }
@@ -412,7 +410,7 @@ inline IntentSubmitResult CommandIntentDelivery::submit_to_state_(QueueState &st
 
   if (state.size >= ELERO_MAX_COMMAND_QUEUE)
     return IntentSubmitResult::REJECTED;
-  state.entries[state.size++] = {intent, sequence, deferred, false, 0};
+  state.entries[state.size++] = {intent, sequence, submitted_at_ms, deferred, false, 0};
   return IntentSubmitResult::ACCEPTED;
 }
 
@@ -449,12 +447,16 @@ inline void CommandIntentDelivery::set_outcome_callback(OutcomeCallback callback
   this->outcome_callback_ = std::move(callback);
 }
 
-inline IntentSubmitResult CommandIntentDelivery::submit(const CommandIntent &intent, bool deferred) {
-  return this->submit_batch(&intent, 1, deferred);
+inline IntentSubmitResult CommandIntentDelivery::submit(const CommandIntent &intent,
+                                                         uint32_t submitted_at_ms,
+                                                         bool deferred) {
+  return this->submit_batch(&intent, 1, submitted_at_ms, deferred);
 }
 
 inline IntentSubmitResult CommandIntentDelivery::submit_batch(const CommandIntent *intents,
-                                                               size_t count, bool deferred) {
+                                                               size_t count,
+                                                               uint32_t submitted_at_ms,
+                                                               bool deferred) {
   if (intents == nullptr || count == 0 || count > ELERO_MAX_COMMAND_QUEUE ||
       this->coordinator_ == nullptr)
     return IntentSubmitResult::REJECTED;
@@ -463,14 +465,14 @@ inline IntentSubmitResult CommandIntentDelivery::submit_batch(const CommandInten
   QueueState candidate = this->queue_;
   uint64_t next_sequence = coordinator->next_sequence_;
   const uint64_t protected_sequence =
-      coordinator->active_lane_ == this && coordinator->accepted_repeats_ > 0
+      coordinator->active_lane_ == this
           ? this->queue_.entries[coordinator->active_index_].sequence
           : 0;
   IntentSubmitResult combined = IntentSubmitResult::COALESCED;
   bool accepted_stop = false;
   for (size_t i = 0; i < count; i++) {
     const auto result = this->submit_to_state_(candidate, intents[i], deferred, next_sequence,
-                                               protected_sequence);
+                                               submitted_at_ms, protected_sequence);
     if (result == IntentSubmitResult::REJECTED)
       return result;
     if (result == IntentSubmitResult::ACCEPTED) {
@@ -481,17 +483,14 @@ inline IntentSubmitResult CommandIntentDelivery::submit_batch(const CommandInten
   }
   if (accepted_stop)
     coordinator->preempt_for_stop_locked_(this);
-  const bool reset_active = coordinator->active_lane_ == this && combined == IntentSubmitResult::COALESCED &&
-                            coordinator->accepted_repeats_ == 0;
   this->queue_ = candidate;
   coordinator->next_sequence_ = next_sequence;
-  if (reset_active)
-    coordinator->reset_active_();
   return combined;
 }
 
 inline IntentSubmitResult CommandIntentDelivery::submit_atomic(const AtomicIntentTarget *targets,
-                                                                size_t count) {
+                                                                size_t count,
+                                                                uint32_t submitted_at_ms) {
   if (targets == nullptr || count == 0 || count > ELERO_MAX_DESTS)
     return IntentSubmitResult::REJECTED;
   std::array<ProfileDeliveryCoordinator *, ELERO_MAX_DESTS> coordinators{};
@@ -530,11 +529,12 @@ inline IntentSubmitResult CommandIntentDelivery::submit_atomic(const AtomicInten
     candidates[i] = lane->queue_;
     assigned_sequences[i] = candidate_next_sequences[coordinator_index];
     const uint64_t protected_sequence =
-        coordinator->active_lane_ == lane && coordinator->accepted_repeats_ > 0
+        coordinator->active_lane_ == lane
             ? lane->queue_.entries[coordinator->active_index_].sequence
             : 0;
     results[i] = lane->submit_to_state_(candidates[i], targets[i].intent, targets[i].deferred,
-                                        assigned_sequences[i], protected_sequence);
+                                        assigned_sequences[i], submitted_at_ms,
+                                        protected_sequence);
     if (results[i] == IntentSubmitResult::REJECTED)
       return IntentSubmitResult::REJECTED;
     if (results[i] == IntentSubmitResult::ACCEPTED)
@@ -551,12 +551,7 @@ inline IntentSubmitResult CommandIntentDelivery::submit_atomic(const AtomicInten
     if (results[i] == IntentSubmitResult::ACCEPTED &&
         targets[i].intent.kind == CommandIntentKind::STOP)
       coordinator->preempt_for_stop_locked_(lane);
-    const bool reset_active = coordinator->active_lane_ == lane &&
-                              results[i] == IntentSubmitResult::COALESCED &&
-                              coordinator->accepted_repeats_ == 0;
     lane->queue_ = candidates[i];
-    if (reset_active)
-      coordinator->reset_active_();
     any_accepted = any_accepted || results[i] == IntentSubmitResult::ACCEPTED;
   }
   return any_accepted ? IntentSubmitResult::ACCEPTED : IntentSubmitResult::COALESCED;
