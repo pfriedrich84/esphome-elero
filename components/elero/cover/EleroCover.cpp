@@ -1,5 +1,6 @@
 #include "EleroCover.h"
 #include "../elero_cover_logic.h"
+#include "../elero_timed_action.h"
 #include "esphome/core/log.h"
 #include <cmath>
 
@@ -32,6 +33,14 @@ void EleroCover::setup() {
     this->mark_failed();
     return;
   }
+  this->delivery_.configure(this->get_command_delivery_config());
+  this->delivery_.set_outcome_callback(
+      [this](const DeliveryOutcome &outcome) { this->handle_delivery_outcome_(outcome); });
+  if (!this->parent_->register_command_delivery(&this->delivery_)) {
+    ESP_LOGE(TAG, "Failed to register command delivery");
+    this->mark_failed();
+    return;
+  }
   this->parent_->register_cover(this);
   // Apply stagger offset: shift initial last_poll_ backwards so the first poll
   // is delayed by poll_offset_ milliseconds relative to other covers.
@@ -46,7 +55,7 @@ void EleroCover::setup() {
   // Queue an initial status CHECK so the text sensor populates shortly after
   // boot instead of waiting for the first poll_interval to elapse.
   // The poll_offset_ stagger ensures covers don't all poll simultaneously.
-  this->commands_to_send_.push(this->command_check_);
+  this->submit_intent({CommandIntentKind::CHECK, 0});
 }
 
 void EleroCover::loop() {
@@ -58,24 +67,22 @@ void EleroCover::loop() {
     // cover dead-reckons position and auto-stops at target — the blind's
     // own status broadcasts (caught by set_rx_state) are sufficient.
     // This avoids burning message counter values on redundant CHECKs.
-    if((this->open_duration_ == 0 || this->close_duration_ == 0) &&
-       (now - this->movement_start_) < ELERO_TIMEOUT_MOVEMENT) {
+    if (!this->pending_movement_start_ &&
+        (this->open_duration_ == 0 || this->close_duration_ == 0) &&
+        (now - this->movement_start_) < ELERO_TIMEOUT_MOVEMENT) {
       intvl = ELERO_POLL_INTERVAL_MOVING + (this->poll_offset_ % ELERO_POLL_INTERVAL_MOVING);
     }
   }
 
-  if (cover_logic::should_poll(now, this->last_poll_, intvl)) {
-    if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE) {
-      this->commands_to_send_.push(this->command_check_);
-      this->last_poll_ = now;
-    }
+  if (cover_logic::should_poll(now, this->last_poll_, intvl) &&
+      intent_was_accepted(this->submit_intent({CommandIntentKind::CHECK, 0}))) {
+    this->last_poll_ = now;
   }
 
   if(this->post_movement_poll_at_ > 0 && now >= this->post_movement_poll_at_) {
     this->post_movement_poll_at_ = 0;
-    if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE) {
+    if (intent_was_accepted(this->submit_intent({CommandIntentKind::CHECK, 0}))) {
       ESP_LOGD(TAG, "Post-movement status poll for blind 0x%06x", this->command_.blind_addr);
-      this->commands_to_send_.push(this->command_check_);
       this->last_poll_ = now;
     }
   }
@@ -86,8 +93,7 @@ void EleroCover::loop() {
       this->stop_verify_retries_++;
       ESP_LOGD(TAG, "Stop verify poll #%d for blind 0x%06x",
                this->stop_verify_retries_, this->command_.blind_addr);
-      if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE)
-        this->commands_to_send_.push(this->command_check_);
+      this->submit_intent({CommandIntentKind::CHECK, 0});
       // Reschedule in case no RF response arrives (prevents verification stall)
       this->stop_verify_at_ = now + ELERO_STOP_VERIFY_DELAY_MS;
     } else {
@@ -96,10 +102,7 @@ void EleroCover::loop() {
                ELERO_STOP_VERIFY_MAX_RETRIES, this->command_.blind_addr);
       this->stop_verify_at_ = 0;
       this->stop_trigger_ms_ = 0;
-      if (this->stop_urgent_active_) {
-        this->parent_->decrement_stop_urgent();
-        this->stop_urgent_active_ = false;
-      }
+      this->finish_stop_verification_();
 #ifdef USE_TEXT_SENSOR
       this->parent_->publish_text_sensor_state(this->command_.blind_addr, "stop_failed");
 #endif
@@ -109,54 +112,41 @@ void EleroCover::loop() {
       // current_operation gets stuck, the poll queue fills, and group
       // commands are silently dropped.
       this->current_operation = cover::COVER_OPERATION_IDLE;
-      // Clear any queued CHECK commands to prevent rapid-fire flooding
-      // that can lock up the blind's RF receiver after failed verification.
-      while (!this->commands_to_send_.empty())
-        this->commands_to_send_.pop();
-      // Cooldown: prevent dispatch_commands from sending anything for 3s,
+      // Clear queued polls to prevent rapid-fire flooding while preserving
+      // deferred user movement intents.
+      this->delivery_.discard_checks();
+      // Cooldown: prevent delivery from sending anything for 3s,
       // giving the blind time to settle after the stop command storm.
-      this->last_command_ = now + 3000;
+      this->command_cooldown_until_ = now + 3000;
+      this->delivery_.postpone_until(this->command_cooldown_until_);
       this->publish_state(false);
     }
   }
 
-  this->handle_commands(now);
+  if (!this->stop_verification_active_.load())
+    this->delivery_.release_deferred();
 
-  if((this->current_operation != COVER_OPERATION_IDLE) && (this->open_duration_ > 0) && (this->close_duration_ > 0)) {
+  if (!this->pending_movement_start_ &&
+      (this->current_operation != COVER_OPERATION_IDLE) &&
+      (this->open_duration_ > 0) && (this->close_duration_ > 0)) {
     this->recompute_position();
     if(this->is_at_target()) {
       ESP_LOGI(TAG, "Blind 0x%06x reached target (pos=%.2f, target=%.2f), sending stop",
                this->command_.blind_addr, this->position, this->target_position_);
-      // Record position at stop trigger for post-verification correction
-      this->stop_trigger_position_ = this->position;
-      this->stop_trigger_ms_ = now;
-      // Clear queue so stop goes out immediately (mirrors manual stop behavior)
-      while (!this->commands_to_send_.empty())
-        this->commands_to_send_.pop();
-      // Send stop via priority queue with retry for immediate processing.
-      if (!cover_logic::should_apply_auto_stop_after_priority_result(this->send_stop_priority_())) {
-        this->stop_trigger_ms_ = 0;
-        return;
+      if (!this->pending_stop_transition_) {
+        // Queueing locally is not proof that the hub accepted the priority
+        // packet. Keep tracking movement until advance() reports first RF queue
+        // acceptance; only then transition to idle and start verification.
+        this->stop_trigger_position_ = this->position;
+        this->stop_trigger_ms_ = now;
+        this->stop_verification_active_.store(true);
+        if (!intent_was_accepted(this->submit_intent({CommandIntentKind::STOP, 0}))) {
+          this->stop_trigger_ms_ = 0;
+          this->stop_verification_active_.store(false);
+        } else {
+          this->pending_stop_transition_ = true;
+        }
       }
-      // Signal other covers to defer their non-stop commands
-      this->parent_->increment_stop_urgent();
-      this->stop_urgent_active_ = true;
-      this->increase_counter();
-      this->current_operation = COVER_OPERATION_IDLE;
-      // Keep target_position_ at the user's requested value — do NOT reset
-      // to COVER_OPEN here.  If the motor is still decelerating, set_rx_state()
-      // may reactivate CLOSING.  With the original target preserved,
-      // is_at_target() will fire again and re-send stop.  Resetting to
-      // COVER_OPEN caused is_at_target() to return false (early exit for
-      // COVER_OPEN/COVER_CLOSED), letting the cover run to bottom.
-      // Schedule verification poll to confirm motor actually stopped
-      this->stop_verify_at_ = now + ELERO_STOP_VERIFY_DELAY_MS;
-      this->stop_verify_retries_ = 0;
-      // Publish final position immediately — the 1-second throttle below may
-      // skip this, and the next loop() won't enter this block (operation is IDLE),
-      // leaving HA stuck showing "opening/closing" with a stale position.
-      this->publish_state(false);
-      this->last_publish_ = now;
     }
 
     // Endpoint arrival: position dead-reckoned to 0.0 or 1.0 (clamped).
@@ -192,16 +182,95 @@ bool EleroCover::is_at_target() {
                                    ELERO_TX_LATENCY_COMPENSATION_MS);
 }
 
-static void cover_increase_counter(void *ctx) {
-  static_cast<EleroCover *>(ctx)->increase_counter();
+void EleroCover::handle_delivery_outcome_(const DeliveryOutcome &outcome) {
+  const bool packet_accepted = delivery_packet_was_accepted(outcome.event);
+  if (should_start_timed_action(this->pending_movement_start_, this->pending_movement_kind_, outcome)) {
+    const auto operation = outcome.intent.kind == CommandIntentKind::OPEN
+                               ? COVER_OPERATION_OPENING
+                               : COVER_OPERATION_CLOSING;
+    this->pending_movement_start_ = false;
+    this->begin_movement_tracking_(operation, millis());
+  }
+
+  const bool first_stop_accepted = this->pending_stop_transition_ &&
+      outcome.intent.kind == CommandIntentKind::STOP && packet_accepted;
+  if (first_stop_accepted) {
+    this->pending_stop_transition_ = false;
+    if (!this->stop_urgent_active_) {
+      this->parent_->increment_stop_urgent();
+      this->stop_urgent_active_ = true;
+    }
+    this->current_operation = COVER_OPERATION_IDLE;
+    this->stop_verify_at_ = millis() + ELERO_STOP_VERIFY_DELAY_MS;
+    this->stop_verify_retries_ = 0;
+    this->publish_state(false);
+    this->last_publish_ = millis();
+  }
+
+  if (outcome.event == DeliveryEvent::DROPPED) {
+    ESP_LOGE(TAG, "Delivery retries exhausted for blind 0x%06x", this->command_.blind_addr);
+    this->parent_->increment_tx_drop_count();
+    if (outcome.intent.kind == CommandIntentKind::STOP && this->pending_stop_transition_) {
+      this->pending_stop_transition_ = false;
+      this->stop_trigger_ms_ = 0;
+      this->finish_stop_verification_();
+    }
+    if (this->pending_movement_start_ && outcome.intent.kind == this->pending_movement_kind_) {
+      this->pending_movement_start_ = false;
+      this->current_operation = COVER_OPERATION_IDLE;
+      this->publish_state(false);
+    }
+  } else if (outcome.event == DeliveryEvent::STALE_CLEARED) {
+    ESP_LOGW(TAG, "Stale Command queue cleared for blind 0x%06x", this->command_.blind_addr);
+    this->parent_->increment_tx_drop_count();
+    if (outcome.intent.kind == CommandIntentKind::STOP && this->pending_stop_transition_) {
+      this->pending_stop_transition_ = false;
+      this->stop_trigger_ms_ = 0;
+      this->finish_stop_verification_();
+    }
+    if (this->pending_movement_start_) {
+      this->pending_movement_start_ = false;
+      this->current_operation = COVER_OPERATION_IDLE;
+      this->publish_state(false);
+    }
+  }
+#ifdef USE_TEXT_SENSOR
+  if (this->queue_full_published_ && outcome.queue_size == 0)
+    this->queue_full_published_ = false;
+#endif
 }
 
-void EleroCover::handle_commands(uint32_t now) {
-  dispatch_commands(this->parent_, this->commands_to_send_, this->command_,
-                    this->send_packets_, this->send_retries_, this->last_command_,
-                    this->queue_full_published_, now, TAG, this->command_.blind_addr,
-                    &cover_increase_counter, this, this->stop_urgent_active_,
-                    &this->last_queue_drain_ms_);
+CommandDeliveryConfig EleroCover::get_command_delivery_config() const {
+  CommandDeliveryConfig config{};
+  config.profile.blind_address = this->command_.blind_addr;
+  config.profile.remote_address = this->command_.remote_addr;
+  config.profile.channel = this->command_.channel;
+  config.profile.pck_inf[0] = this->command_.pck_inf[0];
+  config.profile.pck_inf[1] = this->command_.pck_inf[1];
+  config.profile.hop = this->command_.hop;
+  config.profile.payload_1 = this->command_.payload[0];
+  config.profile.payload_2 = this->command_.payload[1];
+  config.mapping.open = this->command_up_;
+  config.mapping.close = this->command_down_;
+  config.mapping.stop = this->command_stop_;
+  config.mapping.check = this->command_check_;
+  config.mapping.tilt = this->command_tilt_;
+  return config;
+}
+
+IntentSubmitResult EleroCover::submit_intent(const CommandIntent &intent) {
+  const bool deferred = this->should_defer_intent(intent);
+  auto result = this->delivery_.submit(intent, millis(), deferred);
+  if (result == IntentSubmitResult::REJECTED) {
+    ESP_LOGW(TAG, "Command queue full for blind 0x%06x", this->command_.blind_addr);
+#ifdef USE_TEXT_SENSOR
+    if (!this->queue_full_published_) {
+      this->parent_->publish_text_sensor_state(this->command_.blind_addr, "queue_full");
+      this->queue_full_published_ = true;
+    }
+#endif
+  }
+  return result;
 }
 
 float EleroCover::get_setup_priority() const { return setup_priority::DATA; }
@@ -308,10 +377,7 @@ void EleroCover::set_rx_state(uint8_t state) {
       this->stop_verify_retries_++;
       ESP_LOGW(TAG, "Blind 0x%06x still moving after stop, retry #%d",
                this->command_.blind_addr, this->stop_verify_retries_);
-      while (!this->commands_to_send_.empty())
-        this->commands_to_send_.pop();
-      this->send_stop_priority_();
-      this->increase_counter();
+      this->submit_intent({CommandIntentKind::STOP, 0});
       this->stop_verify_at_ = millis() + ELERO_STOP_VERIFY_DELAY_MS;
       op = COVER_OPERATION_IDLE;  // keep our side idle while retrying
     } else if (state != ELERO_STATE_MOVING_UP && state != ELERO_STATE_MOVING_DOWN &&
@@ -331,13 +397,10 @@ void EleroCover::set_rx_state(uint8_t state) {
                  this->command_.blind_addr, this->stop_trigger_position_, pos, actual_delay);
       }
       this->stop_trigger_ms_ = 0;
-      // Decrement stop_urgent so other covers can resume once all stops confirmed
-      if (this->stop_urgent_active_) {
-        this->parent_->decrement_stop_urgent();
-        this->stop_urgent_active_ = false;
-      }
       this->stop_verify_retries_ = ELERO_STOP_VERIFY_MAX_RETRIES;
       this->stop_verify_at_ = 0;
+      // Decrement stop_urgent so other covers can resume once all stops confirmed.
+      this->finish_stop_verification_();
     }
     // else: still moving but retries exhausted — let the timer in loop() handle exhaustion
   }
@@ -348,13 +411,6 @@ void EleroCover::set_rx_state(uint8_t state) {
     this->current_operation = op;
     this->publish_state();
   }
-}
-
-void EleroCover::increase_counter() {
-  if(this->command_.counter == 0xff)
-    this->command_.counter = 1;
-  else
-    this->command_.counter += 1;
 }
 
 void EleroCover::control(const cover::CoverCall &call) {
@@ -399,21 +455,8 @@ void EleroCover::control(const cover::CoverCall &call) {
   if (call.get_tilt().has_value()) {
     auto tilt = *call.get_tilt();
     if(tilt > 0) {
-      if (cover_logic::can_enqueue_tilt_command(
-              static_cast<uint8_t>(this->commands_to_send_.size()), ELERO_MAX_COMMAND_QUEUE)) {
-        this->commands_to_send_.push(this->command_tilt_);
+      if (intent_was_accepted(this->submit_intent({CommandIntentKind::TILT, 0})))
         this->tilt = 1.0;
-      } else if (cover_logic::should_publish_queue_full_for_tilt(
-                     static_cast<uint8_t>(this->commands_to_send_.size()), ELERO_MAX_COMMAND_QUEUE)) {
-        ESP_LOGW(TAG, "Command queue full for blind 0x%06x, dropping TILT command",
-                 this->command_.blind_addr);
-#ifdef USE_TEXT_SENSOR
-        if (!this->queue_full_published_) {
-          this->parent_->publish_text_sensor_state(this->command_.blind_addr, "queue_full");
-          this->queue_full_published_ = true;
-        }
-#endif
-      }
     } else {
       this->tilt = 0.0;
     }
@@ -434,116 +477,81 @@ void EleroCover::control(const cover::CoverCall &call) {
 }
 
 void EleroCover::start_movement(CoverOperation dir) {
-  // Cancel any pending stop verification — a new movement command supersedes it
-  this->stop_verify_at_ = 0;
-  this->stop_verify_retries_ = ELERO_STOP_VERIFY_MAX_RETRIES;
-  this->stop_trigger_ms_ = 0;
-  if (this->stop_urgent_active_) {
-    this->parent_->decrement_stop_urgent();
-    this->stop_urgent_active_ = false;
-  }
-
-  // When reversing direction while moving, clear the queue so the old
-  // direction command isn't sent before the new one.  Without this, a
-  // pending UP in the queue would be transmitted before the new DOWN,
-  // causing a brief wrong-direction movement and position desync.
-  if (dir != COVER_OPERATION_IDLE &&
-      this->current_operation != COVER_OPERATION_IDLE &&
-      dir != this->current_operation) {
-    while (!this->commands_to_send_.empty())
-      this->commands_to_send_.pop();
-  }
-
   switch(dir) {
     case COVER_OPERATION_OPENING:
       ESP_LOGV(TAG, "Sending OPEN command");
-      if (cover_logic::should_reject_movement_before_state_update(
-              static_cast<uint8_t>(this->commands_to_send_.size()), ELERO_MAX_COMMAND_QUEUE)) {
-        ESP_LOGW(TAG, "Command queue full for blind 0x%06x, dropping OPEN command",
-                 this->command_.blind_addr);
-#ifdef USE_TEXT_SENSOR
-        if (!this->queue_full_published_) {
-          this->parent_->publish_text_sensor_state(this->command_.blind_addr, "queue_full");
-          this->queue_full_published_ = true;
-        }
-#endif
+      if (!intent_was_accepted(this->submit_intent({CommandIntentKind::OPEN, 0})))
         return;
-      }
-      this->commands_to_send_.push(this->command_up_);
       // Reset tilt state on movement
       this->tilt = 0.0;
       this->last_operation_ = COVER_OPERATION_OPENING;
+      this->pending_movement_kind_ = CommandIntentKind::OPEN;
     break;
     case COVER_OPERATION_CLOSING:
       ESP_LOGV(TAG, "Sending CLOSE command");
-      if (cover_logic::should_reject_movement_before_state_update(
-              static_cast<uint8_t>(this->commands_to_send_.size()), ELERO_MAX_COMMAND_QUEUE)) {
-        ESP_LOGW(TAG, "Command queue full for blind 0x%06x, dropping CLOSE command",
-                 this->command_.blind_addr);
-#ifdef USE_TEXT_SENSOR
-        if (!this->queue_full_published_) {
-          this->parent_->publish_text_sensor_state(this->command_.blind_addr, "queue_full");
-          this->queue_full_published_ = true;
-        }
-#endif
+      if (!intent_was_accepted(this->submit_intent({CommandIntentKind::CLOSE, 0})))
         return;
-      }
-      this->commands_to_send_.push(this->command_down_);
       // Reset tilt state on movement
       this->tilt = 0.0;
       this->last_operation_ = COVER_OPERATION_CLOSING;
+      this->pending_movement_kind_ = CommandIntentKind::CLOSE;
     break;
     case COVER_OPERATION_IDLE:
       ESP_LOGI(TAG, "Blind 0x%06x manual stop at position %.2f",
                this->command_.blind_addr, this->position);
-      // Clear any pending movement commands so STOP is sent immediately
-      while (!this->commands_to_send_.empty())
-        this->commands_to_send_.pop();
-      // Send stop via priority queue for immediate processing
       this->stop_trigger_position_ = this->position;
       this->stop_trigger_ms_ = millis();
-      if (!cover_logic::should_apply_stop_after_priority_result(this->send_stop_priority_())) {
+      this->stop_verification_active_.store(true);
+      if (!intent_was_accepted(this->submit_intent({CommandIntentKind::STOP, 0}))) {
         this->stop_trigger_ms_ = 0;
+        this->stop_verification_active_.store(false);
         return;
       }
-      this->parent_->increment_stop_urgent();
-      this->stop_urgent_active_ = true;
-      this->increase_counter();
-      // Schedule verification to confirm motor actually stopped
-      if (cover_logic::should_schedule_stop_verification(true)) {
-        this->stop_verify_at_ = millis() + ELERO_STOP_VERIFY_DELAY_MS;
-        this->stop_verify_retries_ = 0;
-      }
-    break;
+      this->pending_movement_start_ = false;
+      this->pending_stop_transition_ = true;
+      // The operation and verification state are committed by
+      // handle_delivery_outcome_ after the first priority packet is accepted.
+      return;
   }
 
   if(dir == this->current_operation)
     return;
 
   this->current_operation = dir;
-  this->movement_start_ = millis();
-  this->last_recompute_time_ = millis();
+  this->pending_movement_start_ = true;
+  this->movement_start_ = 0;
+  this->last_recompute_time_ = 0;
+  this->post_movement_poll_at_ = 0;
+  this->publish_state();
+}
 
-  if(dir == COVER_OPERATION_OPENING && this->open_duration_ > 0) {
-    this->post_movement_poll_at_ = this->movement_start_ + this->open_duration_ + ELERO_POST_MOVEMENT_POLL_DELAY;
-  } else if(dir == COVER_OPERATION_CLOSING && this->close_duration_ > 0) {
-    this->post_movement_poll_at_ = this->movement_start_ + this->close_duration_ + ELERO_POST_MOVEMENT_POLL_DELAY;
+void EleroCover::begin_movement_tracking_(CoverOperation operation, uint32_t now) {
+  this->current_operation = operation;
+  this->movement_start_ = now;
+  this->last_recompute_time_ = now;
+  if (operation == COVER_OPERATION_OPENING && this->open_duration_ > 0) {
+    this->post_movement_poll_at_ = now + this->open_duration_ + ELERO_POST_MOVEMENT_POLL_DELAY;
+  } else if (operation == COVER_OPERATION_CLOSING && this->close_duration_ > 0) {
+    this->post_movement_poll_at_ = now + this->close_duration_ + ELERO_POST_MOVEMENT_POLL_DELAY;
   } else {
     this->post_movement_poll_at_ = 0;
   }
-
   this->publish_state();
+}
+
+void EleroCover::finish_stop_verification_() {
+  if (this->stop_urgent_active_) {
+    this->parent_->decrement_stop_urgent();
+    this->stop_urgent_active_ = false;
+  }
+  this->stop_verification_active_.store(false);
 }
 
 void EleroCover::schedule_immediate_poll() {
   uint32_t now = millis();
-  if (cover_logic::should_schedule_immediate_poll(
-          this->command_check_, static_cast<uint8_t>(this->commands_to_send_.size()),
-          ELERO_MAX_COMMAND_QUEUE, now, this->last_immediate_poll_ms_,
-          ELERO_IMMEDIATE_POLL_MIN_INTERVAL_MS)) {
-    this->commands_to_send_.push(this->command_check_);
+  if ((now - this->last_immediate_poll_ms_) >= ELERO_IMMEDIATE_POLL_MIN_INTERVAL_MS &&
+      intent_was_accepted(this->submit_intent({CommandIntentKind::CHECK, 0})))
     this->last_immediate_poll_ms_ = now;
-  }
 }
 
 void EleroCover::recompute_position() {
@@ -572,25 +580,6 @@ void EleroCover::recompute_position() {
                                                    ELERO_TIMEOUT_MOVEMENT);
 
   this->last_recompute_time_ = now;
-}
-
-bool EleroCover::send_stop_priority_() {
-  this->command_.payload[4] = this->command_stop_;
-  for (int attempt = 0; attempt < 3; attempt++) {
-    if (this->parent_->send_command_priority(&this->command_)) {
-      return true;
-    }
-    ESP_LOGW(TAG, "Priority queue full for blind 0x%06x, retry %d/3",
-             this->command_.blind_addr, attempt + 1);
-    vTaskDelay(pdMS_TO_TICKS(5));
-  }
-  ESP_LOGE(TAG, "CRITICAL: Stop command DROPPED for blind 0x%06x after 3 priority queue retries",
-           this->command_.blind_addr);
-  this->parent_->increment_tx_drop_count();
-#ifdef USE_TEXT_SENSOR
-  this->parent_->publish_text_sensor_state(this->command_.blind_addr, "stop_dropped");
-#endif
-  return false;
 }
 
 } // namespace elero

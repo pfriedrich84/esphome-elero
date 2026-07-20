@@ -321,6 +321,7 @@ cover:
 elero_group:
   - name: "Alle Rollläden"
     assumed_state: true
+    hide_members: false
     members:
       - cover_schlafzimmer
       - cover_wohnzimmer
@@ -331,13 +332,14 @@ elero_group:
 | `name` | String | Ja | - | Anzeigename in Home Assistant |
 | `members` | Liste von Cover-IDs | Ja | - | Mitglieder der Gruppe (mindestens 2, maximal 10) |
 | `assumed_state` | Boolean | Nein | `true` | `true` = Hoch/Runter-Buttons immer aktiv, da keine Positionsrückmeldung von der Gruppe erfolgt |
+| `hide_members` | Boolean | Nein | `false` | Markiert alle gelisteten Mitglieder als intern und blendet ihre einzelnen Entities global in Home Assistant aus. Dies gilt auch, wenn ein Mitglied zusätzlich in einer anderen Gruppe verwendet wird. |
 
 **Hinweise:**
 - Die Einträge unter `members` sind die ESPHome-IDs der einzelnen `cover: platform: elero`-Blöcke (`id:`), nicht `name`, `blind_address` oder die Home-Assistant-Entity-ID.
 - Vergib für jedes Gruppenmitglied am besten explizit eine stabile `id:` wie `cover_schlafzimmer`; diese ID wird dann unverändert in `members` referenziert.
-- Es müssen mindestens 2 und maximal 10 Mitglieder angegeben werden (RF-Paketgrößenlimit).
-- Wenn alle Mitglieder dieselbe `remote_address` und denselben `channel` verwenden, wird ein einzelnes natives Multi-Destination-RF-Paket gesendet — dies ist effizienter als einzelne Befehle.
-- Andernfalls werden die Befehle einzeln nacheinander an jedes Mitglied gesendet.
+- Es müssen mindestens 2 und maximal 10 unterschiedliche Mitglieder angegeben werden (RF-Paketgrößenlimit); doppelte IDs werden bei der YAML-Validierung abgelehnt.
+- Ein natives Multi-Destination-RF-Paket wird nur verwendet, wenn Remote-Adresse, Kanal, Paketprofil, Payload und semantische Befehlszuordnung aller Mitglieder kompatibel sind. Andernfalls wird derselbe semantische Command Intent atomar in alle Mitglieder-Queues aufgenommen; ist eine Queue voll, wird keine davon verändert.
+- Bei einem endgültigen nativen Sendefehler wird nur dann auf Mitglieder zurückgefallen, wenn noch kein natives RF-Paket akzeptiert wurde. Nach teilweiser nativer Übertragung erfolgt kein automatisches Fan-out, um Doppelbefehle zu vermeiden.
 - Alle Mitglieder müssen als `cover: platform: elero` konfiguriert sein.
 
 **Fehlersuche:** Wenn ESPHome beim Kompilieren meldet, dass ein Mitglied nicht aufgelöst werden kann, prüfe ob das betreffende Cover eine `id:` hat und ob die Schreibweise in `members` exakt übereinstimmt.

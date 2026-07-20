@@ -189,7 +189,7 @@ Core 0: Radio Task (FreeRTOS, priority 19, 8KB stack)
 Core 1: ESPHome Main Loop (Elero::loop())
   ├─ Drain rx_queue_ via dispatch_rx_result_()  — route to covers/lights/sensors
   ├─ send_command()         — queue producer (enqueues RadioMessage to tx_queue_)
-  ├─ drain_runtime_queues() — runtime blind command scheduling
+  ├─ advance_delivery_coordinators_() — profile-scoped ordering/counters for all command lanes
   ├─ poll_runtime_blinds_() — periodic status checks
   └─ recompute_runtime_positions_()  — dead-reckoning position updates
 ```
@@ -278,7 +278,7 @@ Cover/light access (for web server):
 Discovery and runtime:
 - `get_discovered_blinds()` / `get_discovered_count()` / `clear_discovered()` — manage discovered blinds
 - `adopt_blind(DiscoveredBlind&, name, DeviceType)` — adopt discovered blind/light for runtime control
-- `remove_runtime_blind(addr)` / `send_runtime_command(addr, cmd)` — manage runtime-adopted blinds
+- `remove_runtime_blind(addr)` / `send_runtime_command(addr, CommandIntent)` — manage runtime-adopted Blinds through semantic delivery
 - `update_runtime_blind_settings(addr, open, close, poll)` — update timing at runtime
 - `get_runtime_blinds()` / `is_blind_adopted(addr)` — query runtime blinds
 
@@ -312,7 +312,7 @@ Key constants (defined in `elero.h` unless noted):
 | `ELERO_DEFAULT_SEND_DELAY` | 0 ms | Default delay between repeated packets (configurable) |
 | `ELERO_RADIO_TASK_STACK_SIZE` | 16 384 bytes | FreeRTOS stack for the Core 0 radio task |
 | `ELERO_MAX_COMMAND_QUEUE` | 10 | Max queued commands per blind (prevents OOM) |
-| `ELERO_COMMAND_QUEUE_MAX_AGE_MS` | 30 000 ms | Clear stale command queue after 30 s without successful send |
+| `ELERO_COMMAND_QUEUE_MAX_AGE_MS` | 30 000 ms | Clear stale command queue 30 s after admission or the latest accepted repeat |
 | `ELERO_TX_QUEUE_DEPTH` | 16 | Normal TX FreeRTOS queue depth |
 | `ELERO_TX_PRIORITY_QUEUE_DEPTH` | 8 | Priority TX queue depth (stop commands) |
 | `ELERO_MAX_DISCOVERED` | 20 | Max blinds tracked in scan mode |
@@ -684,6 +684,7 @@ button:
 elero_group:
   - name: "All Blinds"
     assumed_state: true    # Optional: true = buttons always enabled (default true)
+    hide_members: false    # Optional: mark member entities internal (default false)
     members:
       - cover_bedroom
       - cover_living_room
@@ -691,8 +692,9 @@ elero_group:
 
 Optional parameters:
 - `assumed_state` (default `true`) — when true, open/close buttons are always enabled in HA (no position feedback from group)
+- `hide_members` (default `false`) — marks every listed member internal, hiding its individual Home Assistant entity globally, including membership in other groups
 
-Requires at least 2 and at most 10 member covers. When all members share the same `remote_address` and `channel`, a single native multi-destination RF packet is sent (more efficient). Otherwise, falls back to sequential individual commands.
+Requires 2–10 distinct members. Compatible RF profiles and command mappings use a dedicated native multi-destination lane on the shared profile coordinator. Incompatible groups atomically admit semantic intents to every member lane or to none. Native final failure falls back only before any repeat was accepted; partial native delivery never automatically fans out.
 
 ### Web UI (`elero_web`)
 

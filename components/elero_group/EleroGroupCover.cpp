@@ -1,36 +1,39 @@
 #include "EleroGroupCover.h"
-#include "../elero/elero_group_command_logic.h"
+#include "../elero/elero_group_delivery_policy.h"
 #include "esphome/core/log.h"
+#include <cmath>
 
 namespace esphome {
 namespace elero {
 
 static const char *const TAG = "elero.group";
 
-static group_command_logic::HubSubmitResult to_group_submit_result(SendResult result) {
-  switch (result) {
-    case SendResult::OK:
-      return group_command_logic::HubSubmitResult::OK;
-    case SendResult::QUEUE_FULL:
-      return group_command_logic::HubSubmitResult::QUEUE_FULL;
-    case SendResult::FAILED:
-    default:
-      return group_command_logic::HubSubmitResult::FAILED;
-  }
-}
-
 void EleroGroupCover::setup() {
   this->native_group_ = this->can_use_native_group_();
-  ESP_LOGD(TAG, "Group '%s' with %d members, native_group=%s",
+  if (this->native_group_) {
+    this->native_delivery_.configure(this->build_native_config_());
+    this->native_delivery_.set_outcome_callback(
+        [this](const DeliveryOutcome &outcome) { this->handle_native_outcome_(outcome); });
+    std::vector<CommandIntentDelivery *> member_deliveries;
+    member_deliveries.reserve(this->members_.size());
+    for (auto *member : this->members_)
+      member_deliveries.push_back(member->get_command_delivery());
+    if (this->parent_ == nullptr || !this->parent_->register_command_delivery(&this->native_delivery_) ||
+        !this->native_delivery_.set_native_fallback(member_deliveries.data(), member_deliveries.size())) {
+      if (this->parent_ != nullptr)
+        this->parent_->unregister_command_delivery(&this->native_delivery_);
+      ESP_LOGW(TAG, "Native group coordinator wiring failed; using atomic member delivery");
+      this->native_group_ = false;
+    }
+  }
+  ESP_LOGD(TAG, "Group '%s' with %d members, native_group=%s, hide_members=%s",
            this->get_name().c_str(), (int) this->members_.size(),
-           this->native_group_ ? "true" : "false");
-  // Start with average position of members
+           this->native_group_ ? "true" : "false", this->hide_members_ ? "true" : "false");
   this->update_position_();
 }
 
 void EleroGroupCover::loop() {
-  uint32_t now = millis();
-  // Update position every 1 second from member states
+  const uint32_t now = millis();
   if (now - this->last_position_update_ >= 1000) {
     this->last_position_update_ = now;
     this->update_position_();
@@ -40,20 +43,19 @@ void EleroGroupCover::loop() {
 void EleroGroupCover::dump_config() {
   ESP_LOGCONFIG(TAG, "Elero Group Cover '%s':", this->get_name().c_str());
   ESP_LOGCONFIG(TAG, "  Members: %d", (int) this->members_.size());
-  ESP_LOGCONFIG(TAG, "  Native multi-dest: %s", this->native_group_ ? "yes" : "no (different remote/channel)");
-  for (auto *member : this->members_) {
-    ESP_LOGCONFIG(TAG, "    - 0x%06x (ch=%d, remote=0x%06x)",
-                  member->get_blind_address(), member->get_channel(), member->get_remote_address());
-  }
+  ESP_LOGCONFIG(TAG, "  Native multi-dest: %s", this->native_group_ ? "yes" : "no (incompatible profiles)");
+  ESP_LOGCONFIG(TAG, "  Hide members: %s", YESNO(this->hide_members_));
+  for (auto *member : this->members_)
+    ESP_LOGCONFIG(TAG, "    - 0x%06x (ch=%d, remote=0x%06x)", member->get_blind_address(),
+                  member->get_channel(), member->get_remote_address());
 }
 
 cover::CoverTraits EleroGroupCover::get_traits() {
   auto traits = cover::CoverTraits();
   traits.set_supports_stop(true);
-  traits.set_supports_position(false);  // Group doesn't support intermediate positions
+  traits.set_supports_position(false);
   traits.set_supports_toggle(true);
   traits.set_is_assumed_state(this->assumed_state_);
-  // Support tilt only if ALL members support it
   bool all_tilt = true;
   for (auto *member : this->members_) {
     if (!member->get_supports_tilt()) {
@@ -66,148 +68,112 @@ cover::CoverTraits EleroGroupCover::get_traits() {
 }
 
 void EleroGroupCover::control(const cover::CoverCall &call) {
-  if (call.get_stop()) {
-    this->send_group_command_(GroupCommandAction::STOP);
+  if (call.get_stop() && intent_was_accepted(
+          this->submit_group_intent_({CommandIntentKind::STOP, 0}))) {
     this->current_operation = cover::COVER_OPERATION_IDLE;
     this->publish_state();
   }
   if (call.get_position().has_value()) {
-    auto pos = *call.get_position();
+    const float pos = *call.get_position();
     if (pos == cover::COVER_OPEN) {
-      this->send_group_command_(GroupCommandAction::OPEN);
-      this->current_operation = cover::COVER_OPERATION_OPENING;
+      if (intent_was_accepted(this->submit_group_intent_({CommandIntentKind::OPEN, 0})))
+        this->current_operation = cover::COVER_OPERATION_OPENING;
     } else if (pos == cover::COVER_CLOSED) {
-      this->send_group_command_(GroupCommandAction::CLOSE);
-      this->current_operation = cover::COVER_OPERATION_CLOSING;
+      if (intent_was_accepted(this->submit_group_intent_({CommandIntentKind::CLOSE, 0})))
+        this->current_operation = cover::COVER_OPERATION_CLOSING;
     } else {
-      // Intermediate positions: delegate to each member individually
-      // (each member has its own open/close duration for dead-reckoning)
+      std::vector<CommandIntent> intents;
+      intents.reserve(this->members_.size());
       for (auto *member : this->members_) {
-        auto action = (pos > member->get_cover_position()) ? GroupCommandAction::OPEN
-                                                            : GroupCommandAction::CLOSE;
-        member->enqueue_command(this->command_byte_for_(member, action));
+        const auto kind = pos > member->get_cover_position() ? CommandIntentKind::OPEN
+                                                              : CommandIntentKind::CLOSE;
+        intents.push_back({kind, 0});
       }
-      this->current_operation = cover::COVER_OPERATION_OPENING;
+      if (intent_was_accepted(this->submit_member_targets_(intents)))
+        this->current_operation = cover::COVER_OPERATION_OPENING;
     }
     this->publish_state();
   }
-  if (call.get_tilt().has_value()) {
-    auto tilt = *call.get_tilt();
-    if (tilt > 0) {
-      this->send_group_command_(GroupCommandAction::TILT);
-    }
-  }
+  if (call.get_tilt().has_value() && *call.get_tilt() > 0)
+    this->submit_group_intent_({CommandIntentKind::TILT, 0});
   if (call.get_toggle().has_value()) {
     if (this->current_operation != cover::COVER_OPERATION_IDLE) {
-      this->send_group_command_(GroupCommandAction::STOP);
-      this->current_operation = cover::COVER_OPERATION_IDLE;
+      if (intent_was_accepted(this->submit_group_intent_({CommandIntentKind::STOP, 0})))
+        this->current_operation = cover::COVER_OPERATION_IDLE;
     } else {
-      this->send_group_command_(GroupCommandAction::OPEN);
-      this->current_operation = cover::COVER_OPERATION_OPENING;
+      if (intent_was_accepted(this->submit_group_intent_({CommandIntentKind::OPEN, 0})))
+        this->current_operation = cover::COVER_OPERATION_OPENING;
     }
     this->publish_state();
   }
 }
 
-uint8_t EleroGroupCover::command_byte_for_(EleroBlindBase *member, GroupCommandAction action) const {
-  switch (action) {
-    case GroupCommandAction::OPEN:
-      return member->get_command_up();
-    case GroupCommandAction::CLOSE:
-      return member->get_command_down();
-    case GroupCommandAction::STOP:
-      return member->get_command_stop();
-    case GroupCommandAction::TILT:
-      return member->get_command_tilt();
+IntentSubmitResult EleroGroupCover::submit_group_intent_(const CommandIntent &intent) {
+  if (!this->native_group_)
+    return this->submit_to_members_(intent);
+  const auto result = this->native_delivery_.submit(intent, millis());
+  if (group_delivery_policy::reject_native_submit_without_fanout(result)) {
+    // Keep all compatible group work in the native lane. Sending only this
+    // newest command through members would overtake its older native backlog.
+    ESP_LOGW(TAG, "Native group command queue full; rejecting newest group command");
+    if (this->parent_ != nullptr)
+      this->parent_->increment_tx_drop_count();
   }
-  return member->get_command_stop();
+  return result;
 }
 
-bool EleroGroupCover::members_share_command_byte_(GroupCommandAction action, uint8_t &cmd_byte) const {
-  if (this->members_.empty())
-    return false;
-  cmd_byte = this->command_byte_for_(this->members_[0], action);
-  for (size_t i = 1; i < this->members_.size(); i++) {
-    if (this->command_byte_for_(this->members_[i], action) != cmd_byte)
-      return false;
-  }
-  return true;
+IntentSubmitResult EleroGroupCover::submit_to_members_(const CommandIntent &intent) {
+  std::vector<CommandIntent> intents(this->members_.size(), intent);
+  return this->submit_member_targets_(intents);
 }
 
-void EleroGroupCover::send_group_command_(GroupCommandAction action) {
-  uint8_t native_cmd_byte = 0;
-  const bool can_send_native = this->native_group_ &&
-                               this->members_share_command_byte_(action, native_cmd_byte);
-  if (can_send_native && this->parent_ != nullptr) {
-    // Native multi-dest: single RF packet to all members (same channel/remote/command byte).
-    // If the hub cannot accept it, fall back to member queues so normal cover
-    // dispatch retry/aging semantics take over instead of silently dropping it.
-    t_elero_command cmd{};
-    this->build_group_command_(cmd, native_cmd_byte);
-    auto result = to_group_submit_result(this->parent_->send_command(&cmd));
-    if (group_command_logic::should_increment_group_counter(result)) {
-      this->group_counter_ = group_command_logic::next_group_counter(this->group_counter_);
-      ESP_LOGD(TAG, "Sent native group command 0x%02x to %d dests", native_cmd_byte, (int) this->members_.size());
-      return;
-    }
-    ESP_LOGW(TAG, "Native group command 0x%02x was not accepted by hub, queueing %d member commands",
-             native_cmd_byte, (int) this->members_.size());
-    for (auto *member : this->members_) {
-      member->enqueue_command(this->command_byte_for_(member, action));
-    }
-  } else if (this->parent_ != nullptr) {
-    // Direct TX: enqueue each member's command directly to the hub's TX queue.
-    // Queue-full/failed sends fall back to the member's own command queue so
-    // per-cover dispatch delay, retry, and stale-queue rules remain the retry path.
-    uint8_t sent = 0;
-    uint8_t queued = 0;
-    for (auto *member : this->members_) {
-      uint8_t member_cmd_byte = this->command_byte_for_(member, action);
-      t_elero_command cmd = member->build_tx_command(member_cmd_byte);
-      auto result = to_group_submit_result(this->parent_->send_command(&cmd));
-      if (group_command_logic::should_fallback_to_member_queues(result)) {
-        member->enqueue_command(member_cmd_byte);
-        queued++;
-      } else {
-        sent++;
-      }
-    }
-    ESP_LOGD(TAG, "Direct group command: sent=%d queued=%d", sent, queued);
-  } else {
-    // Last resort fallback: use per-cover command queues.
-    for (auto *member : this->members_) {
-      member->enqueue_command(this->command_byte_for_(member, action));
-    }
+IntentSubmitResult EleroGroupCover::submit_member_targets_(const std::vector<CommandIntent> &intents) {
+  if (intents.size() != this->members_.size() || intents.empty())
+    return IntentSubmitResult::REJECTED;
+  std::vector<CommandIntentDelivery::AtomicIntentTarget> targets;
+  targets.reserve(this->members_.size());
+  for (size_t i = 0; i < this->members_.size(); i++)
+    targets.push_back({this->members_[i]->get_command_delivery(), intents[i],
+                       this->members_[i]->should_defer_intent(intents[i])});
+  const auto result = CommandIntentDelivery::submit_atomic(targets.data(), targets.size(), millis());
+  if (result == IntentSubmitResult::REJECTED) {
+    ESP_LOGW(TAG, "Atomic member command rejected; no member queue was changed");
+    if (this->parent_ != nullptr)
+      this->parent_->increment_tx_drop_count();
+  }
+  return result;
+}
+
+void EleroGroupCover::handle_native_outcome_(const DeliveryOutcome &outcome) {
+  if (outcome.event == DeliveryEvent::DROPPED ||
+      outcome.event == DeliveryEvent::FALLBACK_MEMBER_DROPPED) {
+    this->parent_->increment_tx_drop_count();
+    if (outcome.had_partial_delivery)
+      ESP_LOGE(TAG, "Native group delivery failed after partial RF acceptance; not fanning out");
+    else
+      ESP_LOGE(TAG, "Native group/member fallback delivery exhausted retries");
+  } else if (outcome.event == DeliveryEvent::FALLBACK_STARTED) {
+    ESP_LOGW(TAG, "Native group delivery failed before RF acceptance; falling back to members");
+  } else if (outcome.event == DeliveryEvent::STALE_CLEARED) {
+    ESP_LOGW(TAG, "Stale native group command queue cleared without fan-out");
+    this->parent_->increment_tx_drop_count();
   }
 }
 
 bool EleroGroupCover::can_use_native_group_() const {
-  if (this->members_.size() < 2 || this->members_.size() > ELERO_MAX_DESTS)
-    return false;
-  auto first_profile = this->members_[0]->get_command_profile();
-  for (size_t i = 1; i < this->members_.size(); i++) {
-    if (!command_profile::can_share_native_group(first_profile, this->members_[i]->get_command_profile()))
-      return false;
-  }
-  return true;
+  std::vector<CommandDeliveryConfig> configs;
+  configs.reserve(this->members_.size());
+  for (auto *member : this->members_)
+    configs.push_back(member->get_command_delivery_config());
+  return group_delivery_policy::native_profiles_compatible(configs);
 }
 
-void EleroGroupCover::build_group_command_(t_elero_command &cmd, uint8_t cmd_byte) {
-  auto first_profile = this->members_[0]->get_command_profile();
-  cmd.counter = this->group_counter_;
-  cmd.remote_addr = first_profile.remote_address;
-  cmd.channel = first_profile.channel;
-  cmd.pck_inf[0] = first_profile.pck_inf[0];
-  cmd.pck_inf[1] = first_profile.pck_inf[1];
-  cmd.hop = first_profile.hop;
-  cmd.payload[0] = first_profile.payload_1;
-  cmd.payload[1] = first_profile.payload_2;
-  cmd.payload[4] = cmd_byte;
-  cmd.num_dests = static_cast<uint8_t>(this->members_.size());
-  cmd.blind_addr = first_profile.blind_address;
-  for (size_t i = 0; i < this->members_.size(); i++) {
-    cmd.dest_addrs[i] = this->members_[i]->get_command_profile().blind_address;
-  }
+CommandDeliveryConfig EleroGroupCover::build_native_config_() const {
+  CommandDeliveryConfig config = this->members_[0]->get_command_delivery_config();
+  config.destination_count = static_cast<uint8_t>(this->members_.size());
+  for (size_t i = 0; i < this->members_.size(); i++)
+    config.destinations[i] = this->members_[i]->get_command_delivery_config().profile.blind_address;
+  return config;
 }
 
 void EleroGroupCover::update_position_() {
@@ -218,25 +184,20 @@ void EleroGroupCover::update_position_() {
   bool any_opening = false;
   bool any_closing = false;
   for (auto *member : this->members_) {
-    float pos = member->get_cover_position();
+    const float pos = member->get_cover_position();
     if (!std::isnan(pos)) {
       sum += pos;
       count++;
     }
     const char *op = member->get_operation_str();
-    if (op[0] == 'o') any_opening = true;  // "opening"
-    if (op[0] == 'c') any_closing = true;  // "closing"
+    if (op[0] == 'o') any_opening = true;
+    if (op[0] == 'c') any_closing = true;
   }
-  float new_pos = (count > 0) ? sum / count : 0.5f;
+  const float new_pos = count > 0 ? sum / count : 0.5f;
   cover::CoverOperation new_op = cover::COVER_OPERATION_IDLE;
-  if (any_opening)
-    new_op = cover::COVER_OPERATION_OPENING;
-  else if (any_closing)
-    new_op = cover::COVER_OPERATION_CLOSING;
-
-  bool changed = (std::abs(new_pos - this->position) > 0.01f) ||
-                 (new_op != this->current_operation);
-  if (changed) {
+  if (any_opening) new_op = cover::COVER_OPERATION_OPENING;
+  else if (any_closing) new_op = cover::COVER_OPERATION_CLOSING;
+  if (std::abs(new_pos - this->position) > 0.01f || new_op != this->current_operation) {
     this->position = new_pos;
     this->current_operation = new_op;
     this->publish_state(false);

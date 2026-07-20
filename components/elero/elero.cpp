@@ -1,5 +1,4 @@
 #include "elero.h"
-#include "elero_dispatch_logic.h"
 #include "elero_latency_logic.h"
 #include "elero_parser_diagnostics.h"
 #include "esphome/core/log.h"
@@ -137,107 +136,6 @@ const char *elero_state_to_string(uint8_t state) {
   }
 }
 
-void dispatch_commands(Elero *parent, std::queue<uint8_t> &queue,
-                       t_elero_command &cmd, uint8_t &send_packets,
-                       uint8_t &send_retries, uint32_t &last_command,
-                       bool &queue_full_published, uint32_t now,
-                       const char *tag, uint32_t blind_addr,
-                       void (*increase_counter_fn)(void *ctx), void *ctx,
-                       bool stop_urgent_self,
-                       uint32_t *last_queue_drain_ms) {
-  // Skip immediately if hub SPI is permanently broken — no point retrying.
-  if (parent->is_failed()) return;
-
-  // Queue aging: if commands have been sitting without a successful drain
-  // for too long, the blind is likely offline.  Clear stale commands.
-  // Reset the timer whenever the queue is empty so freshly-added commands
-  // are never mistaken for stale ones.
-  if (last_queue_drain_ms != nullptr) {
-    if (queue.empty()) {
-      *last_queue_drain_ms = now;
-    } else if (dispatch_logic::should_clear_stale_queue(now, *last_queue_drain_ms,
-                                                         ELERO_COMMAND_QUEUE_MAX_AGE_MS)) {
-      ESP_LOGW(tag, "Queue stale for 0x%06x (%lums without drain), clearing %d commands",
-               blind_addr, (unsigned long)(now - *last_queue_drain_ms), (int)queue.size());
-      // If a command was partially sent (some repeats transmitted), bump the
-      // counter so the next command doesn't reuse the in-flight counter value.
-      // Blinds may reject duplicate counter values as replays.
-      if (send_packets > 0) {
-        increase_counter_fn(ctx);
-      }
-      while (!queue.empty()) queue.pop();
-      send_packets = 0;
-      send_retries = 0;
-      *last_queue_drain_ms = now;
-      return;
-    }
-  }
-
-  // When THIS cover is in stop-verification, defer its own non-stop commands
-  // so the stop packets transmit without self-contention.  Other covers are
-  // no longer blocked — only the cover that triggered auto-stop defers.
-  // CHECK (status poll) is exempt — it's the verify poll itself and must go through.
-  if (stop_urgent_self && !queue.empty()) {
-    if (dispatch_logic::should_defer_for_stop(true, queue.front(),
-                                              ELERO_COMMAND_COVER_STOP, ELERO_COMMAND_COVER_CHECK)) {
-      return;  // defer until this cover's stop verification completes
-    }
-  }
-
-  uint32_t delay = dispatch_logic::calculate_dispatch_delay(parent->get_send_delay(), send_retries);
-
-  bool is_stop = (!queue.empty() && queue.front() == ELERO_COMMAND_COVER_STOP);
-  if (dispatch_logic::is_dispatch_ready(is_stop, now, last_command, delay)) {
-    if (!queue.empty()) {
-      cmd.payload[4] = queue.front();
-      auto result = parent->send_command(&cmd);
-      if (result == SendResult::OK) {
-        send_packets++;
-        send_retries = 0;
-        if (send_packets >= parent->get_send_repeats()) {
-          queue.pop();
-          send_packets = 0;
-          if (last_queue_drain_ms != nullptr)
-            *last_queue_drain_ms = now;
-          increase_counter_fn(ctx);
-#ifdef USE_TEXT_SENSOR
-          if (queue_full_published && queue.empty()) {
-            queue_full_published = false;
-          }
-#endif
-        }
-        last_command = now;
-      } else if (result == SendResult::QUEUE_FULL) {
-        // TX queue congested — retry next loop iteration, no penalty
-      } else {
-        // Real failure (SPI broken, etc.)
-        send_retries++;
-        ESP_LOGD(tag, "Retry #%d for 0x%06x (backoff %lums)",
-                 send_retries, blind_addr, (unsigned long)delay);
-        if (dispatch_logic::should_drop_after_retries(send_retries, ELERO_SEND_RETRIES)) {
-          ESP_LOGE(tag, "Hit maximum retries for 0x%06x, giving up.", blind_addr);
-          parent->increment_tx_drop_count();
-          if (dispatch_logic::should_advance_counter_on_drop(send_packets)) {
-            increase_counter_fn(ctx);
-          }
-          send_packets = 0;
-          send_retries = 0;
-          queue.pop();
-          if (dispatch_logic::should_clear_queue_full_latch_after_drop(queue.empty(),
-                                                                       queue_full_published)) {
-            queue_full_published = false;
-          }
-          if (last_queue_drain_ms != nullptr &&
-              dispatch_logic::should_refresh_stale_timer_on_drop(true)) {
-            *last_queue_drain_ms = now;
-          }
-        }
-        last_command = now;
-      }
-    }
-  }
-}
-
 Elero::~Elero() {
   // 1. Signal radio task to stop and wait for it to exit
   if (this->radio_task_handle_ != nullptr) {
@@ -287,13 +185,10 @@ void Elero::loop() {
   if (this->spi_failed_.load(std::memory_order_acquire))
     return;
 
-  // 1. Drain runtime blind command queues (enqueues to TX queue).
-  //    TX-first: prioritise outgoing commands over incoming results so group
-  //    commands fill the TX pipeline as early as possible.
-  //    No is_tx_idle() gate: the FreeRTOS TX queue (depth 16) buffers commands
-  //    while the radio is busy.  send_command() returns false if the queue is
-  //    full, and callers retry next loop.
-  this->drain_runtime_queues();
+  // 1. Advance every remote-profile coordinator. Coordinators are the sole
+  //    owners of RF ordering and rolling counters across configured devices,
+  //    runtime devices, and compatible native groups.
+  this->advance_delivery_coordinators_();
   this->poll_runtime_blinds_();
 
   // 2. Drain RX results from radio task (Core 0 → Core 1 via queue).
@@ -577,6 +472,43 @@ void Elero::setup() {
 #endif
 }
 
+bool Elero::register_command_delivery(CommandIntentDelivery *delivery) {
+  if (delivery == nullptr)
+    return false;
+  const DeliveryProfileKey key = DeliveryProfileKey::from(delivery->config().profile);
+  std::lock_guard<std::mutex> lock(this->delivery_coordinators_mutex_);
+  auto &coordinator = this->delivery_coordinators_[key];
+  if (!coordinator)
+    coordinator = std::make_unique<ProfileDeliveryCoordinator>(key);
+  return coordinator->attach(delivery);
+}
+
+void Elero::unregister_command_delivery(CommandIntentDelivery *delivery) {
+  if (delivery == nullptr)
+    return;
+  std::lock_guard<std::mutex> lock(this->delivery_coordinators_mutex_);
+  for (auto it = this->delivery_coordinators_.begin(); it != this->delivery_coordinators_.end(); ++it) {
+    if (!it->second->detach(delivery))
+      continue;
+    if (it->second->empty())
+      this->delivery_coordinators_.erase(it);
+    break;
+  }
+}
+
+void Elero::advance_delivery_coordinators_() {
+  const uint32_t now = millis();
+  std::lock_guard<std::mutex> lock(this->delivery_coordinators_mutex_);
+  for (auto &entry : this->delivery_coordinators_) {
+    entry.second->advance(
+        now, this->send_delay_, this->send_repeats_,
+        [this](const t_elero_command &packet, bool priority) {
+          t_elero_command copy = packet;
+          return priority ? this->send_command_priority(&copy) : this->send_command(&copy);
+        });
+  }
+}
+
 // ---------------------------------------------------------------------------
 // send_command — public API (Core 1): enqueue a TX command to the radio task
 // ---------------------------------------------------------------------------
@@ -608,11 +540,11 @@ SendResult Elero::send_command(t_elero_command *cmd) {
 // send_command_priority — public API (Core 1): enqueue a high-priority TX
 // command (e.g. stop) that bypasses the normal queue.
 // ---------------------------------------------------------------------------
-bool Elero::send_command_priority(t_elero_command *cmd) {
+SendResult Elero::send_command_priority(t_elero_command *cmd) {
   if (this->spi_failed_.load(std::memory_order_acquire))
-    return false;
+    return SendResult::FAILED;
   if (!this->tx_priority_queue_)
-    return false;
+    return SendResult::FAILED;
 
   // Backward compat: single-dest callers only set blind_addr, not dest_addrs[]
   if (cmd->num_dests <= 1 && cmd->dest_addrs[0] == 0) {
@@ -626,11 +558,10 @@ bool Elero::send_command_priority(t_elero_command *cmd) {
   msg.tx.enqueued_at_ms = millis();
   if (xQueueSend(this->tx_priority_queue_, &msg, pdMS_TO_TICKS(10)) == pdTRUE) {
     this->observe_tx_queue_depth_();
-    return true;
+    return SendResult::OK;
   }
-  ESP_LOGW(TAG, "Priority TX queue full, command to 0x%06x dropped", cmd->blind_addr);
-  this->tx_drop_count_.fetch_add(1, std::memory_order_relaxed);
-  return false;
+  ESP_LOGV(TAG, "Priority TX queue full, will retry for 0x%06x", cmd->blind_addr);
+  return SendResult::QUEUE_FULL;
 }
 
 void Elero::increment_parser_drop_count(const char *reason) {
@@ -698,10 +629,10 @@ void EleroRefreshButton::dump_config() {
 void EleroRefreshButton::press_action() {
   if (this->blind_ != nullptr) {
     ESP_LOGD(TAG, "Refresh: CHECK → cover 0x%06x", this->blind_->get_blind_address());
-    this->blind_->enqueue_command(this->blind_->get_command_check());
+    this->blind_->submit_intent({CommandIntentKind::CHECK, 0});
   } else if (this->light_ != nullptr) {
     ESP_LOGD(TAG, "Refresh: CHECK → light 0x%06x", this->light_->get_blind_address());
-    this->light_->enqueue_command(this->light_->get_command_check());
+    this->light_->submit_intent({CommandIntentKind::CHECK, 0});
   }
 }
 #endif  // USE_BUTTON

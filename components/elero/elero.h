@@ -8,13 +8,14 @@
 #include "esphome/components/button/button.h"
 #endif
 #include "cc1101.h"
-#include "elero_command_profile.h"
+#include "elero_profile_delivery_coordinator.h"
 #include <RadioLib.h>
 #include <string>
 #include <vector>
 #include <map>
 #include <set>
 #include <queue>
+#include <memory>
 #include <cstdarg>
 #include <atomic>
 #include <mutex>
@@ -47,14 +48,6 @@ enum class TxState : uint8_t {
 enum class RadioMode : uint8_t {
   RX,  ///< Radio is in receive mode (or idle/transitioning to RX)
   TX,  ///< Radio is actively transmitting
-};
-
-/// Result of send_command() — lets callers distinguish transient queue-full
-/// from permanent SPI failure without a racy side-channel flag.
-enum class SendResult : uint8_t {
-  OK,           ///< Command enqueued successfully
-  QUEUE_FULL,   ///< FreeRTOS TX queue is full — transient, retry next loop
-  FAILED,       ///< SPI broken or queue not initialized — permanent failure
 };
 
 /// Minimum interval between schedule_immediate_poll() calls per blind (ms).
@@ -117,11 +110,8 @@ static const uint32_t ELERO_DEFAULT_SEND_DELAY = 0; // no default delay between 
 static const uint32_t ELERO_TIMEOUT_MOVEMENT = 120000; // poll for up to two minutes while moving
 static const uint32_t ELERO_POST_MOVEMENT_POLL_DELAY = 5000; // poll 5s after open/close duration elapses
 
-static const uint8_t ELERO_SEND_RETRIES = 3;
 static const uint8_t ELERO_DEFAULT_SEND_REPEATS = 1;  // one RF packet per command; no repeats by default
 static const uint32_t ELERO_RADIO_TASK_STACK_SIZE = 16384;  // bytes; RadioLib/SPI/log formatting need headroom on ESP-IDF
-static const uint8_t ELERO_MAX_COMMAND_QUEUE = 10; // max commands per blind to prevent OOM
-static const uint32_t ELERO_COMMAND_QUEUE_MAX_AGE_MS = 30000; // clear stale queue after 30s without successful send
 
 // Auto-stop reliability: repeat stop commands, compensate for TX latency, verify motor stopped
 static const uint8_t  ELERO_STOP_REPEAT_COUNT = 2;              // stop commands queued on auto-stop (x2 RF packets each)
@@ -144,27 +134,11 @@ static const uint8_t ELERO_MSG_LENGTH = 0x1d;             // Default message len
 static const uint16_t ELERO_CRYPTO_MULT = 0x708f;         // Encryption multiplier for counter-based code
 static const uint16_t ELERO_CRYPTO_MASK = 0xffff;         // Mask for 16-bit encryption code
 static const uint8_t ELERO_SYS_ADDR = 0x01;               // System address in protocol
-static const uint8_t ELERO_MAX_DESTS = 10;                // Maximum destination addresses per TX packet
 
 // RSSI (CC1101 transceiver) constants: RSSI is in dBm, raw value is two's complement encoded
 static const uint8_t ELERO_RSSI_SIGN_BIT = 127;           // Sign bit threshold (values > 127 are negative)
 static const int8_t ELERO_RSSI_OFFSET = -74;              // Constant offset applied in RSSI calculation
 static const int ELERO_RSSI_DIVISOR = 2;                  // Divisor for raw RSSI value
-
-typedef struct {
-  uint8_t counter;
-  uint32_t blind_addr;
-  uint32_t remote_addr;
-  uint8_t channel;
-  uint8_t pck_inf[2];
-  uint8_t hop;
-  uint8_t payload[10];
-  // Multi-destination support: num_dests > 1 sends a single RF packet to multiple blinds.
-  // All destinations share the same remote_addr, channel, pck_inf, and hop.
-  // When num_dests == 1, dest_addrs[0] is auto-filled from blind_addr for backward compat.
-  uint8_t num_dests{1};
-  uint32_t dest_addrs[ELERO_MAX_DESTS]{};
-} t_elero_command;
 
 struct RawPacket {
   uint32_t timestamp_ms;            // millis() when captured
@@ -211,11 +185,8 @@ struct RuntimeBlind {
   uint32_t last_seen_ms{0};
   float last_rssi{0.0f};
   uint8_t last_state{ELERO_STATE_UNKNOWN};
-  uint8_t cmd_counter{1};
-  std::queue<uint8_t> command_queue;
-  uint8_t send_packets_count{0};
+  std::shared_ptr<CommandIntentDelivery> delivery;
   uint32_t last_poll_ms{0};           // millis() of last periodic status poll
-  uint32_t last_queue_drain_ms{0};    // millis() of last successful command pop (for aging)
   // Position tracking (dead-reckoning)
   float position{-1.0f};               // 0.0 = closed, 1.0 = open, -1.0 = unknown
   uint32_t last_recompute_ms{0};        // millis() of last position recompute
@@ -283,19 +254,6 @@ struct RadioMessage {
 
 const char *elero_state_to_string(uint8_t state);
 
-class Elero;  // forward declaration for dispatch_commands
-
-/// Shared command dispatch logic used by both EleroCover and EleroLight.
-/// Returns true if a command was sent or a retry was attempted.
-void dispatch_commands(Elero *parent, std::queue<uint8_t> &queue,
-                       t_elero_command &cmd, uint8_t &send_packets,
-                       uint8_t &send_retries, uint32_t &last_command,
-                       bool &queue_full_published, uint32_t now,
-                       const char *tag, uint32_t blind_addr,
-                       void (*increase_counter_fn)(void *ctx), void *ctx,
-                       bool stop_urgent_self = false,
-                       uint32_t *last_queue_drain_ms = nullptr);
-
 /// Abstract base class for light actuators registered with the Elero hub.
 /// EleroLight inherits from this so the hub never needs the light header.
 class EleroLightBase {
@@ -304,7 +262,9 @@ class EleroLightBase {
   virtual uint32_t get_blind_address() = 0;
   virtual void set_rx_state(uint8_t state) = 0;
   virtual void notify_rx_meta(uint32_t ms, float rssi) {}
-  virtual void enqueue_command(uint8_t cmd_byte) = 0;
+  virtual IntentSubmitResult submit_intent(const CommandIntent &intent) = 0;
+  virtual CommandDeliveryConfig get_command_delivery_config() const = 0;
+  virtual CommandIntentDelivery *get_command_delivery() = 0;
   /// Called by the hub when a remote command packet (0x6a/0x69) targets this
   /// device, so it can poll the blind immediately instead of waiting for the
   /// normal poll interval.  Default no-op; concrete classes override.
@@ -321,11 +281,6 @@ class EleroLightBase {
   virtual uint8_t get_channel() const = 0;
   virtual uint32_t get_remote_address() const = 0;
   virtual uint32_t get_dim_duration_ms() const = 0;
-  // Web API helpers — command bytes
-  virtual uint8_t get_command_on() const = 0;
-  virtual uint8_t get_command_off() const = 0;
-  virtual uint8_t get_command_stop() const = 0;
-  virtual uint8_t get_command_check() const = 0;
 };
 
 /// Abstract base class for blinds registered with the Elero hub.
@@ -352,14 +307,11 @@ class EleroBlindBase {
   virtual uint32_t get_open_duration_ms() const = 0;
   virtual uint32_t get_close_duration_ms() const = 0;
   virtual bool get_supports_tilt() const = 0;
-  // Web API commands — read configured command bytes
-  virtual uint8_t get_command_up() const = 0;
-  virtual uint8_t get_command_down() const = 0;
-  virtual uint8_t get_command_stop() const = 0;
-  virtual uint8_t get_command_check() const = 0;
-  virtual uint8_t get_command_tilt() const = 0;
-  virtual void enqueue_command(uint8_t cmd_byte) = 0;
-  // RF params for group command building
+  virtual IntentSubmitResult submit_intent(const CommandIntent &intent) = 0;
+  virtual CommandDeliveryConfig get_command_delivery_config() const = 0;
+  virtual CommandIntentDelivery *get_command_delivery() = 0;
+  virtual bool should_defer_intent(const CommandIntent &) const { return false; }
+  // RF params retained for configuration/status serialization
   virtual uint8_t get_hop() const = 0;
   virtual uint8_t get_pck_inf0() const = 0;
   virtual uint8_t get_pck_inf1() const = 0;
@@ -378,9 +330,6 @@ class EleroBlindBase {
     profile.payload_2 = this->get_payload_2();
     return profile;
   }
-  /// Build a ready-to-send t_elero_command with the given command byte,
-  /// using this blind's current RF params and counter.  Increments the counter.
-  virtual t_elero_command build_tx_command(uint8_t cmd_byte) = 0;
   /// Called by the hub when a remote command packet (0x6a/0x69) targets this
   /// blind, so it can poll the blind immediately instead of waiting for the
   /// normal poll interval.  Default no-op; concrete classes override.
@@ -471,9 +420,11 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   bool is_tx_idle() const { return tx_state_.load(std::memory_order_acquire) == TxState::IDLE; }
   void register_cover(EleroBlindBase *cover);
   void register_light(EleroLightBase *light);
+  bool register_command_delivery(CommandIntentDelivery *delivery);
+  void unregister_command_delivery(CommandIntentDelivery *delivery);
   SendResult send_command(t_elero_command *cmd);
   /// Priority TX: bypasses the normal queue for time-critical commands (e.g. stop).
-  bool send_command_priority(t_elero_command *cmd);
+  SendResult send_command_priority(t_elero_command *cmd);
   /// Current number of messages waiting in the normal TX queue (for dynamic latency compensation).
   uint32_t get_tx_queue_depth() const {
     return tx_queue_ ? uxQueueMessagesWaiting(tx_queue_) : 0;
@@ -562,7 +513,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   bool adopt_blind(const DiscoveredBlind &discovered, const std::string &name,
                    DeviceType type = DeviceType::COVER);
   bool remove_runtime_blind(uint32_t addr);
-  bool send_runtime_command(uint32_t addr, uint8_t cmd_byte);
+  IntentSubmitResult send_runtime_command(uint32_t addr, const CommandIntent &intent);
   bool update_runtime_blind_settings(uint32_t addr, uint32_t open_dur_ms,
                                      uint32_t close_dur_ms, uint32_t poll_intvl_ms);
   /// Return a snapshot copy of runtime blinds (thread-safe for web handlers).
@@ -657,7 +608,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void process_rx();
   void advance_tx();
   void dispatch_rx_result_(const RxResult &rx);  // runs on Core 1 main loop
-  void drain_runtime_queues();
+  void advance_delivery_coordinators_();
   void poll_runtime_blinds_();
   void recompute_runtime_positions_();
   void update_runtime_blind_direction_(RuntimeBlind &rb, uint8_t state);
@@ -739,6 +690,8 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   std::vector<RawPacket> raw_packets_;              // protected by packet_dump_mutex_
   uint16_t raw_packet_write_idx_{0};
   std::map<uint32_t, RuntimeBlind> runtime_blinds_; // protected by state_mutex_
+  std::map<DeliveryProfileKey, std::unique_ptr<ProfileDeliveryCoordinator>> delivery_coordinators_;
+  mutable std::mutex delivery_coordinators_mutex_;
   std::set<uint32_t> own_remote_addresses_;  // remote addrs we TX as — echoes are filtered
 
   // Packet deduplication: O(1) hash lookup keyed by (src << 8 | cnt) → timestamp

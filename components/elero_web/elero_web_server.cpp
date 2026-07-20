@@ -634,72 +634,64 @@ void EleroWebServer::handle_cover_command(AsyncWebServerRequest *request, uint32
     return;
   }
 
-  // Map command string to byte — use configured values for covers, defaults for runtime blinds
-  auto get_cmd_byte_for_cover = [&](EleroBlindBase *blind) -> int {
-    if (cmd_str == "up"    || cmd_str == "open")  return blind->get_command_up();
-    if (cmd_str == "down"  || cmd_str == "close") return blind->get_command_down();
-    if (cmd_str == "stop")  return blind->get_command_stop();
-    if (cmd_str == "check") return blind->get_command_check();
-    if (cmd_str == "tilt")  return blind->get_command_tilt();
-    if (cmd_str == "int")   return 0x44;
-    return -1;
+  auto cover_intent = [&](CommandIntent &intent) {
+    return web_utils::parse_cover_intent(cmd_str, intent);
   };
-
-  // Try configured cover
-  const auto &covers = this->parent_->get_configured_covers();
-  auto it = covers.find(addr);
-  if (it != covers.end()) {
-    int cmd_byte = get_cmd_byte_for_cover(it->second);
-    if (cmd_byte < 0) { this->send_json_error(request, 400, "Unknown cmd"); return; }
-    it->second->enqueue_command((uint8_t)cmd_byte);
+  auto light_intent = [&](CommandIntent &intent) {
+    return web_utils::parse_light_intent(cmd_str, intent);
+  };
+  auto send_result = [&](IntentSubmitResult result) {
+    if (result == IntentSubmitResult::REJECTED) {
+      this->send_json_error(request, 503, "Command queue full");
+      return;
+    }
     char buf[96];
-    snprintf(buf, sizeof(buf), "{\"status\":\"queued\",\"address\":\"0x%06x\",\"cmd\":\"%s\"}", addr, cmd_str.c_str());
+    snprintf(buf, sizeof(buf), "{\"status\":\"queued\",\"address\":\"0x%06x\",\"cmd\":\"%s\"}",
+             addr, cmd_str.c_str());
     AsyncWebServerResponse *response = request->beginResponse(200, "application/json", buf);
     this->add_cors_headers(response);
     request->send(response);
+  };
+
+  const auto &covers = this->parent_->get_configured_covers();
+  auto cover = covers.find(addr);
+  if (cover != covers.end()) {
+    CommandIntent intent;
+    if (!cover_intent(intent)) {
+      this->send_json_error(request, 400, "Unknown cmd");
+      return;
+    }
+    send_result(cover->second->submit_intent(intent));
     return;
   }
 
-  // Try configured light
-  {
-    const auto &lights = this->parent_->get_configured_lights();
-    auto lit = lights.find(addr);
-    if (lit != lights.end()) {
-      int cmd_byte = -1;
-      if (cmd_str == "on"  || cmd_str == "up"   || cmd_str == "open")  cmd_byte = lit->second->get_command_on();
-      if (cmd_str == "off" || cmd_str == "down"  || cmd_str == "close") cmd_byte = lit->second->get_command_off();
-      if (cmd_str == "stop")  cmd_byte = lit->second->get_command_stop();
-      if (cmd_str == "check") cmd_byte = lit->second->get_command_check();
-      if (cmd_byte < 0) { this->send_json_error(request, 400, "Unknown cmd"); return; }
-      lit->second->enqueue_command((uint8_t)cmd_byte);
-      char buf[96];
-      snprintf(buf, sizeof(buf), "{\"status\":\"queued\",\"address\":\"0x%06x\",\"cmd\":\"%s\"}", addr, cmd_str.c_str());
-      AsyncWebServerResponse *response = request->beginResponse(200, "application/json", buf);
-      this->add_cors_headers(response);
-      request->send(response);
+  const auto &lights = this->parent_->get_configured_lights();
+  auto light = lights.find(addr);
+  if (light != lights.end()) {
+    CommandIntent intent;
+    if (!light_intent(intent)) {
+      this->send_json_error(request, 400, "Unknown cmd");
       return;
     }
+    send_result(light->second->submit_intent(intent));
+    return;
   }
 
-  // Try runtime blind
-  int cmd_byte = -1;
-  if (cmd_str == "up"    || cmd_str == "open")  cmd_byte = 0x20;
-  else if (cmd_str == "down"  || cmd_str == "close") cmd_byte = 0x40;
-  else if (cmd_str == "stop")  cmd_byte = 0x10;
-  else if (cmd_str == "check") cmd_byte = 0x00;
-  else if (cmd_str == "tilt")  cmd_byte = 0x24;
-  else if (cmd_str == "int")   cmd_byte = 0x44;
-  if (cmd_byte < 0) { this->send_json_error(request, 400, "Unknown cmd"); return; }
-
-  if (this->parent_->send_runtime_command(addr, (uint8_t)cmd_byte)) {
-    char buf[96];
-    snprintf(buf, sizeof(buf), "{\"status\":\"queued\",\"address\":\"0x%06x\",\"cmd\":\"%s\"}", addr, cmd_str.c_str());
-    AsyncWebServerResponse *response = request->beginResponse(200, "application/json", buf);
-    this->add_cors_headers(response);
-    request->send(response);
-  } else {
+  const auto runtime = this->parent_->get_runtime_blinds();
+  const auto runtime_device = runtime.find(addr);
+  if (runtime_device == runtime.end()) {
     this->send_json_error(request, 404, "Device not found");
+    return;
   }
+  CommandIntent intent;
+  const bool known = runtime_device->second.device_type == DeviceType::LIGHT
+                         ? light_intent(intent)
+                         : cover_intent(intent);
+  if (!known) {
+    this->send_json_error(request, 400, "Unknown cmd");
+    return;
+  }
+  send_result(this->parent_->send_runtime_command(addr, intent));
 }
 
 // ─── Cover settings ───────────────────────────────────────────────────────────

@@ -451,6 +451,7 @@ cover:
 elero_group:
   - name: "Alle Rollläden"
     assumed_state: true
+    hide_members: false
     members:
       - cover_schlafzimmer
       - cover_wohnzimmer
@@ -461,13 +462,14 @@ elero_group:
 | `name` | String | Ja | - | Anzeigename in Home Assistant |
 | `members` | Liste von Cover-IDs | Ja | - | Mitglieder der Gruppe (2–10 Covers) |
 | `assumed_state` | Boolean | Nein | `true` | `true` = Hoch/Runter-Buttons immer aktiv (keine Positionsrückmeldung von der Gruppe) |
+| `hide_members` | Boolean | Nein | `false` | Blendet alle Mitglieder global als einzelne Home-Assistant-Entities aus (`internal`). |
 
 **Hinweise:**
 - Die Einträge unter `members` sind die ESPHome-IDs der einzelnen `cover: platform: elero`-Blöcke (`id:`), nicht `name`, `blind_address` oder die Home-Assistant-Entity-ID.
 - Vergib für jedes Gruppenmitglied am besten explizit eine stabile `id:` wie `cover_schlafzimmer`; diese ID wird dann unverändert in `members` referenziert.
-- Eine Gruppe benötigt mindestens 2 und maximal 10 Mitglieder.
-- Wenn alle Mitglieder dieselbe `remote_address` und denselben `channel` verwenden, wird ein einzelnes natives Multi-Destination-RF-Paket gesendet (effizienter).
-- Andernfalls werden die Befehle einzeln nacheinander an jedes Mitglied gesendet.
+- Eine Gruppe benötigt 2–10 unterschiedliche Mitglieder; doppelte IDs werden bei der YAML-Validierung abgelehnt.
+- Nur vollständig kompatible RF- und Befehlsprofile verwenden ein natives Multi-Destination-RF-Paket. Inkompatible Gruppen nehmen semantische Command Intents atomar in alle Mitglieds-Queues oder in keine auf.
+- Ein nativer endgültiger Fehler fällt nur ohne bereits akzeptierte Wiederholung auf Mitglieder zurück; nach teilweiser nativer Übertragung wird nicht automatisch gefächert.
 - Wenn ESPHome beim Kompilieren meldet, dass ein Mitglied nicht aufgelöst werden kann, prüfe `id:` und Schreibweise in `members`.
 - Vollständige Parameterliste: [Konfigurationsreferenz](docs/user/configuration.md#plattform-elero_group-gruppensteuerung)
 

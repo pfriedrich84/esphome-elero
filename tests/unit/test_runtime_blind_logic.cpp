@@ -14,12 +14,6 @@ TEST(RuntimeBlindLogic, PollRequiresEnabledIntervalEmptyQueueAndElapsedTime) {
   EXPECT_TRUE(should_poll_runtime_blind(1000, 0, 1000, true));
 }
 
-TEST(RuntimeBlindLogic, CommandCounterWrapsAndSkipsZero) {
-  EXPECT_EQ(next_command_counter(1), 2);
-  EXPECT_EQ(next_command_counter(0xFE), 0xFF);
-  EXPECT_EQ(next_command_counter(0xFF), 1);
-}
-
 TEST(RuntimeBlindLogic, DirectionFollowsMovingAndEndpointStates) {
   EXPECT_EQ(direction_for_state(0x08, 0x01, 0x02, 0x08, 0x0a, 0x09, 0x0b, 0), 1);
   EXPECT_EQ(direction_for_state(0x0b, 0x01, 0x02, 0x08, 0x0a, 0x09, 0x0b, 0), -1);

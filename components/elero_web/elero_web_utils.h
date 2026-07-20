@@ -1,6 +1,8 @@
 #pragma once
 // Elero web server utility functions — extracted as pure functions for testability.
 
+#include "../elero/elero_command_delivery.h"
+
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -33,6 +35,26 @@ inline std::string json_escape(const std::string &s) {
     }
   }
   return out;
+}
+
+inline bool parse_cover_intent(const std::string &value, CommandIntent &intent) {
+  if (value == "up" || value == "open") intent = {CommandIntentKind::OPEN, 0};
+  else if (value == "down" || value == "close") intent = {CommandIntentKind::CLOSE, 0};
+  else if (value == "stop") intent = {CommandIntentKind::STOP, 0};
+  else if (value == "check") intent = {CommandIntentKind::CHECK, 0};
+  else if (value == "tilt") intent = {CommandIntentKind::TILT, 0};
+  else if (value == "int") intent = CommandIntent::custom(0x44);
+  else return false;
+  return true;
+}
+
+inline bool parse_light_intent(const std::string &value, CommandIntent &intent) {
+  if (value == "on" || value == "up" || value == "open") intent = {CommandIntentKind::ON, 0};
+  else if (value == "off" || value == "down" || value == "close") intent = {CommandIntentKind::OFF, 0};
+  else if (value == "stop") intent = {CommandIntentKind::STOP, 0};
+  else if (value == "check") intent = {CommandIntentKind::CHECK, 0};
+  else return false;
+  return true;
 }
 
 inline bool parse_addr_url(const std::string &url, const char *prefix,

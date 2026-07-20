@@ -4,7 +4,7 @@
 #include "esphome/core/automation.h"
 #include "esphome/components/cover/cover.h"
 #include "../elero.h"
-#include <queue>
+#include <atomic>
 
 namespace esphome {
 namespace elero {
@@ -61,36 +61,17 @@ class EleroCover : public cover::Cover, public Component, public EleroBlindBase 
   uint32_t get_open_duration_ms() const override { return this->open_duration_; }
   uint32_t get_close_duration_ms() const override { return this->close_duration_; }
   bool get_supports_tilt() const override { return this->supports_tilt_; }
-  // EleroBlindBase web API commands — read configured command bytes
-  uint8_t get_command_up() const override { return this->command_up_; }
-  uint8_t get_command_down() const override { return this->command_down_; }
-  uint8_t get_command_stop() const override { return this->command_stop_; }
-  uint8_t get_command_check() const override { return this->command_check_; }
-  uint8_t get_command_tilt() const override { return this->command_tilt_; }
   uint8_t get_hop() const override { return this->command_.hop; }
   uint8_t get_pck_inf0() const override { return this->command_.pck_inf[0]; }
   uint8_t get_pck_inf1() const override { return this->command_.pck_inf[1]; }
   uint8_t get_payload_1() const override { return this->command_.payload[0]; }
   uint8_t get_payload_2() const override { return this->command_.payload[1]; }
-  t_elero_command build_tx_command(uint8_t cmd_byte) override {
-    t_elero_command cmd = this->command_;
-    cmd.payload[4] = cmd_byte;
-    this->increase_counter();
-    return cmd;
-  }
-  void enqueue_command(uint8_t cmd_byte) override {
-    if (this->commands_to_send_.size() < ELERO_MAX_COMMAND_QUEUE) {
-      this->commands_to_send_.push(cmd_byte);
-    } else {
-      ESP_LOGW("elero.cover", "Command queue full for blind 0x%06x, dropping cmd 0x%02x",
-               this->command_.blind_addr, cmd_byte);
-#ifdef USE_TEXT_SENSOR
-      if (!this->queue_full_published_) {
-        this->parent_->publish_text_sensor_state(this->command_.blind_addr, "queue_full");
-        this->queue_full_published_ = true;
-      }
-#endif
-    }
+  IntentSubmitResult submit_intent(const CommandIntent &intent) override;
+  CommandDeliveryConfig get_command_delivery_config() const override;
+  CommandIntentDelivery *get_command_delivery() override { return &this->delivery_; }
+  bool should_defer_intent(const CommandIntent &intent) const override {
+    return this->stop_verification_active_.load() && intent.kind != CommandIntentKind::CHECK &&
+           intent.kind != CommandIntentKind::STOP;
   }
   void apply_runtime_settings(uint32_t open_dur_ms, uint32_t close_dur_ms,
                               uint32_t poll_intvl_ms) override {
@@ -100,24 +81,22 @@ class EleroCover : public cover::Cover, public Component, public EleroBlindBase 
   }
 
   void schedule_immediate_poll() override;
-  void handle_commands(uint32_t now);
   void recompute_position();
   void start_movement(cover::CoverOperation op);
   bool is_at_target();
-  void increase_counter();
 
  protected:
   void control(const cover::CoverCall &call) override;
-  /// Send stop via priority queue with retry (max 3 attempts, 5ms apart).
-  /// Returns true if enqueued, false if all retries failed (increments tx_drop_count_).
-  bool send_stop_priority_();
+  void handle_delivery_outcome_(const DeliveryOutcome &outcome);
+  void begin_movement_tracking_(cover::CoverOperation operation, uint32_t now);
+  void finish_stop_verification_();
 
   t_elero_command command_ = {
     .counter = 1,
   };
   Elero *parent_;
   uint32_t last_poll_{0};
-  uint32_t last_command_{0};
+  uint32_t command_cooldown_until_{0};
   uint32_t poll_offset_{0};
   uint32_t movement_start_{0};
   uint32_t open_duration_{0};
@@ -137,9 +116,7 @@ class EleroCover : public cover::Cover, public Component, public EleroBlindBase 
   uint8_t command_check_{0x00};
   uint8_t command_stop_{0x10};
   uint8_t command_tilt_{0x24};
-  std::queue<uint8_t> commands_to_send_;
-  uint8_t send_retries_{0};
-  uint8_t send_packets_{0};
+  CommandIntentDelivery delivery_;
   cover::CoverOperation last_operation_{cover::COVER_OPERATION_OPENING};
   uint32_t stop_verify_at_{0};          // millis() when to poll for stop confirmation (0 = inactive)
   uint8_t  stop_verify_retries_{ELERO_STOP_VERIFY_MAX_RETRIES};  // verification counter (MAX = inactive)
@@ -148,7 +125,10 @@ class EleroCover : public cover::Cover, public Component, public EleroBlindBase 
   float    stop_trigger_position_{0};   // position when auto-stop was triggered (for correction)
   uint32_t stop_trigger_ms_{0};         // millis() when auto-stop was triggered
   bool     stop_urgent_active_{false};  // true if this cover has incremented stop_urgent_count_
-  uint32_t last_queue_drain_ms_{0};    // millis() when command queue last had a successful pop (for aging)
+  bool     pending_stop_transition_{false};  // wait for first hub-accepted STOP packet
+  bool     pending_movement_start_{false};   // optimistic state, awaiting first accepted movement packet
+  CommandIntentKind pending_movement_kind_{CommandIntentKind::OPEN};
+  std::atomic<bool> stop_verification_active_{false};
 };
 
 } // namespace elero
