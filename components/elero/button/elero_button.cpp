@@ -9,11 +9,11 @@ static const char *const TAG = "elero.button";
 void EleroScanButton::dump_config() {
   LOG_BUTTON("", "Elero Scan Button", this);
   if (this->cover_ != nullptr) {
-    ESP_LOGCONFIG(TAG, "  Action: cover_command 0x%02x -> cover 0x%06x",
-                  this->command_byte_, this->cover_->get_blind_address());
+    ESP_LOGCONFIG(TAG, "  Action: cover_command 0x%02x -> cover 0x%06lx",
+                  this->command_byte_, static_cast<unsigned long>(this->cover_->get_blind_address()));
   } else if (this->light_ != nullptr) {
-    ESP_LOGCONFIG(TAG, "  Action: light_command 0x%02x -> light 0x%06x",
-                  this->command_byte_, this->light_->get_blind_address());
+    ESP_LOGCONFIG(TAG, "  Action: light_command 0x%02x -> light 0x%06lx",
+                  this->command_byte_, static_cast<unsigned long>(this->light_->get_blind_address()));
   } else {
     ESP_LOGCONFIG(TAG, "  Action: %s", this->scan_start_ ? "start_scan" : "stop_scan");
   }
@@ -21,15 +21,15 @@ void EleroScanButton::dump_config() {
 
 void EleroScanButton::press_action() {
   if (this->cover_ != nullptr) {
-    ESP_LOGD(TAG, "Sending command 0x%02x to cover 0x%06x",
-             this->command_byte_, this->cover_->get_blind_address());
+    ESP_LOGD(TAG, "Sending command 0x%02x to cover 0x%06lx",
+             this->command_byte_, static_cast<unsigned long>(this->cover_->get_blind_address()));
     const auto mapping = this->cover_->get_command_delivery_config().mapping;
     this->cover_->submit_intent(cover_intent_for_command_byte(mapping, this->command_byte_));
     return;
   }
   if (this->light_ != nullptr) {
-    ESP_LOGD(TAG, "Sending command 0x%02x to light 0x%06x",
-             this->command_byte_, this->light_->get_blind_address());
+    ESP_LOGD(TAG, "Sending command 0x%02x to light 0x%06lx",
+             this->command_byte_, static_cast<unsigned long>(this->light_->get_blind_address()));
     const auto mapping = this->light_->get_command_delivery_config().mapping;
     this->light_->submit_intent(light_intent_for_command_byte(mapping, this->command_byte_));
     return;
@@ -44,11 +44,12 @@ void EleroScanButton::press_action() {
     this->parent_->start_scan();
   } else {
     this->parent_->stop_scan();
-    ESP_LOGI(TAG, "Stopped Elero RF scan. Discovered %d device(s).", this->parent_->get_discovered_count());
+    ESP_LOGI(TAG, "Stopped Elero RF scan. Discovered %d device(s).",
+             static_cast<int>(this->parent_->get_discovered_count()));
     for (const auto &blind : this->parent_->get_discovered_blinds()) {
-      ESP_LOGI(TAG, "  addr=0x%06x remote=0x%06x ch=%d rssi=%.1f state=%s seen=%d",
-               blind.blind_address, blind.remote_address, blind.channel,
-               blind.rssi, elero_state_to_string(blind.last_state), blind.times_seen);
+      ESP_LOGI(TAG, "  addr=0x%06lx remote=0x%06lx ch=%d rssi=%.1f state=%s seen=%d",
+               static_cast<unsigned long>(blind.blind_address), static_cast<unsigned long>(blind.remote_address),
+               blind.channel, blind.rssi, elero_state_to_string(blind.last_state), blind.times_seen);
     }
   }
 }

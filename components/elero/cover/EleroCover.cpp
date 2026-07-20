@@ -13,16 +13,16 @@ static const char *const TAG = "elero.cover";
 
 void EleroCover::dump_config() {
   LOG_COVER("", "Elero Cover", this);
-  ESP_LOGCONFIG(TAG, "  Blind Address: 0x%06x", this->command_.blind_addr);
-  ESP_LOGCONFIG(TAG, "  Remote Address: 0x%06x", this->command_.remote_addr);
+  ESP_LOGCONFIG(TAG, "  Blind Address: 0x%06lx", static_cast<unsigned long>(this->command_.blind_addr));
+  ESP_LOGCONFIG(TAG, "  Remote Address: 0x%06lx", static_cast<unsigned long>(this->command_.remote_addr));
   ESP_LOGCONFIG(TAG, "  Channel: %d", this->command_.channel);
   ESP_LOGCONFIG(TAG, "  Hop: 0x%02x", this->command_.hop);
   ESP_LOGCONFIG(TAG, "  pck_inf1: 0x%02x, pck_inf2: 0x%02x", this->command_.pck_inf[0], this->command_.pck_inf[1]);
   if (this->open_duration_ > 0)
-    ESP_LOGCONFIG(TAG, "  Open Duration: %dms", this->open_duration_);
+    ESP_LOGCONFIG(TAG, "  Open Duration: %lums", static_cast<unsigned long>(this->open_duration_));
   if (this->close_duration_ > 0)
-    ESP_LOGCONFIG(TAG, "  Close Duration: %dms", this->close_duration_);
-  ESP_LOGCONFIG(TAG, "  Poll Interval: %dms", this->poll_intvl_);
+    ESP_LOGCONFIG(TAG, "  Close Duration: %lums", static_cast<unsigned long>(this->close_duration_));
+  ESP_LOGCONFIG(TAG, "  Poll Interval: %lums", static_cast<unsigned long>(this->poll_intvl_));
   ESP_LOGCONFIG(TAG, "  Supports Tilt: %s", YESNO(this->supports_tilt_));
   ESP_LOGCONFIG(TAG, "  Assumed State: %s", YESNO(this->assumed_state_));
 }
@@ -82,7 +82,8 @@ void EleroCover::loop() {
   if(this->post_movement_poll_at_ > 0 && now >= this->post_movement_poll_at_) {
     this->post_movement_poll_at_ = 0;
     if (intent_was_accepted(this->submit_intent({CommandIntentKind::CHECK, 0}))) {
-      ESP_LOGD(TAG, "Post-movement status poll for blind 0x%06x", this->command_.blind_addr);
+      ESP_LOGD(TAG, "Post-movement status poll for blind 0x%06lx",
+               static_cast<unsigned long>(this->command_.blind_addr));
       this->last_poll_ = now;
     }
   }
@@ -91,15 +92,15 @@ void EleroCover::loop() {
   if (this->stop_verify_at_ > 0 && now >= this->stop_verify_at_) {
     if (this->stop_verify_retries_ < ELERO_STOP_VERIFY_MAX_RETRIES) {
       this->stop_verify_retries_++;
-      ESP_LOGD(TAG, "Stop verify poll #%d for blind 0x%06x",
-               this->stop_verify_retries_, this->command_.blind_addr);
+      ESP_LOGD(TAG, "Stop verify poll #%d for blind 0x%06lx",
+               this->stop_verify_retries_, static_cast<unsigned long>(this->command_.blind_addr));
       this->submit_intent({CommandIntentKind::CHECK, 0});
       // Reschedule in case no RF response arrives (prevents verification stall)
       this->stop_verify_at_ = now + ELERO_STOP_VERIFY_DELAY_MS;
     } else {
       // Exhausted retries — give up verification
-      ESP_LOGW(TAG, "Stop verification exhausted %d retries for blind 0x%06x",
-               ELERO_STOP_VERIFY_MAX_RETRIES, this->command_.blind_addr);
+      ESP_LOGW(TAG, "Stop verification exhausted %d retries for blind 0x%06lx",
+               ELERO_STOP_VERIFY_MAX_RETRIES, static_cast<unsigned long>(this->command_.blind_addr));
       this->stop_verify_at_ = 0;
       this->stop_trigger_ms_ = 0;
       this->finish_stop_verification_();
@@ -131,8 +132,8 @@ void EleroCover::loop() {
       (this->open_duration_ > 0) && (this->close_duration_ > 0)) {
     this->recompute_position();
     if(this->is_at_target()) {
-      ESP_LOGI(TAG, "Blind 0x%06x reached target (pos=%.2f, target=%.2f), sending stop",
-               this->command_.blind_addr, this->position, this->target_position_);
+      ESP_LOGI(TAG, "Blind 0x%06lx reached target (pos=%.2f, target=%.2f), sending stop",
+               static_cast<unsigned long>(this->command_.blind_addr), this->position, this->target_position_);
       if (!this->pending_stop_transition_) {
         // Queueing locally is not proof that the hub accepted the priority
         // packet. Keep tracking movement until advance() reports first RF queue
@@ -208,7 +209,8 @@ void EleroCover::handle_delivery_outcome_(const DeliveryOutcome &outcome) {
   }
 
   if (outcome.event == DeliveryEvent::DROPPED) {
-    ESP_LOGE(TAG, "Delivery retries exhausted for blind 0x%06x", this->command_.blind_addr);
+    ESP_LOGE(TAG, "Delivery retries exhausted for blind 0x%06lx",
+             static_cast<unsigned long>(this->command_.blind_addr));
     this->parent_->increment_tx_drop_count();
     if (outcome.intent.kind == CommandIntentKind::STOP && this->pending_stop_transition_) {
       this->pending_stop_transition_ = false;
@@ -221,7 +223,8 @@ void EleroCover::handle_delivery_outcome_(const DeliveryOutcome &outcome) {
       this->publish_state(false);
     }
   } else if (outcome.event == DeliveryEvent::STALE_CLEARED) {
-    ESP_LOGW(TAG, "Stale Command queue cleared for blind 0x%06x", this->command_.blind_addr);
+    ESP_LOGW(TAG, "Stale Command queue cleared for blind 0x%06lx",
+             static_cast<unsigned long>(this->command_.blind_addr));
     this->parent_->increment_tx_drop_count();
     if (outcome.intent.kind == CommandIntentKind::STOP && this->pending_stop_transition_) {
       this->pending_stop_transition_ = false;
@@ -262,7 +265,8 @@ IntentSubmitResult EleroCover::submit_intent(const CommandIntent &intent) {
   const bool deferred = this->should_defer_intent(intent);
   auto result = this->delivery_.submit(intent, millis(), deferred);
   if (result == IntentSubmitResult::REJECTED) {
-    ESP_LOGW(TAG, "Command queue full for blind 0x%06x", this->command_.blind_addr);
+    ESP_LOGW(TAG, "Command queue full for blind 0x%06lx",
+             static_cast<unsigned long>(this->command_.blind_addr));
 #ifdef USE_TEXT_SENSOR
     if (!this->queue_full_published_) {
       this->parent_->publish_text_sensor_state(this->command_.blind_addr, "queue_full");
@@ -290,7 +294,8 @@ cover::CoverTraits EleroCover::get_traits() {
 
 void EleroCover::set_rx_state(uint8_t state) {
   this->last_state_raw_ = state;
-  ESP_LOGV(TAG, "Got state: 0x%02x (%s) for blind 0x%06x", state, elero_state_to_string(state), this->command_.blind_addr);
+  ESP_LOGV(TAG, "Got state: 0x%02x (%s) for blind 0x%06lx", state, elero_state_to_string(state),
+           static_cast<unsigned long>(this->command_.blind_addr));
   float pos = this->position;
   float current_tilt = this->tilt;
   CoverOperation op = this->current_operation;
@@ -340,21 +345,21 @@ void EleroCover::set_rx_state(uint8_t state) {
     current_tilt = 0.0;
     break;
   case ELERO_STATE_BLOCKING:
-    ESP_LOGW(TAG, "Blind 0x%06x reports BLOCKING", this->command_.blind_addr);
+    ESP_LOGW(TAG, "Blind 0x%06lx reports BLOCKING", static_cast<unsigned long>(this->command_.blind_addr));
     op = COVER_OPERATION_IDLE;
 #ifdef USE_TEXT_SENSOR
     this->parent_->publish_text_sensor_state(this->command_.blind_addr, "blocking");
 #endif
     break;
   case ELERO_STATE_OVERHEATED:
-    ESP_LOGW(TAG, "Blind 0x%06x reports OVERHEATED", this->command_.blind_addr);
+    ESP_LOGW(TAG, "Blind 0x%06lx reports OVERHEATED", static_cast<unsigned long>(this->command_.blind_addr));
     op = COVER_OPERATION_IDLE;
 #ifdef USE_TEXT_SENSOR
     this->parent_->publish_text_sensor_state(this->command_.blind_addr, "overheated");
 #endif
     break;
   case ELERO_STATE_TIMEOUT:
-    ESP_LOGW(TAG, "Blind 0x%06x reports TIMEOUT", this->command_.blind_addr);
+    ESP_LOGW(TAG, "Blind 0x%06lx reports TIMEOUT", static_cast<unsigned long>(this->command_.blind_addr));
     op = COVER_OPERATION_IDLE;
 #ifdef USE_TEXT_SENSOR
     this->parent_->publish_text_sensor_state(this->command_.blind_addr, "timeout");
@@ -375,8 +380,8 @@ void EleroCover::set_rx_state(uint8_t state) {
         this->stop_verify_retries_ < ELERO_STOP_VERIFY_MAX_RETRIES) {
       // Motor is still moving and retries remain — re-send stop via priority queue
       this->stop_verify_retries_++;
-      ESP_LOGW(TAG, "Blind 0x%06x still moving after stop, retry #%d",
-               this->command_.blind_addr, this->stop_verify_retries_);
+      ESP_LOGW(TAG, "Blind 0x%06lx still moving after stop, retry #%d",
+               static_cast<unsigned long>(this->command_.blind_addr), this->stop_verify_retries_);
       this->submit_intent({CommandIntentKind::STOP, 0});
       this->stop_verify_at_ = millis() + ELERO_STOP_VERIFY_DELAY_MS;
       op = COVER_OPERATION_IDLE;  // keep our side idle while retrying
@@ -393,8 +398,9 @@ void EleroCover::set_rx_state(uint8_t state) {
           pos = clamp(this->stop_trigger_position_ + overshoot, 0.0f, 1.0f);
         else
           pos = clamp(this->stop_trigger_position_ - overshoot, 0.0f, 1.0f);
-        ESP_LOGD(TAG, "Blind 0x%06x stop verified: corrected pos %.2f -> %.2f (delay %ums)",
-                 this->command_.blind_addr, this->stop_trigger_position_, pos, actual_delay);
+        ESP_LOGD(TAG, "Blind 0x%06lx stop verified: corrected pos %.2f -> %.2f (delay %lums)",
+                 static_cast<unsigned long>(this->command_.blind_addr), this->stop_trigger_position_, pos,
+                 static_cast<unsigned long>(actual_delay));
       }
       this->stop_trigger_ms_ = 0;
       this->stop_verify_retries_ = ELERO_STOP_VERIFY_MAX_RETRIES;
@@ -426,8 +432,8 @@ void EleroCover::control(const cover::CoverCall &call) {
     if (std::isnan(cur)) {
       cur = 0.5f;
       this->position = cur;
-      ESP_LOGW(TAG, "Blind 0x%06x position was NAN, reset to 0.5",
-               this->command_.blind_addr);
+      ESP_LOGW(TAG, "Blind 0x%06lx position was NAN, reset to 0.5",
+               static_cast<unsigned long>(this->command_.blind_addr));
     }
     // Short-circuit: already at fully open/closed — skip movement entirely.
     // Without this, commanding 100% when already at 100% sends a redundant
@@ -497,8 +503,8 @@ void EleroCover::start_movement(CoverOperation dir) {
       this->pending_movement_kind_ = CommandIntentKind::CLOSE;
     break;
     case COVER_OPERATION_IDLE:
-      ESP_LOGI(TAG, "Blind 0x%06x manual stop at position %.2f",
-               this->command_.blind_addr, this->position);
+      ESP_LOGI(TAG, "Blind 0x%06lx manual stop at position %.2f",
+               static_cast<unsigned long>(this->command_.blind_addr), this->position);
       this->stop_trigger_position_ = this->position;
       this->stop_trigger_ms_ = millis();
       this->stop_verification_active_.store(true);
@@ -570,8 +576,8 @@ void EleroCover::recompute_position() {
   // Sanity check: skip recompute if elapsed time is implausibly large
   // (e.g., millis() wraparound glitch or stale last_recompute_time_)
   if (elapsed > ELERO_TIMEOUT_MOVEMENT) {
-    ESP_LOGW(TAG, "Position recompute skipped for blind 0x%06x: elapsed %u ms exceeds timeout",
-             this->command_.blind_addr, elapsed);
+    ESP_LOGW(TAG, "Position recompute skipped for blind 0x%06lx: elapsed %lu ms exceeds timeout",
+             static_cast<unsigned long>(this->command_.blind_addr), static_cast<unsigned long>(elapsed));
     this->last_recompute_time_ = now;
     return;
   }

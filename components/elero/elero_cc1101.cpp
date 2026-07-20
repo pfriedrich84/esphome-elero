@@ -514,8 +514,8 @@ bool Elero::init() {
     }
     if (attempt < max_spi_retries) {
       uint32_t delay_us = 2000u * (1u << (attempt - 1));
-      ESP_LOGW(TAG, "init: SPI health check attempt %d/%d failed (wrote 0x08, read 0x%02x), retrying in %u us",
-               attempt, max_spi_retries, check, delay_us);
+      ESP_LOGW(TAG, "init: SPI health check attempt %d/%d failed (wrote 0x08, read 0x%02x), retrying in %lu us",
+               attempt, max_spi_retries, check, static_cast<unsigned long>(delay_us));
       delay_microseconds_safe(delay_us);
     } else {
       ESP_LOGE(TAG, "init: SPI health check failed after %d attempts (wrote 0x08, read 0x%02x) — aborting init",
@@ -708,8 +708,8 @@ bool Elero::send_command_internal_(t_elero_command *cmd, uint32_t enqueued_at_ms
   crypto::msg_encode(payload);
 
   if (num_dests == 1) {
-    ESP_LOGD(TAG, "send to 0x%06x: cmd=0x%02x ch=%02d cnt=%02d",
-             cmd->dest_addrs[0], cmd->payload[4], cmd->channel, cmd->counter);
+    ESP_LOGD(TAG, "send to 0x%06lx: cmd=0x%02x ch=%02d cnt=%02d",
+             static_cast<unsigned long>(cmd->dest_addrs[0]), cmd->payload[4], cmd->channel, cmd->counter);
   } else {
     ESP_LOGD(TAG, "send group (%d dests): cmd=0x%02x ch=%02d cnt=%02d",
              num_dests, cmd->payload[4], cmd->channel, cmd->counter);

@@ -12,14 +12,14 @@ static const char *const TAG = "elero.light";
 
 void EleroLight::dump_config() {
   ESP_LOGCONFIG(TAG, "Elero Light:");
-  ESP_LOGCONFIG(TAG, "  Blind Address: 0x%06x", this->command_.blind_addr);
-  ESP_LOGCONFIG(TAG, "  Remote Address: 0x%06x", this->command_.remote_addr);
+  ESP_LOGCONFIG(TAG, "  Blind Address: 0x%06lx", static_cast<unsigned long>(this->command_.blind_addr));
+  ESP_LOGCONFIG(TAG, "  Remote Address: 0x%06lx", static_cast<unsigned long>(this->command_.remote_addr));
   ESP_LOGCONFIG(TAG, "  Channel: %d", this->command_.channel);
   ESP_LOGCONFIG(TAG, "  Hop: 0x%02x", this->command_.hop);
   ESP_LOGCONFIG(TAG, "  pck_inf1: 0x%02x, pck_inf2: 0x%02x",
                 this->command_.pck_inf[0], this->command_.pck_inf[1]);
   if (this->dim_duration_ > 0)
-    ESP_LOGCONFIG(TAG, "  Dim Duration: %dms", this->dim_duration_);
+    ESP_LOGCONFIG(TAG, "  Dim Duration: %lums", static_cast<unsigned long>(this->dim_duration_));
   ESP_LOGCONFIG(TAG, "  cmd_on: 0x%02x, cmd_off: 0x%02x, cmd_stop: 0x%02x",
                 this->command_on_, this->command_off_, this->command_stop_);
   ESP_LOGCONFIG(TAG, "  cmd_dim_up: 0x%02x, cmd_dim_down: 0x%02x",
@@ -104,8 +104,8 @@ void EleroLight::write_state(LightState *state) {
   this->is_dimming_ = start_dimming;
   this->pending_dimming_start_ = start_dimming;
   if (start_dimming) {
-    ESP_LOGD(TAG, "Dimming %s 0x%06x from %.2f to %.2f", dim_up ? "up" : "down",
-             this->command_.blind_addr, this->brightness_, new_brightness);
+    ESP_LOGD(TAG, "Dimming %s 0x%06lx from %.2f to %.2f", dim_up ? "up" : "down",
+             static_cast<unsigned long>(this->command_.blind_addr), this->brightness_, new_brightness);
     this->dim_up_ = dim_up;
     this->pending_dimming_kind_ = dim_up ? CommandIntentKind::DIM_UP : CommandIntentKind::DIM_DOWN;
     this->dimming_start_ = 0;
@@ -148,14 +148,16 @@ void EleroLight::handle_delivery_outcome_(const DeliveryOutcome &outcome) {
   }
 
   if (outcome.event == DeliveryEvent::DROPPED) {
-    ESP_LOGE(TAG, "Delivery retries exhausted for light 0x%06x", this->command_.blind_addr);
+    ESP_LOGE(TAG, "Delivery retries exhausted for light 0x%06lx",
+             static_cast<unsigned long>(this->command_.blind_addr));
     this->parent_->increment_tx_drop_count();
     if (this->pending_dimming_start_ && outcome.intent.kind == this->pending_dimming_kind_) {
       this->pending_dimming_start_ = false;
       this->is_dimming_ = false;
     }
   } else if (outcome.event == DeliveryEvent::STALE_CLEARED) {
-    ESP_LOGW(TAG, "Stale Command queue cleared for light 0x%06x", this->command_.blind_addr);
+    ESP_LOGW(TAG, "Stale Command queue cleared for light 0x%06lx",
+             static_cast<unsigned long>(this->command_.blind_addr));
     this->parent_->increment_tx_drop_count();
     if (this->pending_dimming_start_) {
       this->pending_dimming_start_ = false;
@@ -194,7 +196,8 @@ IntentSubmitResult EleroLight::submit_intent(const CommandIntent &intent) {
 IntentSubmitResult EleroLight::submit_intents_(const std::vector<CommandIntent> &intents) {
   auto result = this->delivery_.submit_batch(intents.data(), intents.size(), millis());
   if (result == IntentSubmitResult::REJECTED) {
-    ESP_LOGW(TAG, "Command queue full for light 0x%06x", this->command_.blind_addr);
+    ESP_LOGW(TAG, "Command queue full for light 0x%06lx",
+             static_cast<unsigned long>(this->command_.blind_addr));
 #ifdef USE_TEXT_SENSOR
     if (!this->queue_full_published_) {
       this->parent_->publish_text_sensor_state(this->command_.blind_addr, "queue_full");
@@ -233,8 +236,8 @@ void EleroLight::recompute_brightness() {
 }
 
 void EleroLight::set_rx_state(uint8_t state) {
-  ESP_LOGV(TAG, "Got state: 0x%02x for light 0x%06x",
-           state, this->command_.blind_addr);
+  ESP_LOGV(TAG, "Got state: 0x%02x for light 0x%06lx",
+           state, static_cast<unsigned long>(this->command_.blind_addr));
 
   if (state == ELERO_STATE_ON) {
     if (!this->is_on_) {
@@ -263,17 +266,17 @@ void EleroLight::set_rx_state(uint8_t state) {
       }
     }
   } else if (state == ELERO_STATE_BLOCKING) {
-    ESP_LOGW(TAG, "Light 0x%06x reports BLOCKING", this->command_.blind_addr);
+    ESP_LOGW(TAG, "Light 0x%06lx reports BLOCKING", static_cast<unsigned long>(this->command_.blind_addr));
 #ifdef USE_TEXT_SENSOR
     this->parent_->publish_text_sensor_state(this->command_.blind_addr, "blocking");
 #endif
   } else if (state == ELERO_STATE_OVERHEATED) {
-    ESP_LOGW(TAG, "Light 0x%06x reports OVERHEATED", this->command_.blind_addr);
+    ESP_LOGW(TAG, "Light 0x%06lx reports OVERHEATED", static_cast<unsigned long>(this->command_.blind_addr));
 #ifdef USE_TEXT_SENSOR
     this->parent_->publish_text_sensor_state(this->command_.blind_addr, "overheated");
 #endif
   } else if (state == ELERO_STATE_TIMEOUT) {
-    ESP_LOGW(TAG, "Light 0x%06x reports TIMEOUT", this->command_.blind_addr);
+    ESP_LOGW(TAG, "Light 0x%06lx reports TIMEOUT", static_cast<unsigned long>(this->command_.blind_addr));
 #ifdef USE_TEXT_SENSOR
     this->parent_->publish_text_sensor_state(this->command_.blind_addr, "timeout");
 #endif

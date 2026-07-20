@@ -78,8 +78,8 @@ void Elero::track_discovered_blind(uint32_t src, uint32_t remote, uint8_t channe
         blind.payload_1 = payload_1;
         blind.payload_2 = payload_2;
         blind.params_from_command = true;
-        ESP_LOGI(TAG, "Upgraded blind 0x%06x params from command packet: ch=%d, pck_inf=0x%02x/0x%02x, hop=0x%02x, payload=0x%02x/0x%02x",
-                 src, channel, pck_inf0, pck_inf1, hop, payload_1, payload_2);
+        ESP_LOGI(TAG, "Upgraded blind 0x%06lx params from command packet: ch=%d, pck_inf=0x%02x/0x%02x, hop=0x%02x, payload=0x%02x/0x%02x",
+                 static_cast<unsigned long>(src), channel, pck_inf0, pck_inf1, hop, payload_1, payload_2);
       }
       return;
     }
@@ -100,8 +100,9 @@ void Elero::track_discovered_blind(uint32_t src, uint32_t remote, uint8_t channe
     blind.times_seen = 1;
     blind.params_from_command = from_command;
     this->discovered_blinds_.push_back(blind);
-    ESP_LOGI(TAG, "Discovered new device: addr=0x%06x, remote=0x%06x, ch=%d, rssi=%.1f, src=%s",
-             src, remote, channel, rssi, from_command ? "cmd_pkt" : "status_pkt");
+    ESP_LOGI(TAG, "Discovered new device: addr=0x%06lx, remote=0x%06lx, ch=%d, rssi=%.1f, src=%s",
+             static_cast<unsigned long>(src), static_cast<unsigned long>(remote), channel, rssi,
+             from_command ? "cmd_pkt" : "status_pkt");
   }
 }
 

@@ -380,8 +380,8 @@ void EleroWebServer::build_discovered_array_json_(std::string &out) {
 
     char buf[640];
     snprintf(buf, sizeof(buf),
-      "{\"blind_address\":\"0x%06x\","
-      "\"remote_address\":\"0x%06x\","
+      "{\"blind_address\":\"0x%06lx\","
+      "\"remote_address\":\"0x%06lx\","
       "\"channel\":%d,"
       "\"rssi\":%.1f,"
       "\"last_state\":\"%s\","
@@ -396,8 +396,8 @@ void EleroWebServer::build_discovered_array_json_(std::string &out) {
       "\"already_configured\":%s,"
       "\"configured_as\":\"%s\","
       "\"already_adopted\":%s}",
-      blind.blind_address,
-      blind.remote_address,
+      static_cast<unsigned long>(blind.blind_address),
+      static_cast<unsigned long>(blind.remote_address),
       blind.channel,
       blind.rssi,
       elero_state_to_string(blind.last_state),
@@ -448,7 +448,7 @@ void EleroWebServer::build_configured_json_(std::string &out) {
     std::string esc_name = json_escape(blind->get_blind_name());
     char buf[512];
     snprintf(buf, sizeof(buf),
-      "{\"blind_address\":\"0x%06x\","
+      "{\"blind_address\":\"0x%06lx\","
       "\"name\":\"%s\","
       "\"position\":%.2f,"
       "\"operation\":\"%s\","
@@ -456,14 +456,14 @@ void EleroWebServer::build_configured_json_(std::string &out) {
       "\"last_seen_ms\":%lu,"
       "\"rssi\":%.1f,"
       "\"channel\":%d,"
-      "\"remote_address\":\"0x%06x\","
+      "\"remote_address\":\"0x%06lx\","
       "\"poll_interval_ms\":%lu,"
       "\"open_duration_ms\":%lu,"
       "\"close_duration_ms\":%lu,"
       "\"supports_tilt\":%s,"
       "\"device_type\":\"cover\","
       "\"adopted\":false}",
-      pair.first,
+      static_cast<unsigned long>(pair.first),
       esc_name.c_str(),
       blind->get_cover_position(),
       blind->get_operation_str(),
@@ -471,7 +471,7 @@ void EleroWebServer::build_configured_json_(std::string &out) {
       (unsigned long)blind->get_last_seen_ms(),
       blind->get_last_rssi(),
       (int)blind->get_channel(),
-      blind->get_remote_address(),
+      static_cast<unsigned long>(blind->get_remote_address()),
       (unsigned long)blind->get_poll_interval_ms(),
       (unsigned long)blind->get_open_duration_ms(),
       (unsigned long)blind->get_close_duration_ms(),
@@ -503,7 +503,7 @@ void EleroWebServer::build_configured_json_(std::string &out) {
 
     char buf[512];
     snprintf(buf, sizeof(buf),
-      "{\"blind_address\":\"0x%06x\","
+      "{\"blind_address\":\"0x%06lx\","
       "\"name\":\"%s\","
       "\"position\":%s,"
       "\"operation\":\"%s\","
@@ -511,14 +511,14 @@ void EleroWebServer::build_configured_json_(std::string &out) {
       "\"last_seen_ms\":%lu,"
       "\"rssi\":%.1f,"
       "\"channel\":%d,"
-      "\"remote_address\":\"0x%06x\","
+      "\"remote_address\":\"0x%06lx\","
       "\"poll_interval_ms\":%lu,"
       "\"open_duration_ms\":%lu,"
       "\"close_duration_ms\":%lu,"
       "\"supports_tilt\":false,"
       "\"device_type\":\"cover\","
       "\"adopted\":true}",
-      rb.blind_address,
+      static_cast<unsigned long>(rb.blind_address),
       esc_name.c_str(),
       pos_str,
       operation,
@@ -526,7 +526,7 @@ void EleroWebServer::build_configured_json_(std::string &out) {
       (unsigned long)rb.last_seen_ms,
       rb.last_rssi,
       (int)rb.channel,
-      rb.remote_address,
+      static_cast<unsigned long>(rb.remote_address),
       (unsigned long)rb.poll_intvl_ms,
       (unsigned long)rb.open_duration_ms,
       (unsigned long)rb.close_duration_ms
@@ -546,7 +546,7 @@ void EleroWebServer::build_configured_json_(std::string &out) {
     std::string esc_name = json_escape(light->get_light_name());
     char buf[512];
     snprintf(buf, sizeof(buf),
-      "{\"blind_address\":\"0x%06x\","
+      "{\"blind_address\":\"0x%06lx\","
       "\"name\":\"%s\","
       "\"is_on\":%s,"
       "\"brightness\":%.2f,"
@@ -555,11 +555,11 @@ void EleroWebServer::build_configured_json_(std::string &out) {
       "\"last_seen_ms\":%lu,"
       "\"rssi\":%.1f,"
       "\"channel\":%d,"
-      "\"remote_address\":\"0x%06x\","
+      "\"remote_address\":\"0x%06lx\","
       "\"dim_duration_ms\":%lu,"
       "\"device_type\":\"light\","
       "\"adopted\":false}",
-      pair.first,
+      static_cast<unsigned long>(pair.first),
       esc_name.c_str(),
       light->get_is_on() ? "true" : "false",
       light->get_brightness(),
@@ -568,7 +568,7 @@ void EleroWebServer::build_configured_json_(std::string &out) {
       (unsigned long)light->get_last_seen_ms(),
       light->get_last_rssi(),
       (int)light->get_channel(),
-      light->get_remote_address(),
+      static_cast<unsigned long>(light->get_remote_address()),
       (unsigned long)light->get_dim_duration_ms()
     );
     out += buf;
@@ -583,7 +583,7 @@ void EleroWebServer::build_configured_json_(std::string &out) {
     std::string esc_name = json_escape(rb.name);
     char buf[512];
     snprintf(buf, sizeof(buf),
-      "{\"blind_address\":\"0x%06x\","
+      "{\"blind_address\":\"0x%06lx\","
       "\"name\":\"%s\","
       "\"is_on\":false,"
       "\"brightness\":0.00,"
@@ -592,17 +592,17 @@ void EleroWebServer::build_configured_json_(std::string &out) {
       "\"last_seen_ms\":%lu,"
       "\"rssi\":%.1f,"
       "\"channel\":%d,"
-      "\"remote_address\":\"0x%06x\","
+      "\"remote_address\":\"0x%06lx\","
       "\"dim_duration_ms\":%lu,"
       "\"device_type\":\"light\","
       "\"adopted\":true}",
-      rb.blind_address,
+      static_cast<unsigned long>(rb.blind_address),
       esc_name.c_str(),
       elero_state_to_string(rb.last_state),
       (unsigned long)rb.last_seen_ms,
       rb.last_rssi,
       (int)rb.channel,
-      rb.remote_address,
+      static_cast<unsigned long>(rb.remote_address),
       (unsigned long)rb.dim_duration_ms
     );
     out += buf;
@@ -646,8 +646,8 @@ void EleroWebServer::handle_cover_command(AsyncWebServerRequest *request, uint32
       return;
     }
     char buf[96];
-    snprintf(buf, sizeof(buf), "{\"status\":\"queued\",\"address\":\"0x%06x\",\"cmd\":\"%s\"}",
-             addr, cmd_str.c_str());
+    snprintf(buf, sizeof(buf), "{\"status\":\"queued\",\"address\":\"0x%06lx\",\"cmd\":\"%s\"}",
+             static_cast<unsigned long>(addr), cmd_str.c_str());
     AsyncWebServerResponse *response = request->beginResponse(200, "application/json", buf);
     this->add_cors_headers(response);
     request->send(response);
@@ -749,7 +749,8 @@ void EleroWebServer::handle_cover_settings(AsyncWebServerRequest *request, uint3
 
     it->second->apply_runtime_settings(open_dur, close_dur, poll_intvl);
     char buf[80];
-    snprintf(buf, sizeof(buf), "{\"status\":\"ok\",\"address\":\"0x%06x\"}", addr);
+    snprintf(buf, sizeof(buf), "{\"status\":\"ok\",\"address\":\"0x%06lx\"}",
+             static_cast<unsigned long>(addr));
     AsyncWebServerResponse *response = request->beginResponse(200, "application/json", buf);
     this->add_cors_headers(response);
     request->send(response);
@@ -788,7 +789,8 @@ void EleroWebServer::handle_cover_settings(AsyncWebServerRequest *request, uint3
 
   if (this->parent_->update_runtime_blind_settings(addr, open_dur, close_dur, poll_intvl)) {
     char buf[80];
-    snprintf(buf, sizeof(buf), "{\"status\":\"ok\",\"address\":\"0x%06x\"}", addr);
+    snprintf(buf, sizeof(buf), "{\"status\":\"ok\",\"address\":\"0x%06lx\"}",
+             static_cast<unsigned long>(addr));
     AsyncWebServerResponse *response = request->beginResponse(200, "application/json", buf);
     this->add_cors_headers(response);
     request->send(response);
@@ -818,8 +820,8 @@ void EleroWebServer::handle_adopt_discovered(AsyncWebServerRequest *request, uin
       std::string display_name = name.empty() ? "Adopted" : name;
       std::string esc_name = json_escape(display_name);
       char buf[128];
-      snprintf(buf, sizeof(buf), "{\"status\":\"adopted\",\"address\":\"0x%06x\",\"name\":\"%s\"}",
-               addr, esc_name.c_str());
+      snprintf(buf, sizeof(buf), "{\"status\":\"adopted\",\"address\":\"0x%06lx\",\"name\":\"%s\"}",
+               static_cast<unsigned long>(addr), esc_name.c_str());
       AsyncWebServerResponse *response = request->beginResponse(200, "application/json", buf);
       this->add_cors_headers(response);
       request->send(response);
@@ -849,10 +851,10 @@ void EleroWebServer::handle_get_runtime(AsyncWebServerRequest *request) {
 
     char buf[448];
     snprintf(buf, sizeof(buf),
-      "{\"blind_address\":\"0x%06x\","
+      "{\"blind_address\":\"0x%06lx\","
       "\"name\":\"%s\","
       "\"channel\":%d,"
-      "\"remote_address\":\"0x%06x\","
+      "\"remote_address\":\"0x%06lx\","
       "\"rssi\":%.1f,"
       "\"last_state\":\"%s\","
       "\"last_seen_ms\":%lu,"
@@ -863,8 +865,8 @@ void EleroWebServer::handle_get_runtime(AsyncWebServerRequest *request) {
       "\"close_duration_ms\":%lu,"
       "\"dim_duration_ms\":%lu,"
       "\"poll_interval_ms\":%lu}",
-      rb.blind_address, esc_name.c_str(), (int)rb.channel,
-      rb.remote_address, rb.last_rssi,
+      static_cast<unsigned long>(rb.blind_address), esc_name.c_str(), (int)rb.channel,
+      static_cast<unsigned long>(rb.remote_address), rb.last_rssi,
       elero_state_to_string(rb.last_state),
       (unsigned long)rb.last_seen_ms,
       rb.device_type == DeviceType::LIGHT ? "light" : "cover",
@@ -895,7 +897,8 @@ void EleroWebServer::handle_runtime_settings(AsyncWebServerRequest *request, uin
 void EleroWebServer::handle_runtime_remove(AsyncWebServerRequest *request, uint32_t addr) {
   if (this->parent_->remove_runtime_blind(addr)) {
     char buf[64];
-    snprintf(buf, sizeof(buf), "{\"status\":\"removed\",\"address\":\"0x%06x\"}", addr);
+    snprintf(buf, sizeof(buf), "{\"status\":\"removed\",\"address\":\"0x%06lx\"}",
+             static_cast<unsigned long>(addr));
     AsyncWebServerResponse *response = request->beginResponse(200, "application/json", buf);
     this->add_cors_headers(response);
     request->send(response);
@@ -935,9 +938,9 @@ void EleroWebServer::handle_get_yaml(AsyncWebServerRequest *request) {
     snprintf(buf, sizeof(buf),
       "%s"
       "  - platform: elero\n"
-      "    blind_address: 0x%06x\n"
+      "    blind_address: 0x%06lx\n"
       "    channel: %d\n"
-      "    remote_address: 0x%06x\n"
+      "    remote_address: 0x%06lx\n"
       "    name: \"Discovered Blind %d\"\n"
       "    # open_duration: 25s\n"
       "    # close_duration: 22s\n"
@@ -951,7 +954,8 @@ void EleroWebServer::handle_get_yaml(AsyncWebServerRequest *request) {
         ? ""
         : "  # WARNING: params derived from status packet only — press a remote\n"
           "  # button during scan so command packets can be captured for reliable values.\n",
-      blind.blind_address, blind.channel, blind.remote_address, ++cover_idx,
+      static_cast<unsigned long>(blind.blind_address), blind.channel,
+      static_cast<unsigned long>(blind.remote_address), ++cover_idx,
       blind.hop, blind.payload_1, blind.payload_2, blind.pck_inf[0], blind.pck_inf[1]
     );
     yaml += buf;
@@ -977,9 +981,9 @@ void EleroWebServer::handle_get_yaml(AsyncWebServerRequest *request) {
     snprintf(buf, sizeof(buf),
       "%s"
       "  - platform: elero\n"
-      "    blind_address: 0x%06x\n"
+      "    blind_address: 0x%06lx\n"
       "    channel: %d\n"
-      "    remote_address: 0x%06x\n"
+      "    remote_address: 0x%06lx\n"
       "    name: \"Discovered Light %d\"\n"
       "    # dim_duration: 0s\n"
       "    hop: 0x%02x\n"
@@ -992,7 +996,8 @@ void EleroWebServer::handle_get_yaml(AsyncWebServerRequest *request) {
         ? ""
         : "  # WARNING: params derived from status packet only — press a remote\n"
           "  # button during scan so command packets can be captured for reliable values.\n",
-      blind.blind_address, blind.channel, blind.remote_address, ++light_idx,
+      static_cast<unsigned long>(blind.blind_address), blind.channel,
+      static_cast<unsigned long>(blind.remote_address), ++light_idx,
       blind.hop, blind.payload_1, blind.payload_2, blind.pck_inf[0], blind.pck_inf[1]
     );
     yaml += buf;
