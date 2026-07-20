@@ -30,7 +30,10 @@ class EleroGroupCover : public cover::Cover, public Component {
 
   IntentSubmitResult submit_group_intent_(const CommandIntent &intent);
   IntentSubmitResult submit_to_members_(const CommandIntent &intent);
-  IntentSubmitResult submit_member_targets_(const std::vector<CommandIntent> &intents);
+  IntentSubmitResult submit_member_targets_(const std::vector<CommandIntent> &intents,
+                                            float target_position = -1.0f);
+  void prepare_member_states_(const std::vector<CommandIntent> &intents,
+                              float target_position = -1.0f);
   bool can_use_native_group_() const;
   CommandDeliveryConfig build_native_config_() const;
   void handle_native_outcome_(const DeliveryOutcome &outcome);

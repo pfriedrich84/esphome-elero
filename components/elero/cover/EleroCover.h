@@ -81,6 +81,8 @@ class EleroCover : public cover::Cover, public Component, public EleroBlindBase 
   }
 
   void schedule_immediate_poll() override;
+  void prepare_group_intent(const CommandIntent &intent, float target_position = -1.0f) override;
+  void handle_group_delivery_outcome(const DeliveryOutcome &outcome) override;
   void recompute_position();
   void start_movement(cover::CoverOperation op);
   bool is_at_target();
@@ -88,6 +90,7 @@ class EleroCover : public cover::Cover, public Component, public EleroBlindBase 
  protected:
   void control(const cover::CoverCall &call) override;
   void handle_delivery_outcome_(const DeliveryOutcome &outcome);
+  void apply_movement_state_(cover::CoverOperation operation);
   void begin_movement_tracking_(cover::CoverOperation operation, uint32_t now);
   void finish_stop_verification_();
 

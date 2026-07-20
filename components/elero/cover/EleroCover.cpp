@@ -520,7 +520,11 @@ void EleroCover::start_movement(CoverOperation dir) {
       return;
   }
 
-  if(dir == this->current_operation)
+  this->apply_movement_state_(dir);
+}
+
+void EleroCover::apply_movement_state_(CoverOperation dir) {
+  if (dir == this->current_operation)
     return;
 
   this->current_operation = dir;
@@ -551,6 +555,64 @@ void EleroCover::finish_stop_verification_() {
     this->stop_urgent_active_ = false;
   }
   this->stop_verification_active_.store(false);
+}
+
+void EleroCover::prepare_group_intent(const CommandIntent &intent, float target_position) {
+  switch (intent.kind) {
+    case CommandIntentKind::OPEN:
+    case CommandIntentKind::CLOSE: {
+      const auto operation = intent.kind == CommandIntentKind::OPEN
+                                 ? COVER_OPERATION_OPENING
+                                 : COVER_OPERATION_CLOSING;
+      this->target_position_ = target_position >= COVER_CLOSED && target_position <= COVER_OPEN
+                                   ? target_position
+                                   : (operation == COVER_OPERATION_OPENING ? COVER_OPEN : COVER_CLOSED);
+      this->tilt = 0.0f;
+      this->last_operation_ = operation;
+      this->pending_movement_kind_ = intent.kind;
+      this->apply_movement_state_(operation);
+      break;
+    }
+    case CommandIntentKind::STOP:
+      if (this->current_operation != COVER_OPERATION_IDLE &&
+          this->open_duration_ > 0 && this->close_duration_ > 0)
+        this->recompute_position();
+      this->target_position_ = this->position;
+      this->stop_trigger_position_ = this->position;
+      this->stop_trigger_ms_ = millis();
+      this->stop_verification_active_.store(true);
+      this->pending_movement_start_ = false;
+      this->pending_stop_transition_ = true;
+      break;
+    case CommandIntentKind::TILT:
+      this->tilt = 1.0f;
+      this->publish_state();
+      break;
+    default:
+      break;
+  }
+}
+
+void EleroCover::handle_group_delivery_outcome(const DeliveryOutcome &outcome) {
+  if (delivery_packet_was_accepted(outcome.event)) {
+    this->handle_delivery_outcome_(outcome);
+    return;
+  }
+  const bool terminal_failure = outcome.event == DeliveryEvent::DROPPED ||
+      outcome.event == DeliveryEvent::STALE_CLEARED ||
+      (outcome.event == DeliveryEvent::FALLBACK_MEMBER_DROPPED && outcome.queue_size == 0);
+  if (!terminal_failure)
+    return;
+  if (outcome.intent.kind == CommandIntentKind::STOP && this->pending_stop_transition_) {
+    this->pending_stop_transition_ = false;
+    this->stop_trigger_ms_ = 0;
+    this->finish_stop_verification_();
+  }
+  if (this->pending_movement_start_ && outcome.intent.kind == this->pending_movement_kind_) {
+    this->pending_movement_start_ = false;
+    this->current_operation = COVER_OPERATION_IDLE;
+    this->publish_state(false);
+  }
 }
 
 void EleroCover::schedule_immediate_poll() {

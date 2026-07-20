@@ -311,6 +311,10 @@ class EleroBlindBase {
   virtual CommandDeliveryConfig get_command_delivery_config() const = 0;
   virtual CommandIntentDelivery *get_command_delivery() = 0;
   virtual bool should_defer_intent(const CommandIntent &) const { return false; }
+  /// Mirror an accepted group intent into this member's optimistic entity state.
+  virtual void prepare_group_intent(const CommandIntent &intent, float target_position = -1.0f) = 0;
+  /// Forward native group delivery progress to the member state machine.
+  virtual void handle_group_delivery_outcome(const DeliveryOutcome &outcome) = 0;
   // RF params retained for configuration/status serialization
   virtual uint8_t get_hop() const = 0;
   virtual uint8_t get_pck_inf0() const = 0;
