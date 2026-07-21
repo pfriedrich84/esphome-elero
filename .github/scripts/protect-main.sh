@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# Apply GitHub branch protection rules to the 'main' branch.
+# Apply GitHub branch protection rules to main or dev.
 #
 # Prerequisites:
 #   - gh CLI installed and authenticated as a repo admin
 #   - Run: gh auth status   (to verify)
 #
 # Usage:
-#   bash .github/scripts/protect-main.sh
-#   bash .github/scripts/protect-main.sh owner/repo   # explicit repo
+#   bash .github/scripts/protect-main.sh                   # main in current repo
+#   bash .github/scripts/protect-main.sh owner/repo        # main in explicit repo
+#   bash .github/scripts/protect-main.sh owner/repo dev    # dev in explicit repo
 #
 # This script is idempotent — re-running it updates the settings to the
 # desired state (PUT replaces the full protection config).
@@ -15,14 +16,19 @@
 set -euo pipefail
 
 REPO="${1:-$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null)}"
+BRANCH="${2:-main}"
 
 if [[ -z "${REPO}" ]]; then
   echo "Error: Could not determine repository."
-  echo "Usage: $0 [owner/repo]"
+  echo "Usage: $0 [owner/repo] [main|dev]"
   exit 1
 fi
 
-BRANCH="main"
+if [[ "${BRANCH}" != "main" && "${BRANCH}" != "dev" ]]; then
+  echo "Error: Branch must be main or dev."
+  echo "Usage: $0 [owner/repo] [main|dev]"
+  exit 1
+fi
 
 echo "Applying branch protection to ${REPO} branch: ${BRANCH}"
 echo ""
