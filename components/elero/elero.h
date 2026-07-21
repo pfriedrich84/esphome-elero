@@ -115,10 +115,11 @@ static const uint8_t ELERO_DEFAULT_SEND_REPEATS = 1;  // one RF packet per comma
 static const uint32_t ELERO_RADIO_TASK_STACK_SIZE = 16384;  // bytes; RadioLib/SPI/log formatting need headroom on ESP-IDF
 
 // Auto-stop reliability: repeat stop commands, compensate for TX latency, verify motor stopped
-static const uint8_t  ELERO_STOP_REPEAT_COUNT = 2;              // stop commands queued on auto-stop (x2 RF packets each)
+static const uint8_t  ELERO_STOP_REPEAT_COUNT = 2;              // STOP RF packets per STOP burst using one rolling counter
+static const uint8_t  ELERO_STOP_VERIFY_MAX_STOP_RETRIES = 1;   // additional STOP bursts if verification feedback is absent/moving
 static const uint32_t ELERO_TX_LATENCY_COMPENSATION_MS = 300;   // position check lead time (accounts for multi-cover queue contention)
 static const uint32_t ELERO_STOP_VERIFY_DELAY_MS = 2000;        // delay before polling to verify motor stopped (give blind time to broadcast)
-static const uint8_t  ELERO_STOP_VERIFY_MAX_RETRIES = 1;        // single verify poll — blinds broadcast status, no need to hammer
+static const uint8_t  ELERO_STOP_VERIFY_MAX_RETRIES = 1;        // CHECK polls per STOP burst before retry/fail
 
 static const uint8_t ELERO_TX_QUEUE_DEPTH = 16;          // normal TX queue depth
 static const uint8_t ELERO_TX_PRIORITY_QUEUE_DEPTH = 8;  // priority TX queue depth (stop commands)

@@ -30,8 +30,10 @@ inline bool command_cooldown_active(uint32_t now, uint32_t cooldown_until) {
 // must always reach RF even when the estimated position already matches. Only
 // an intermediate set-position target may be suppressed as redundant.
 inline bool is_redundant_intermediate_target(float current, float target,
+                                             bool position_trusted = true,
                                              float tolerance = 0.01f) {
-  return target > 0.0f && target < 1.0f && std::abs(target - current) < tolerance;
+  return position_trusted && std::isfinite(current) && std::isfinite(target) &&
+         target > 0.0f && target < 1.0f && std::abs(target - current) < tolerance;
 }
 
 // Returns the updated position after dead-reckoning.

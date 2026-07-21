@@ -26,6 +26,10 @@ class AttachedDelivery {
                           const ProfileDeliveryCoordinator::SubmitCallback &submitter) {
     return coordinator.advance(now, delay, repeats, submitter);
   }
+  DeliveryOutcome advance(uint32_t now, uint32_t delay, uint8_t repeats, uint8_t stop_repeats,
+                          const ProfileDeliveryCoordinator::SubmitCallback &submitter) {
+    return coordinator.advance(now, delay, repeats, stop_repeats, submitter);
+  }
   DeliveryOutcome complete(uint32_t transaction_id, bool success, uint32_t completed_at_ms) {
     return coordinator.complete(transaction_id, success, completed_at_ms);
   }
@@ -117,6 +121,23 @@ TEST(CommandDelivery, BuildsSemanticMultiDestinationPacketAndCompletesRepeats) {
   EXPECT_EQ(packets[1].counter, 1);
   EXPECT_EQ(packets[0].num_dests, 2);
   EXPECT_EQ(packets[0].dest_addrs[1], 0x222222u);
+  EXPECT_EQ(delivery.counter(), 2);
+}
+
+TEST(CommandDelivery, StopUsesDedicatedRepeatCount) {
+  AttachedDelivery delivery(config());
+  ASSERT_EQ(delivery.submit({CommandIntentKind::STOP, 0}), IntentSubmitResult::ACCEPTED);
+  std::vector<t_elero_command> packets;
+  auto submit = [&](const t_elero_command &packet, bool priority) {
+    EXPECT_TRUE(priority);
+    packets.push_back(packet);
+    return SendResult::OK;
+  };
+  EXPECT_EQ(delivery.advance(1, 0, 1, 2, submit).event, DeliveryEvent::PACKET_ACCEPTED);
+  EXPECT_EQ(delivery.advance(2, 0, 1, 2, submit).event, DeliveryEvent::COMPLETED);
+  ASSERT_EQ(packets.size(), 2u);
+  EXPECT_EQ(packets[0].counter, 1);
+  EXPECT_EQ(packets[1].counter, 1);
   EXPECT_EQ(delivery.counter(), 2);
 }
 

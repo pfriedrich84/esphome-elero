@@ -92,6 +92,9 @@ class EleroCover : public cover::Cover, public Component, public EleroBlindBase 
   void handle_delivery_outcome_(const DeliveryOutcome &outcome);
   void apply_movement_state_(cover::CoverOperation operation);
   void begin_movement_tracking_(cover::CoverOperation operation, uint32_t now);
+  void schedule_stop_verification_(uint32_t now);
+  bool retry_stop_verification_(uint32_t now, const char *reason);
+  void fail_stop_verification_(uint32_t now);
   void finish_stop_verification_();
 
   t_elero_command command_ = {
@@ -122,7 +125,8 @@ class EleroCover : public cover::Cover, public Component, public EleroBlindBase 
   CommandIntentDelivery delivery_;
   cover::CoverOperation last_operation_{cover::COVER_OPERATION_OPENING};
   uint32_t stop_verify_at_{0};          // millis() when to poll for stop confirmation (0 = inactive)
-  uint8_t  stop_verify_retries_{ELERO_STOP_VERIFY_MAX_RETRIES};  // verification counter (MAX = inactive)
+  uint8_t  stop_verify_retries_{ELERO_STOP_VERIFY_MAX_RETRIES};  // CHECK counter within current STOP burst
+  uint8_t  stop_verify_stop_retries_{0}; // additional STOP bursts after initial accepted STOP
   uint32_t last_immediate_poll_ms_{0};  // rate-limit schedule_immediate_poll()
   bool queue_full_published_{false};    // true when "queue_full" has been published to text sensor
   float    stop_trigger_position_{0};   // position when auto-stop was triggered (for correction)
@@ -130,6 +134,7 @@ class EleroCover : public cover::Cover, public Component, public EleroBlindBase 
   bool     stop_urgent_active_{false};  // true if this cover has incremented stop_urgent_count_
   bool     pending_stop_transition_{false};  // wait for first hub-accepted STOP packet
   bool     pending_movement_start_{false};   // optimistic state, awaiting first accepted movement packet
+  bool     position_trusted_for_redundancy_{false}; // true only for confirmed endpoint/explicit trusted estimates
   CommandIntentKind pending_movement_kind_{CommandIntentKind::OPEN};
   std::atomic<bool> stop_verification_active_{false};
 };

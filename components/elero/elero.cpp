@@ -537,7 +537,7 @@ void Elero::advance_delivery_coordinators_() {
     if (!delivery_profile_is_eligible(urgent_waiting, coordinator->has_urgent(now)))
       continue;
     coordinator->advance(
-        now, this->send_delay_, this->send_repeats_,
+        now, this->send_delay_, this->send_repeats_, ELERO_STOP_REPEAT_COUNT,
         [this](const t_elero_command &packet, bool priority) {
           t_elero_command copy = packet;
           return this->submit_delivery_packet_(&copy, priority);

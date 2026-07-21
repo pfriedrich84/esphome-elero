@@ -265,7 +265,7 @@ Critical public API:
 - `register_light(EleroLightBase*)` — called by each `EleroLight` at setup
 - `is_tx_idle()` — check if TX state machine is ready for a new command
 - `get_tx_queue_depth()` — current normal TX queue depth (for dynamic latency compensation)
-- `increment_stop_urgent()` / `decrement_stop_urgent()` / `is_stop_urgent()` — atomic counter for multi-cover auto-stop coordination; other covers defer non-stop TX while urgent
+- STOP delivery is selected globally ahead of normal work by the radio-wide delivery coordinator; cover-local verification defers only that cover's non-STOP/non-CHECK intents while verification is active
 - `start_scan()` / `stop_scan()` / `is_scanning()` — toggle RF discovery mode
 - `register_rssi_sensor(uint32_t addr, sensor::Sensor*)` — link RSSI sensor to a blind address
 - `register_text_sensor(uint32_t addr, text_sensor::TextSensor*)` — link text sensor to a blind address
@@ -321,10 +321,11 @@ Key constants (defined in `elero.h` unless noted):
 | `ELERO_POLL_STAGGER_MS` | 5 000 ms | Stagger offset between cover poll timers |
 | `ELERO_IMMEDIATE_POLL_MIN_INTERVAL_MS` | 2 000 ms | Minimum interval between `schedule_immediate_poll()` calls per blind |
 | `ELERO_DEDUP_WINDOW_MS` | 0 ms | Default packet deduplication window disabled (opt-in via `dedup_window`; src, cnt pairs) |
-| `ELERO_STOP_REPEAT_COUNT` | 2 | Stop commands queued on auto-stop (x2 RF packets each) |
+| `ELERO_STOP_REPEAT_COUNT` | 2 | RF packets per STOP burst, using one rolling counter |
+| `ELERO_STOP_VERIFY_MAX_STOP_RETRIES` | 1 | Additional bounded STOP bursts if verification feedback is absent or still moving |
 | `ELERO_TX_LATENCY_COMPENSATION_MS` | 300 ms | Position check lead time (accounts for multi-cover queue contention) |
 | `ELERO_STOP_VERIFY_DELAY_MS` | 2 000 ms | Delay before polling to verify motor stopped (give blind time to broadcast) |
-| `ELERO_STOP_VERIFY_MAX_RETRIES` | 1 | Single verify poll — blinds broadcast status, no need to hammer |
+| `ELERO_STOP_VERIFY_MAX_RETRIES` | 1 | CHECK polls per STOP burst before retry/fail |
 | `ELERO_MSG_LENGTH` | 0x1d (29) | Fixed message length for TX |
 | `ELERO_CRYPTO_MULT` | 0x708f | Encryption multiplier for counter-based code |
 | `TX_STATE_TIMEOUT_MS` | 50 ms | Per-state watchdog timeout for TX state machine — defined in `elero.cpp` |
@@ -357,7 +358,7 @@ Thread-safety:
 - `rx_ready_`, `tx_done_` are `std::atomic<bool>` — ISR-set flags routed by `radio_mode_`
 - `radio_mode_` is `std::atomic<uint8_t>` with relaxed ordering — ISR may run on a different core than the radio task
 - `rx_count_`, `tx_count_`, `watchdog_recovery_count_`, `tx_drop_count_`, parser drop counters, and latency metrics are `std::atomic<uint32_t>`
-- `stop_urgent_count_` is `std::atomic<uint8_t>` (multi-cover auto-stop coordination)
+- STOP urgency is owned by semantic delivery/coordinator selection; the legacy `stop_urgent_count_` is no longer part of the scheduling contract.
 - `task_shutdown_`, `radio_fatal_error_` are `std::atomic<bool>` for radio task lifecycle
 - All `std::atomic` operations use explicit `std::memory_order_acquire`/`release` for correct multi-core ESP32 synchronization
 - `get_runtime_blinds()`, `get_discovered_blinds()`, `get_raw_packets()` return copies (not const refs) for thread safety
@@ -373,7 +374,7 @@ Key behaviors:
 - Supports tilt as a separate operation via `command_tilt_`
 - Staggered poll offsets (`poll_offset_`) prevent all covers from polling simultaneously
 - Auto-generates RSSI and status text sensors unless `auto_sensors: false` is set
-- Stop-verify loop: after auto-stop, verifies motor actually stopped (`stop_verify_at_`, `stop_verify_retries_`)
+- Stop-verify loop: after auto/manual STOP, waits for the STOP burst to be RF-accepted, then sends bounded CHECK polls. If feedback is absent or still moving, one additional bounded STOP burst is attempted before `stop_failed`; verification never blocks later user commands indefinitely.
 - Runtime settings update via `apply_runtime_settings()` from the web API
 - `schedule_immediate_poll()` — triggers an immediate status check (called by hub when remote command detected)
 

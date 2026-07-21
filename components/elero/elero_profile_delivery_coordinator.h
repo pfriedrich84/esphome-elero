@@ -92,6 +92,11 @@ class ProfileDeliveryCoordinator {
 
   DeliveryOutcome advance(uint32_t now, uint32_t base_delay_ms, uint8_t required_repeats,
                           const SubmitCallback &submitter) {
+    return this->advance(now, base_delay_ms, required_repeats, required_repeats, submitter);
+  }
+
+  DeliveryOutcome advance(uint32_t now, uint32_t base_delay_ms, uint8_t required_repeats,
+                          uint8_t stop_repeats, const SubmitCallback &submitter) {
     AttemptDispatch dispatch{};
     {
       std::unique_lock<std::mutex> lock(this->mutex_);
@@ -124,17 +129,19 @@ class ProfileDeliveryCoordinator {
         const PacketSubmission submission = submitter(this->build_packet_(packet_config, intent), urgent);
         if (submission.result == SendResult::QUEUE_FULL)
           return this->outcome_locked_(DeliveryEvent::QUEUE_FULL, intent);
+        const uint8_t effective_repeats = required_repeats_for_intent(
+            intent.kind, required_repeats, stop_repeats);
         if (submission.result == SendResult::OK && !submission.completed_inline) {
           if (submission.transaction_id == 0)
-            dispatch = this->finish_attempt_locked_(false, now, required_repeats);
+            dispatch = this->finish_attempt_locked_(false, now, effective_repeats);
           else {
             this->pending_transaction_id_ = submission.transaction_id;
-            this->pending_required_repeats_ = required_repeats;
+            this->pending_required_repeats_ = effective_repeats;
             return this->outcome_locked_(DeliveryEvent::WAITING, intent);
           }
         } else {
           dispatch = this->finish_attempt_locked_(submission.result == SendResult::OK, now,
-                                                  required_repeats);
+                                                  effective_repeats);
         }
       }
     }
