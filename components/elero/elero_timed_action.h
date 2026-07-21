@@ -15,5 +15,11 @@ inline bool should_start_timed_action(bool pending, CommandIntentKind expected,
          delivery_packet_was_accepted(outcome.event);
 }
 
+inline bool should_reanchor_transmitted_action(CommandIntentKind current,
+                                                const DeliveryOutcome &outcome) {
+  return outcome.first_transmission && outcome.intent.kind != current &&
+         delivery_packet_was_accepted(outcome.event);
+}
+
 }  // namespace elero
 }  // namespace esphome

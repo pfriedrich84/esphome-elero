@@ -621,6 +621,10 @@ TEST(TimedAction, StartsOnlyOnFirstRelevantAcceptedPacket) {
 
   outcome.event = DeliveryEvent::COMPLETED;
   EXPECT_TRUE(should_start_timed_action(true, CommandIntentKind::DIM_DOWN, outcome));
+
+  outcome.first_transmission = true;
+  EXPECT_FALSE(should_reanchor_transmitted_action(CommandIntentKind::DIM_DOWN, outcome));
+  EXPECT_TRUE(should_reanchor_transmitted_action(CommandIntentKind::DIM_UP, outcome));
 }
 
 TEST(CommandDelivery, SubmissionIsThreadSafe) {
