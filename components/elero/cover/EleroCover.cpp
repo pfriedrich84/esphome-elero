@@ -451,23 +451,12 @@ void EleroCover::control(const cover::CoverCall &call) {
       ESP_LOGW(TAG, "Blind 0x%06lx position was NAN, reset to 0.5",
                static_cast<unsigned long>(this->command_.blind_addr));
     }
-    // Short-circuit: already at fully open/closed — skip movement entirely.
-    // Without this, commanding 100% when already at 100% sends a redundant
-    // RF command and enters OPENING state with no auto-stop (is_at_target
-    // returns false for endpoint targets), spamming logs every second until
-    // the blind's RF response arrives (which may never come).
-    if (pos == COVER_OPEN && cur >= (1.0f - 0.01f) &&
-        this->current_operation == COVER_OPERATION_IDLE &&
-        (this->open_duration_ > 0) && (this->close_duration_ > 0)) {
-      // Already at open — no movement needed
-    } else if (pos == COVER_CLOSED && cur <= (0.0f + 0.01f) &&
-               this->current_operation == COVER_OPERATION_IDLE &&
-               (this->open_duration_ > 0) && (this->close_duration_ > 0)) {
-      // Already at closed — no movement needed
-    } else if (pos != COVER_OPEN && pos != COVER_CLOSED &&
-               (this->open_duration_ > 0) && (this->close_duration_ > 0) &&
-               std::abs(pos - cur) < 0.01f) {
-      // Already at intermediate target — no movement needed
+    // ESPHome represents OPEN/CLOSE as endpoint positions in CoverCall, so an
+    // old-position == new-position check must not suppress those commands.
+    // Only an already-reached intermediate set-position target is redundant.
+    if ((this->open_duration_ > 0) && (this->close_duration_ > 0) &&
+        cover_logic::is_redundant_intermediate_target(cur, pos)) {
+      // Already at the requested intermediate position — no movement needed.
     } else if((pos > cur) || (pos == COVER_OPEN)) {
       this->start_movement(COVER_OPERATION_OPENING);
     } else {
