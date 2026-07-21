@@ -24,18 +24,6 @@ pytest tests/python/ -v --tb=short
 
 Use when changing `components/**/__init__.py`, Python validation/codegen, `pyproject.toml`, or Python tests.
 
-## Home Assistant / HACS companion integration
-
-From the repository root:
-
-```bash
-ruff check custom_components/
-ruff format --check custom_components/
-python -m compileall custom_components/
-```
-
-Use when changing `custom_components/elero_companion/**`, `hacs.json`, Home Assistant diagnostics/repairs/config-flow code, or HACS packaging.
-
 ## C++ unit tests
 
 From the repository root:
@@ -87,9 +75,6 @@ From the repository root, run the independent checks represented in CI:
 python3 scripts/check_markdown_links.py
 ruff check components/
 ruff format --check components/
-ruff check custom_components/
-ruff format --check custom_components/
-python -m compileall custom_components/
 pytest tests/python/ -v --tb=short
 cmake -S tests -B tests/build -DCMAKE_BUILD_TYPE=Debug
 cmake --build tests/build --parallel

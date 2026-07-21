@@ -622,18 +622,6 @@ Wenn der Switch ausgeschaltet ist, antworten alle `/elero`-Endpoints mit HTTP 50
 
 Nach dem Flashen erscheint das Gerät automatisch in Home Assistant (wenn `api:` konfiguriert ist). Dieser ESPHome-Weg bleibt der empfohlene Standardpfad: RF-Steuerung, Statusfeedback, Discovery und Diagnose laufen firmware-nah auf dem ESP32 + CC1101.
 
-Eine HACS-Companion-Integration für bessere Home-Assistant-UX, Diagnose, Repairs und YAML-Import lebt im selben Repository unter `custom_components/elero_companion/`. Sie erzeugt zunächst keine doppelten Cover-/Light-Entities und ersetzt die ESPHome-Komponente nicht. HACS installiert nur `custom_components/elero_companion/`; ESPHome kompiliert nur `components/`, daher vergrößert die Companion-Integration die ESP32-Firmware nicht. Details: [docs/developer/home-assistant-rf-platform.md](docs/developer/home-assistant-rf-platform.md).
-
-### HACS Companion installieren
-
-In HACS als benutzerdefiniertes Repository hinzufügen:
-
-```text
-https://github.com/pfriedrich84/esphome-elero
-```
-
-Kategorie: `Integration`. Danach Home Assistant neu starten und unter **Einstellungen → Geräte & Dienste** die Integration **Elero Companion** hinzufügen.
-
 Die ESPHome-Entities:
 
 | Entity-Typ | Beispiel | Beschreibung |
@@ -714,7 +702,6 @@ entities:
 - [docs/user/installation.md](docs/user/installation.md) - Detaillierte Schritt-für-Schritt Installationsanleitung
 - [docs/user/configuration.md](docs/user/configuration.md) - Vollständige Konfigurationsreferenz mit Beispielen
 - [docs/developer/architecture.md](docs/developer/architecture.md) - Architektur- und Modul-Seams
-- [docs/developer/home-assistant-rf-platform.md](docs/developer/home-assistant-rf-platform.md) - Plan für HACS-Companion und Home-Assistant-RF-Platform-Research
 - [AGENTS.md](AGENTS.md) - Tool-neutrale Hinweise für Coding-Agents
 - [example.yaml](example.yaml) - Minimales Beispiel
 - [docs/user/examples/](docs/user/examples/) - Weitere Beispielkonfigurationen

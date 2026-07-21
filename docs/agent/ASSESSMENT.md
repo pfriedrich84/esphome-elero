@@ -16,7 +16,7 @@ Last reviewed: 2026-07-21
 
 - Short canonical `AGENTS.md` entry point with modular docs under `docs/agent/`.
 - Clear split between user docs, developer docs, and agent docs.
-- Strong CI coverage: ESPHome and HACS Ruff checks, Python schema tests, C++ unit tests, ESPHome compile matrix, and frontend build.
+- Strong CI coverage: ESPHome Ruff checks, Python schema tests, C++ unit tests, ESPHome compile matrix, and frontend build.
 - Dependency-free Markdown local-link checker exists and passes.
 - Domain invariants are documented for RF safety, CC1101 task ownership, group covers, runtime adopted blinds, and web API safety.
 
