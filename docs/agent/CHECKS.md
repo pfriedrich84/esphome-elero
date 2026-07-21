@@ -24,18 +24,6 @@ pytest tests/python/ -v --tb=short
 
 Use when changing `components/**/__init__.py`, Python validation/codegen, `pyproject.toml`, or Python tests.
 
-## Home Assistant / HACS companion integration
-
-From the repository root:
-
-```bash
-ruff check custom_components/
-ruff format --check custom_components/
-python -m compileall custom_components/
-```
-
-Use when changing `custom_components/elero_companion/**`, `hacs.json`, Home Assistant diagnostics/repairs/config-flow code, or HACS packaging.
-
 ## C++ unit tests
 
 From the repository root:
@@ -81,15 +69,18 @@ When changing code or configuration that depends on ESPHome, RadioLib, Svelte, V
 
 ## Full local CI simulation
 
-From the repository root, run the relevant independent jobs from CI:
+From the repository root, run the independent checks represented in CI:
 
 ```bash
+python3 scripts/check_markdown_links.py
 ruff check components/
 ruff format --check components/
 pytest tests/python/ -v --tb=short
 cmake -S tests -B tests/build -DCMAKE_BUILD_TYPE=Debug
 cmake --build tests/build --parallel
-cd tests/build && ctest --output-on-failure -V
+(cd tests/build && ctest --output-on-failure -V)
+for cfg in tests/configs/*.yaml; do esphome compile "$cfg"; done
+(cd components/elero_web/frontend && npm ci && npm run build)
 ```
 
-Then run ESPHome compile fixtures and the web UI build when the touched files require them.
+For targeted work, run only the smallest relevant sections above. The full set mirrors the independent CI jobs; hardware-dependent RF behavior still requires explicit manual validation.

@@ -88,39 +88,18 @@ void EleroCover::loop() {
     }
   }
 
-  // Stop verification: poll motor to confirm it actually stopped
-  if (this->stop_verify_at_ > 0 && now >= this->stop_verify_at_) {
+  // Stop verification: poll motor to confirm it actually stopped. If no
+  // status arrives, retry one bounded STOP burst before failing open.
+  if (this->stop_verify_at_ > 0 && now >= this->stop_verify_at_ && !this->pending_stop_transition_) {
     if (this->stop_verify_retries_ < ELERO_STOP_VERIFY_MAX_RETRIES) {
       this->stop_verify_retries_++;
       ESP_LOGD(TAG, "Stop verify poll #%d for blind 0x%06lx",
                this->stop_verify_retries_, static_cast<unsigned long>(this->command_.blind_addr));
       this->submit_intent({CommandIntentKind::CHECK, 0});
-      // Reschedule in case no RF response arrives (prevents verification stall)
+      // Reschedule in case no RF response arrives.
       this->stop_verify_at_ = now + ELERO_STOP_VERIFY_DELAY_MS;
-    } else {
-      // Exhausted retries — give up verification
-      ESP_LOGW(TAG, "Stop verification exhausted %d retries for blind 0x%06lx",
-               ELERO_STOP_VERIFY_MAX_RETRIES, static_cast<unsigned long>(this->command_.blind_addr));
-      this->stop_verify_at_ = 0;
-      this->stop_trigger_ms_ = 0;
-      this->finish_stop_verification_();
-#ifdef USE_TEXT_SENSOR
-      this->parent_->publish_text_sensor_state(this->command_.blind_addr, "stop_failed");
-#endif
-      // Position is uncertain after failed stop verification.
-      // Keep the last known position rather than setting NAN — NAN breaks
-      // all position-based commands and creates an irrecoverable state where
-      // current_operation gets stuck, the poll queue fills, and group
-      // commands are silently dropped.
-      this->current_operation = cover::COVER_OPERATION_IDLE;
-      // Clear queued polls to prevent rapid-fire flooding while preserving
-      // deferred user movement intents.
-      this->delivery_.discard_checks();
-      // Cooldown: prevent delivery from sending anything for 3s,
-      // giving the blind time to settle after the stop command storm.
-      this->command_cooldown_until_ = now + 3000;
-      this->delivery_.postpone_until(this->command_cooldown_until_);
-      this->publish_state(false);
+    } else if (!this->retry_stop_verification_(now, "missing status feedback")) {
+      this->fail_stop_verification_(now);
     }
   }
 
@@ -140,6 +119,7 @@ void EleroCover::loop() {
         // acceptance; only then transition to idle and start verification.
         this->stop_trigger_position_ = this->position;
         this->stop_trigger_ms_ = now;
+        this->stop_verify_stop_retries_ = 0;
         this->stop_verification_active_.store(true);
         if (!intent_was_accepted(this->submit_intent({CommandIntentKind::STOP, 0}))) {
           this->stop_trigger_ms_ = 0;
@@ -213,13 +193,8 @@ void EleroCover::handle_delivery_outcome_(const DeliveryOutcome &outcome) {
       outcome.intent.kind == CommandIntentKind::STOP && packet_accepted;
   if (first_stop_accepted) {
     this->pending_stop_transition_ = false;
-    if (!this->stop_urgent_active_) {
-      this->parent_->increment_stop_urgent();
-      this->stop_urgent_active_ = true;
-    }
     this->current_operation = COVER_OPERATION_IDLE;
-    this->stop_verify_at_ = millis() + ELERO_STOP_VERIFY_DELAY_MS;
-    this->stop_verify_retries_ = 0;
+    this->schedule_stop_verification_(outcome.transmitted_at_ms != 0 ? outcome.transmitted_at_ms : millis());
     this->publish_state(false);
     this->last_publish_ = millis();
   }
@@ -321,48 +296,59 @@ void EleroCover::set_rx_state(uint8_t state) {
     pos = COVER_OPEN;
     op = COVER_OPERATION_IDLE;
     current_tilt = 0.0;
+    this->position_trusted_for_redundancy_ = true;
     break;
   case ELERO_STATE_BOTTOM:
     pos = COVER_CLOSED;
     op = COVER_OPERATION_IDLE;
     current_tilt = 0.0;
+    this->position_trusted_for_redundancy_ = true;
     break;
   case ELERO_STATE_INTERMEDIATE:
     op = COVER_OPERATION_IDLE;
     current_tilt = 0.0;
-    // Keep current position estimate
+    // Keep current position estimate, but the receiver did not report an
+    // exact percentage. Do not suppress future set-position commands.
+    this->position_trusted_for_redundancy_ = false;
     break;
   case ELERO_STATE_START_MOVING_UP:
   case ELERO_STATE_MOVING_UP:
     op = COVER_OPERATION_OPENING;
     current_tilt = 0.0;
+    this->position_trusted_for_redundancy_ = false;
     break;
   case ELERO_STATE_START_MOVING_DOWN:
   case ELERO_STATE_MOVING_DOWN:
     op = COVER_OPERATION_CLOSING;
     current_tilt = 0.0;
+    this->position_trusted_for_redundancy_ = false;
     break;
   case ELERO_STATE_TILT:
     op = COVER_OPERATION_IDLE;
     current_tilt = 1.0;
+    this->position_trusted_for_redundancy_ = false;
     break;
   case ELERO_STATE_TOP_TILT:
     pos = COVER_OPEN;
     op = COVER_OPERATION_IDLE;
     current_tilt = 1.0;
+    this->position_trusted_for_redundancy_ = true;
     break;
   case ELERO_STATE_BOTTOM_TILT: // also ELERO_STATE_OFF (0x0f)
     pos = COVER_CLOSED;
     op = COVER_OPERATION_IDLE;
     current_tilt = 1.0;
+    this->position_trusted_for_redundancy_ = true;
     break;
   case ELERO_STATE_STOPPED:
     op = COVER_OPERATION_IDLE;
     current_tilt = 0.0;
+    this->position_trusted_for_redundancy_ = false;
     break;
   case ELERO_STATE_BLOCKING:
     ESP_LOGW(TAG, "Blind 0x%06lx reports BLOCKING", static_cast<unsigned long>(this->command_.blind_addr));
     op = COVER_OPERATION_IDLE;
+    this->position_trusted_for_redundancy_ = false;
 #ifdef USE_TEXT_SENSOR
     this->parent_->publish_text_sensor_state(this->command_.blind_addr, "blocking");
 #endif
@@ -370,6 +356,7 @@ void EleroCover::set_rx_state(uint8_t state) {
   case ELERO_STATE_OVERHEATED:
     ESP_LOGW(TAG, "Blind 0x%06lx reports OVERHEATED", static_cast<unsigned long>(this->command_.blind_addr));
     op = COVER_OPERATION_IDLE;
+    this->position_trusted_for_redundancy_ = false;
 #ifdef USE_TEXT_SENSOR
     this->parent_->publish_text_sensor_state(this->command_.blind_addr, "overheated");
 #endif
@@ -377,6 +364,7 @@ void EleroCover::set_rx_state(uint8_t state) {
   case ELERO_STATE_TIMEOUT:
     ESP_LOGW(TAG, "Blind 0x%06lx reports TIMEOUT", static_cast<unsigned long>(this->command_.blind_addr));
     op = COVER_OPERATION_IDLE;
+    this->position_trusted_for_redundancy_ = false;
 #ifdef USE_TEXT_SENSOR
     this->parent_->publish_text_sensor_state(this->command_.blind_addr, "timeout");
 #endif
@@ -384,6 +372,7 @@ void EleroCover::set_rx_state(uint8_t state) {
   default:
     op = COVER_OPERATION_IDLE;
     current_tilt = 0.0;
+    this->position_trusted_for_redundancy_ = false;
   }
 
   // Stop verification: if we sent a stop and are waiting for confirmation,
@@ -391,18 +380,14 @@ void EleroCover::set_rx_state(uint8_t state) {
   // Guard on stop_verify_at_ (not retries) so a "stopped" response always
   // cancels verification — even after retries have been exhausted.
   if (this->stop_verify_at_ > 0) {
-    if ((state == ELERO_STATE_MOVING_UP || state == ELERO_STATE_MOVING_DOWN ||
-         state == ELERO_STATE_START_MOVING_UP || state == ELERO_STATE_START_MOVING_DOWN) &&
-        this->stop_verify_retries_ < ELERO_STOP_VERIFY_MAX_RETRIES) {
-      // Motor is still moving and retries remain — re-send stop via priority queue
-      this->stop_verify_retries_++;
-      ESP_LOGW(TAG, "Blind 0x%06lx still moving after stop, retry #%d",
-               static_cast<unsigned long>(this->command_.blind_addr), this->stop_verify_retries_);
-      this->submit_intent({CommandIntentKind::STOP, 0});
-      this->stop_verify_at_ = millis() + ELERO_STOP_VERIFY_DELAY_MS;
+    if (state == ELERO_STATE_MOVING_UP || state == ELERO_STATE_MOVING_DOWN ||
+        state == ELERO_STATE_START_MOVING_UP || state == ELERO_STATE_START_MOVING_DOWN) {
+      // Motor is still moving — retry a bounded STOP burst via priority path.
+      const uint32_t now = millis();
+      if (!this->retry_stop_verification_(now, "still moving status"))
+        this->fail_stop_verification_(now);
       op = COVER_OPERATION_IDLE;  // keep our side idle while retrying
-    } else if (state != ELERO_STATE_MOVING_UP && state != ELERO_STATE_MOVING_DOWN &&
-               state != ELERO_STATE_START_MOVING_UP && state != ELERO_STATE_START_MOVING_DOWN) {
+    } else {
       // Motor confirmed stopped — correct position for actual stop delay
       if (this->stop_trigger_ms_ > 0 && this->open_duration_ > 0 && this->close_duration_ > 0) {
         uint32_t actual_delay = millis() - this->stop_trigger_ms_;
@@ -424,7 +409,6 @@ void EleroCover::set_rx_state(uint8_t state) {
       // Decrement stop_urgent so other covers can resume once all stops confirmed.
       this->finish_stop_verification_();
     }
-    // else: still moving but retries exhausted — let the timer in loop() handle exhaustion
   }
 
   if((pos != this->position) || (op != this->current_operation) || (current_tilt != this->tilt)) {
@@ -451,23 +435,12 @@ void EleroCover::control(const cover::CoverCall &call) {
       ESP_LOGW(TAG, "Blind 0x%06lx position was NAN, reset to 0.5",
                static_cast<unsigned long>(this->command_.blind_addr));
     }
-    // Short-circuit: already at fully open/closed — skip movement entirely.
-    // Without this, commanding 100% when already at 100% sends a redundant
-    // RF command and enters OPENING state with no auto-stop (is_at_target
-    // returns false for endpoint targets), spamming logs every second until
-    // the blind's RF response arrives (which may never come).
-    if (pos == COVER_OPEN && cur >= (1.0f - 0.01f) &&
-        this->current_operation == COVER_OPERATION_IDLE &&
-        (this->open_duration_ > 0) && (this->close_duration_ > 0)) {
-      // Already at open — no movement needed
-    } else if (pos == COVER_CLOSED && cur <= (0.0f + 0.01f) &&
-               this->current_operation == COVER_OPERATION_IDLE &&
-               (this->open_duration_ > 0) && (this->close_duration_ > 0)) {
-      // Already at closed — no movement needed
-    } else if (pos != COVER_OPEN && pos != COVER_CLOSED &&
-               (this->open_duration_ > 0) && (this->close_duration_ > 0) &&
-               std::abs(pos - cur) < 0.01f) {
-      // Already at intermediate target — no movement needed
+    // ESPHome represents OPEN/CLOSE as endpoint positions in CoverCall, so an
+    // old-position == new-position check must not suppress those commands.
+    // Only an already-reached intermediate set-position target is redundant.
+    if ((this->open_duration_ > 0) && (this->close_duration_ > 0) &&
+        cover_logic::is_redundant_intermediate_target(cur, pos, this->position_trusted_for_redundancy_)) {
+      // Already at the requested intermediate position — no movement needed.
     } else if((pos > cur) || (pos == COVER_OPEN)) {
       this->start_movement(COVER_OPERATION_OPENING);
     } else {
@@ -523,6 +496,7 @@ void EleroCover::start_movement(CoverOperation dir) {
                static_cast<unsigned long>(this->command_.blind_addr), this->position);
       this->stop_trigger_position_ = this->position;
       this->stop_trigger_ms_ = millis();
+      this->stop_verify_stop_retries_ = 0;
       this->stop_verification_active_.store(true);
       if (!intent_was_accepted(this->submit_intent({CommandIntentKind::STOP, 0}))) {
         this->stop_trigger_ms_ = 0;
@@ -544,6 +518,7 @@ void EleroCover::apply_movement_state_(CoverOperation dir) {
     return;
 
   this->current_operation = dir;
+  this->position_trusted_for_redundancy_ = false;
   this->pending_movement_start_ = true;
   this->movement_start_ = 0;
   this->last_recompute_time_ = 0;
@@ -553,6 +528,7 @@ void EleroCover::apply_movement_state_(CoverOperation dir) {
 
 void EleroCover::begin_movement_tracking_(CoverOperation operation, uint32_t now) {
   this->current_operation = operation;
+  this->position_trusted_for_redundancy_ = false;
   this->movement_start_ = now;
   this->last_recompute_time_ = now;
   if (operation == COVER_OPERATION_OPENING && this->open_duration_ > 0) {
@@ -565,11 +541,56 @@ void EleroCover::begin_movement_tracking_(CoverOperation operation, uint32_t now
   this->publish_state();
 }
 
+void EleroCover::schedule_stop_verification_(uint32_t now) {
+  this->stop_verify_at_ = now + ELERO_STOP_VERIFY_DELAY_MS;
+  this->stop_verify_retries_ = 0;
+}
+
+bool EleroCover::retry_stop_verification_(uint32_t now, const char *reason) {
+  if (this->stop_verify_stop_retries_ >= ELERO_STOP_VERIFY_MAX_STOP_RETRIES)
+    return false;
+  this->stop_verify_stop_retries_++;
+  ESP_LOGW(TAG, "Blind 0x%06lx stop not verified (%s), retry STOP burst #%d",
+           static_cast<unsigned long>(this->command_.blind_addr), reason,
+           this->stop_verify_stop_retries_);
+  this->stop_verify_at_ = 0;
+  this->stop_verify_retries_ = 0;
+  if (!intent_was_accepted(this->submit_intent({CommandIntentKind::STOP, 0}))) {
+    this->stop_verify_at_ = now + ELERO_STOP_VERIFY_DELAY_MS;
+    return true;
+  }
+  this->pending_stop_transition_ = true;
+  return true;
+}
+
+void EleroCover::fail_stop_verification_(uint32_t now) {
+  ESP_LOGW(TAG, "Stop verification exhausted for blind 0x%06lx after %d STOP retry burst(s)",
+           static_cast<unsigned long>(this->command_.blind_addr), ELERO_STOP_VERIFY_MAX_STOP_RETRIES);
+  this->stop_verify_at_ = 0;
+  this->stop_trigger_ms_ = 0;
+  this->finish_stop_verification_();
+#ifdef USE_TEXT_SENSOR
+  this->parent_->publish_text_sensor_state(this->command_.blind_addr, "stop_failed");
+#endif
+  // Position is uncertain after failed stop verification. Keep last estimate
+  // but mark it untrusted so future commands are never suppressed as redundant.
+  this->position_trusted_for_redundancy_ = false;
+  this->current_operation = cover::COVER_OPERATION_IDLE;
+  this->delivery_.discard_checks();
+  this->command_cooldown_until_ = now + 3000;
+  this->delivery_.postpone_until(this->command_cooldown_until_);
+  this->publish_state(false);
+}
+
 void EleroCover::finish_stop_verification_() {
   if (this->stop_urgent_active_) {
     this->parent_->decrement_stop_urgent();
     this->stop_urgent_active_ = false;
   }
+  this->stop_verify_at_ = 0;
+  this->stop_verify_retries_ = ELERO_STOP_VERIFY_MAX_RETRIES;
+  this->stop_verify_stop_retries_ = 0;
+  this->pending_stop_transition_ = false;
   this->stop_verification_active_.store(false);
 }
 
@@ -596,6 +617,7 @@ void EleroCover::prepare_group_intent(const CommandIntent &intent, float target_
       this->target_position_ = this->position;
       this->stop_trigger_position_ = this->position;
       this->stop_trigger_ms_ = millis();
+      this->stop_verify_stop_retries_ = 0;
       this->stop_verification_active_.store(true);
       this->pending_movement_start_ = false;
       this->pending_stop_transition_ = true;

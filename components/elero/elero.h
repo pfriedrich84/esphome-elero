@@ -9,6 +9,7 @@
 #endif
 #include "cc1101.h"
 #include "elero_profile_delivery_coordinator.h"
+#include "elero_tx_admission.h"
 #include <RadioLib.h>
 #include <string>
 #include <vector>
@@ -35,7 +36,7 @@ namespace elero {
 /// Non-blocking TX state machine states.
 /// The radio is always in RX when IDLE; TX progresses one step per loop().
 /// RadioLib's standby() handles the IDLE transition synchronously in
-/// send_command(), so only 3 states remain.
+/// send_command_internal_(), so only 3 states remain.
 enum class TxState : uint8_t {
   IDLE,           ///< Radio in RX, ready for TX
   TRANSMITTING,   ///< Packet loaded and STX sent, waiting for TX to complete
@@ -114,10 +115,11 @@ static const uint8_t ELERO_DEFAULT_SEND_REPEATS = 1;  // one RF packet per comma
 static const uint32_t ELERO_RADIO_TASK_STACK_SIZE = 16384;  // bytes; RadioLib/SPI/log formatting need headroom on ESP-IDF
 
 // Auto-stop reliability: repeat stop commands, compensate for TX latency, verify motor stopped
-static const uint8_t  ELERO_STOP_REPEAT_COUNT = 2;              // stop commands queued on auto-stop (x2 RF packets each)
+static const uint8_t  ELERO_STOP_REPEAT_COUNT = 2;              // STOP RF packets per STOP burst using one rolling counter
+static const uint8_t  ELERO_STOP_VERIFY_MAX_STOP_RETRIES = 1;   // additional STOP bursts if verification feedback is absent/moving
 static const uint32_t ELERO_TX_LATENCY_COMPENSATION_MS = 300;   // position check lead time (accounts for multi-cover queue contention)
 static const uint32_t ELERO_STOP_VERIFY_DELAY_MS = 2000;        // delay before polling to verify motor stopped (give blind time to broadcast)
-static const uint8_t  ELERO_STOP_VERIFY_MAX_RETRIES = 1;        // single verify poll — blinds broadcast status, no need to hammer
+static const uint8_t  ELERO_STOP_VERIFY_MAX_RETRIES = 1;        // CHECK polls per STOP burst before retry/fail
 
 static const uint8_t ELERO_TX_QUEUE_DEPTH = 16;          // normal TX queue depth
 static const uint8_t ELERO_TX_PRIORITY_QUEUE_DEPTH = 8;  // priority TX queue depth (stop commands)
@@ -304,6 +306,7 @@ class EleroBlindBase {
   // Web API helpers — identity & state
   virtual std::string get_blind_name() const = 0;
   virtual float get_cover_position() const = 0;
+  virtual bool has_trusted_cover_position() const = 0;
   virtual const char *get_operation_str() const = 0;
   virtual uint32_t get_last_seen_ms() const = 0;
   virtual float get_last_rssi() const = 0;
@@ -428,15 +431,12 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void flush_rx();
   void interpret_msg();
 
-  /// True when the TX state machine is idle and ready for send_command().
+  /// True when the TX state machine is idle and ready for a queued command.
   bool is_tx_idle() const { return tx_state_.load(std::memory_order_acquire) == TxState::IDLE; }
   void register_cover(EleroBlindBase *cover);
   void register_light(EleroLightBase *light);
   bool register_command_delivery(CommandIntentDelivery *delivery);
   void unregister_command_delivery(CommandIntentDelivery *delivery);
-  SendResult send_command(t_elero_command *cmd);
-  /// Priority TX: bypasses the normal queue for time-critical commands (e.g. stop).
-  SendResult send_command_priority(t_elero_command *cmd);
   /// Current number of messages waiting in the normal TX queue (for dynamic latency compensation).
   uint32_t get_tx_queue_depth() const {
     return tx_queue_ ? uxQueueMessagesWaiting(tx_queue_) : 0;
@@ -707,6 +707,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   uint16_t raw_packet_write_idx_{0};
   std::map<uint32_t, RuntimeBlind> runtime_blinds_; // protected by state_mutex_
   std::map<DeliveryProfileKey, std::unique_ptr<ProfileDeliveryCoordinator>> delivery_coordinators_;
+  size_t next_delivery_profile_index_{0};
   mutable std::mutex delivery_coordinators_mutex_;
   std::set<uint32_t> own_remote_addresses_;  // remote addrs we TX as — echoes are filtered
 
@@ -743,7 +744,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
 
   // SPI health tracking: detect persistent SPI failures (e.g. strapping pin issues)
   std::atomic<bool> spi_failed_{false};  // set when SPI is permanently broken
-  uint8_t send_cmd_reinit_failures_{0};  // consecutive send_command() reinit failures
+  uint8_t send_cmd_reinit_failures_{0};  // consecutive internal TX reinit failures
 
   // Escalating recovery: windowed failure counting within 60s windows.
   // Level 1: flush FIFO (up to 3 per window before escalating)
@@ -781,6 +782,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   QueueHandle_t rx_queue_{nullptr};           // Core 0 → Core 1: RxResult (decoded packets)
   QueueHandle_t tx_completion_queue_{nullptr}; // Core 0 → Core 1: actual TX outcomes
   std::atomic<uint32_t> next_tx_transaction_id_{1};
+  RadioTxAdmission tx_admission_{};             // one queued/in-flight command radio-wide
   uint32_t active_tx_transaction_id_{0};       // Core 0 only while TRANSMITTING
   std::atomic<uint8_t> stop_urgent_count_{0};  // >0 when cover(s) are sending urgent stop commands
   std::atomic<bool> task_shutdown_{false};       // Core 1 sets to signal radio task to exit

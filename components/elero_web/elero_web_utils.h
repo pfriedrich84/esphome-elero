@@ -3,6 +3,7 @@
 
 #include "../elero/elero_command_delivery.h"
 
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -35,6 +36,26 @@ inline std::string json_escape(const std::string &s) {
     }
   }
   return out;
+}
+
+// Format a float as valid JSON: "null" for non-finite values, otherwise %.2f.
+inline void format_json_float(float v, std::string &out) {
+  if (!std::isfinite(v)) {
+    out += "null";
+    return;
+  }
+  char buf[32];
+  snprintf(buf, sizeof(buf), "%.2f", v);
+  out += buf;
+}
+
+// Cover positions use negative values as unknown in runtime-adopted state.
+inline void format_json_position(float v, std::string &out) {
+  if (v < 0.0f) {
+    out += "null";
+    return;
+  }
+  format_json_float(v, out);
 }
 
 inline bool parse_cover_intent(const std::string &value, CommandIntent &intent) {

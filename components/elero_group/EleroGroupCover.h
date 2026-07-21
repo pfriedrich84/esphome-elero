@@ -3,6 +3,7 @@
 #include "esphome/core/component.h"
 #include "esphome/components/cover/cover.h"
 #include "../elero/elero.h"
+#include "../elero/elero_group_position_logic.h"
 #include <vector>
 
 namespace esphome {
@@ -28,12 +29,16 @@ class EleroGroupCover : public cover::Cover, public Component {
  protected:
   void control(const cover::CoverCall &call) override;
 
-  IntentSubmitResult submit_group_intent_(const CommandIntent &intent);
+  IntentSubmitResult submit_group_intent_(const CommandIntent &intent,
+                                          float target_position = -1.0f);
   IntentSubmitResult submit_to_members_(const CommandIntent &intent);
   IntentSubmitResult submit_member_targets_(const std::vector<CommandIntent> &intents,
                                             float target_position = -1.0f);
+  IntentSubmitResult submit_intermediate_target_(float target_position);
   void prepare_member_states_(const std::vector<CommandIntent> &intents,
                               float target_position = -1.0f);
+  std::vector<group_position_logic::MemberState> member_position_states_() const;
+  bool supports_group_position_() const;
   bool can_use_native_group_() const;
   CommandDeliveryConfig build_native_config_() const;
   void handle_native_outcome_(const DeliveryOutcome &outcome);

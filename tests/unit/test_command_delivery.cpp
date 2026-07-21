@@ -1,5 +1,6 @@
 #include "elero/elero_profile_delivery_coordinator.h"
 #include "elero/elero_timed_action.h"
+#include "elero/elero_tx_admission.h"
 #include <gtest/gtest.h>
 #include <atomic>
 #include <thread>
@@ -24,6 +25,10 @@ class AttachedDelivery {
   DeliveryOutcome advance(uint32_t now, uint32_t delay, uint8_t repeats,
                           const ProfileDeliveryCoordinator::SubmitCallback &submitter) {
     return coordinator.advance(now, delay, repeats, submitter);
+  }
+  DeliveryOutcome advance(uint32_t now, uint32_t delay, uint8_t repeats, uint8_t stop_repeats,
+                          const ProfileDeliveryCoordinator::SubmitCallback &submitter) {
+    return coordinator.advance(now, delay, repeats, stop_repeats, submitter);
   }
   DeliveryOutcome complete(uint32_t transaction_id, bool success, uint32_t completed_at_ms) {
     return coordinator.complete(transaction_id, success, completed_at_ms);
@@ -51,6 +56,40 @@ static CommandDeliveryConfig config() {
   c.destinations[0] = 0x111111;
   c.destinations[1] = 0x222222;
   return c;
+}
+
+TEST(RadioTxAdmission, AllowsOnlyOneRadioWideTransaction) {
+  RadioTxAdmission admission;
+  EXPECT_FALSE(admission.busy());
+  EXPECT_FALSE(admission.try_reserve(0));
+  EXPECT_TRUE(admission.try_reserve(10));
+  EXPECT_TRUE(admission.busy());
+  EXPECT_EQ(admission.transaction_id(), 10u);
+  EXPECT_FALSE(admission.try_reserve(11));
+  EXPECT_FALSE(admission.release(11));
+  EXPECT_EQ(admission.transaction_id(), 10u);
+  EXPECT_TRUE(admission.release(10));
+  EXPECT_FALSE(admission.busy());
+  EXPECT_TRUE(admission.try_reserve(11));
+  EXPECT_TRUE(delivery_profile_is_eligible(false, false));
+  EXPECT_FALSE(delivery_profile_is_eligible(true, false));
+  EXPECT_TRUE(delivery_profile_is_eligible(true, true));
+  EXPECT_EQ(delivery_profile_round_robin_index(0, 0, 3), 0u);
+  EXPECT_EQ(delivery_profile_round_robin_index(0, 2, 3), 2u);
+  EXPECT_EQ(delivery_profile_round_robin_index(2, 1, 3), 0u);
+  EXPECT_EQ(delivery_profile_round_robin_index(4, 0, 3), 1u);
+  EXPECT_EQ(delivery_profile_round_robin_index(0, 0, 0), 0u);
+}
+
+TEST(RadioTxAdmission, RoundRobinCursorRotatesAfterEachAdmission) {
+  std::vector<size_t> admitted;
+  size_t next = 0;
+  for (size_t i = 0; i < 6; i++) {
+    const size_t index = delivery_profile_round_robin_index(next, 0, 3);
+    admitted.push_back(index);
+    next = (index + 1) % 3;
+  }
+  EXPECT_EQ(admitted, (std::vector<size_t>{0, 1, 2, 0, 1, 2}));
 }
 
 TEST(CommandProfile, NativeGroupRequiresEverySharedRfField) {
@@ -82,6 +121,23 @@ TEST(CommandDelivery, BuildsSemanticMultiDestinationPacketAndCompletesRepeats) {
   EXPECT_EQ(packets[1].counter, 1);
   EXPECT_EQ(packets[0].num_dests, 2);
   EXPECT_EQ(packets[0].dest_addrs[1], 0x222222u);
+  EXPECT_EQ(delivery.counter(), 2);
+}
+
+TEST(CommandDelivery, StopUsesDedicatedRepeatCount) {
+  AttachedDelivery delivery(config());
+  ASSERT_EQ(delivery.submit({CommandIntentKind::STOP, 0}), IntentSubmitResult::ACCEPTED);
+  std::vector<t_elero_command> packets;
+  auto submit = [&](const t_elero_command &packet, bool priority) {
+    EXPECT_TRUE(priority);
+    packets.push_back(packet);
+    return SendResult::OK;
+  };
+  EXPECT_EQ(delivery.advance(1, 0, 1, 2, submit).event, DeliveryEvent::PACKET_ACCEPTED);
+  EXPECT_EQ(delivery.advance(2, 0, 1, 2, submit).event, DeliveryEvent::COMPLETED);
+  ASSERT_EQ(packets.size(), 2u);
+  EXPECT_EQ(packets[0].counter, 1);
+  EXPECT_EQ(packets[1].counter, 1);
   EXPECT_EQ(delivery.counter(), 2);
 }
 
@@ -451,6 +507,74 @@ TEST(CommandDelivery, DeferredIntentsCountAgainstTheSameBound) {
     ASSERT_EQ(delivery.submit(CommandIntent::custom(i), 0, true), IntentSubmitResult::ACCEPTED);
   EXPECT_EQ(delivery.submit({CommandIntentKind::OPEN, 0}, 0, true), IntentSubmitResult::REJECTED);
   EXPECT_EQ(delivery.size(), ELERO_MAX_COMMAND_QUEUE);
+}
+
+TEST(ProfileCoordinator, RadioWideAdmissionKeepsStopBehindInflightThenSelectsItNext) {
+  auto normal_config = config();
+  auto urgent_config = config();
+  urgent_config.profile.remote_address++;
+  AttachedDelivery normal(normal_config);
+  AttachedDelivery urgent(urgent_config);
+  RadioTxAdmission admission;
+
+  ASSERT_EQ(normal.submit({CommandIntentKind::OPEN, 0}), IntentSubmitResult::ACCEPTED);
+  t_elero_command first{};
+  EXPECT_EQ(normal.advance(1, 0, 1, [&](const auto &packet, bool priority) {
+              EXPECT_FALSE(priority);
+              EXPECT_TRUE(admission.try_reserve(100));
+              first = packet;
+              return PacketSubmission::queued(100);
+            }).event,
+            DeliveryEvent::WAITING);
+  EXPECT_EQ(first.payload[4], normal_config.mapping.open);
+
+  ASSERT_EQ(urgent.submit({CommandIntentKind::STOP, 0}), IntentSubmitResult::ACCEPTED);
+  EXPECT_TRUE(urgent.coordinator.has_urgent(2));
+  EXPECT_TRUE(admission.busy());
+  EXPECT_FALSE(admission.try_reserve(101));
+
+  EXPECT_EQ(normal.complete(100, true, 3).event, DeliveryEvent::COMPLETED);
+  EXPECT_TRUE(admission.release(100));
+
+  t_elero_command second{};
+  EXPECT_TRUE(delivery_profile_is_eligible(true, urgent.coordinator.has_urgent(4)));
+  EXPECT_EQ(urgent.advance(4, 0, 1, [&](const auto &packet, bool priority) {
+              EXPECT_TRUE(priority);
+              EXPECT_TRUE(admission.try_reserve(101));
+              second = packet;
+              return PacketSubmission::queued(101);
+            }).event,
+            DeliveryEvent::WAITING);
+  EXPECT_EQ(second.payload[4], urgent_config.mapping.stop);
+  EXPECT_EQ(urgent.complete(101, true, 5).event, DeliveryEvent::COMPLETED);
+  EXPECT_TRUE(admission.release(101));
+}
+
+TEST(ProfileCoordinator, RadioWideSelectionPrefersStopAcrossProfiles) {
+  auto normal_config = config();
+  auto urgent_config = config();
+  urgent_config.profile.remote_address++;
+  AttachedDelivery normal(normal_config);
+  AttachedDelivery urgent(urgent_config);
+  ASSERT_EQ(normal.submit({CommandIntentKind::OPEN, 0}), IntentSubmitResult::ACCEPTED);
+  ASSERT_EQ(urgent.submit({CommandIntentKind::STOP, 0}), IntentSubmitResult::ACCEPTED);
+
+  const bool urgent_waiting = normal.coordinator.has_urgent(1) ||
+                              urgent.coordinator.has_urgent(1);
+  EXPECT_TRUE(urgent_waiting);
+  EXPECT_FALSE(delivery_profile_is_eligible(urgent_waiting,
+                                            normal.coordinator.has_urgent(1)));
+  EXPECT_TRUE(delivery_profile_is_eligible(urgent_waiting,
+                                           urgent.coordinator.has_urgent(1)));
+}
+
+TEST(ProfileCoordinator, ReportsUrgentWorkForRadioWideSelection) {
+  AttachedDelivery delivery(config());
+  EXPECT_FALSE(delivery.coordinator.has_urgent(1));
+  ASSERT_EQ(delivery.submit({CommandIntentKind::OPEN, 0}), IntentSubmitResult::ACCEPTED);
+  EXPECT_FALSE(delivery.coordinator.has_urgent(1));
+  ASSERT_EQ(delivery.submit({CommandIntentKind::STOP, 0}), IntentSubmitResult::ACCEPTED);
+  EXPECT_TRUE(delivery.coordinator.has_urgent(1));
 }
 
 TEST(ProfileCoordinator, SerializesLanesWithOneRollingCounter) {

@@ -1,6 +1,6 @@
 # Repository Governance Assessment
 
-Last reviewed: 2026-06-03
+Last reviewed: 2026-07-21
 
 ## Maturity summary
 
@@ -16,7 +16,7 @@ Last reviewed: 2026-06-03
 
 - Short canonical `AGENTS.md` entry point with modular docs under `docs/agent/`.
 - Clear split between user docs, developer docs, and agent docs.
-- Strong CI coverage: Ruff, Python schema tests, C++ unit tests, ESPHome compile matrix, and frontend build.
+- Strong CI coverage: ESPHome Ruff checks, Python schema tests, C++ unit tests, ESPHome compile matrix, and frontend build.
 - Dependency-free Markdown local-link checker exists and passes.
 - Domain invariants are documented for RF safety, CC1101 task ownership, group covers, runtime adopted blinds, and web API safety.
 
@@ -45,20 +45,20 @@ Last reviewed: 2026-06-03
 - Secret scanning and push protection are enabled in GitHub repository settings.
 - Vulnerability alerts and Dependabot security updates are enabled.
 - `.github/dependabot.yml` defines one monthly multi-ecosystem Dependabot version-update group for GitHub Actions and npm frontend dependencies with a 3-day cooldown.
-- `main` branch protection is enabled through `.github/scripts/protect-main.sh`: `ci-ok` is required, strict status checks are enabled, force pushes are blocked, and branch deletion is blocked.
+- `main` and `dev` branch protection is reproducible through `.github/scripts/protect-main.sh`: `ci-ok` is required, strict status checks are enabled, force pushes are blocked, and branch deletion is blocked.
 - Code scanning/CodeQL status is not established from repository files; GitHub API returned no analysis.
 - GitHub Actions are enabled and currently allow all actions; workflow files pin common first-party actions by major version.
 
 ## Remaining governance debt
 
-- No formal ADR records exist yet beyond `docs/developer/adr/README.md`; significant future architecture changes should add one.
+- One accepted formal ADR currently records command-intent delivery; significant future architecture changes should add or supersede ADRs as needed.
 - Supply-chain scanning is optional and not wired into CI.
 - `frontend-legacy` remains in the repository as documented reference/rollback source; decide in a future cleanup whether to retain or remove it.
 - Hardware validation remains external/manual; docs correctly avoid implying automated RF hardware coverage.
 
 ## Recommended next steps
 
-1. Add ADRs for major RF/runtime design decisions when they next change.
+1. Keep the accepted command-intent delivery ADR current and add or supersede ADRs when other major RF/runtime decisions change.
 2. Decide whether `components/elero_web/frontend-legacy/` should remain as rollback/reference material or be removed in a future cleanup.
 3. Consider optional `npm audit` or OSV scanning for periodic dependency reviews.
 4. Keep issue/PR templates lightweight; adjust after observing contributor friction.

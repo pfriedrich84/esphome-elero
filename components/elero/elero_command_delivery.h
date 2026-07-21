@@ -268,5 +268,13 @@ inline bool delivery_packet_was_accepted(DeliveryEvent event) {
   return event == DeliveryEvent::PACKET_ACCEPTED || event == DeliveryEvent::COMPLETED;
 }
 
+inline uint8_t required_repeats_for_intent(CommandIntentKind kind, uint8_t configured_repeats,
+                                           uint8_t stop_repeats) {
+  const uint8_t normal = configured_repeats == 0 ? 1 : configured_repeats;
+  if (kind != CommandIntentKind::STOP)
+    return normal;
+  return stop_repeats == 0 ? 1 : stop_repeats;
+}
+
 }  // namespace elero
 }  // namespace esphome

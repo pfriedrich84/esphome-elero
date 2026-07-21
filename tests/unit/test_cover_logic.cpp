@@ -1,5 +1,6 @@
 #include "elero/elero_cover_logic.h"
 #include <gtest/gtest.h>
+#include <limits>
 
 using namespace esphome::elero::cover_logic;
 
@@ -12,6 +13,21 @@ TEST(CommandCooldown, BlocksUntilDeadlineIncludingMillisWrap) {
   EXPECT_FALSE(command_cooldown_active(4000, 4000));
   EXPECT_TRUE(command_cooldown_active(0xFFFFFFF0u, 20));
   EXPECT_FALSE(command_cooldown_active(20, 20));
+}
+
+TEST(RedundantPosition, SuppressesOnlyMatchingTrustedIntermediateTargets) {
+  EXPECT_TRUE(is_redundant_intermediate_target(0.75f, 0.75f));
+  EXPECT_TRUE(is_redundant_intermediate_target(0.754f, 0.75f));
+  EXPECT_FALSE(is_redundant_intermediate_target(0.70f, 0.75f));
+  EXPECT_FALSE(is_redundant_intermediate_target(0.75f, 0.75f, false));
+  EXPECT_FALSE(is_redundant_intermediate_target(std::numeric_limits<float>::quiet_NaN(), 0.75f));
+}
+
+TEST(RedundantPosition, NeverSuppressesOpenOrCloseEndpoints) {
+  EXPECT_FALSE(is_redundant_intermediate_target(1.0f, 1.0f));
+  EXPECT_FALSE(is_redundant_intermediate_target(0.0f, 0.0f));
+  EXPECT_FALSE(is_redundant_intermediate_target(0.995f, 1.0f));
+  EXPECT_FALSE(is_redundant_intermediate_target(0.005f, 0.0f));
 }
 
 // ─── recompute_position ──────────────────────────────────────────────────────

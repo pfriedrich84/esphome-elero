@@ -55,7 +55,7 @@ void EleroGroupCover::dump_config() {
 cover::CoverTraits EleroGroupCover::get_traits() {
   auto traits = cover::CoverTraits();
   traits.set_supports_stop(true);
-  traits.set_supports_position(false);
+  traits.set_supports_position(this->supports_group_position_());
   traits.set_supports_toggle(true);
   traits.set_is_assumed_state(this->assumed_state_);
   bool all_tilt = true;
@@ -84,14 +84,10 @@ void EleroGroupCover::control(const cover::CoverCall &call) {
       if (intent_was_accepted(this->submit_group_intent_({CommandIntentKind::CLOSE, 0})))
         this->current_operation = cover::COVER_OPERATION_CLOSING;
     } else {
-      std::vector<CommandIntent> intents;
-      intents.reserve(this->members_.size());
-      for (auto *member : this->members_) {
-        const auto kind = pos > member->get_cover_position() ? CommandIntentKind::OPEN
-                                                              : CommandIntentKind::CLOSE;
-        intents.push_back({kind, 0});
-      }
-      if (intent_was_accepted(this->submit_member_targets_(intents, pos)))
+      const auto result = this->submit_intermediate_target_(pos);
+      if (result == IntentSubmitResult::COALESCED)
+        this->current_operation = cover::COVER_OPERATION_IDLE;
+      else if (intent_was_accepted(result))
         this->current_operation = pos > this->position ? cover::COVER_OPERATION_OPENING
                                                        : cover::COVER_OPERATION_CLOSING;
     }
@@ -111,13 +107,14 @@ void EleroGroupCover::control(const cover::CoverCall &call) {
   }
 }
 
-IntentSubmitResult EleroGroupCover::submit_group_intent_(const CommandIntent &intent) {
+IntentSubmitResult EleroGroupCover::submit_group_intent_(const CommandIntent &intent,
+                                                          float target_position) {
   if (!this->native_group_)
     return this->submit_to_members_(intent);
   const auto result = this->native_delivery_.submit(intent, millis());
   if (intent_was_accepted(result)) {
     std::vector<CommandIntent> intents(this->members_.size(), intent);
-    this->prepare_member_states_(intents);
+    this->prepare_member_states_(intents, target_position);
   }
   if (group_delivery_policy::reject_native_submit_without_fanout(result)) {
     // Keep all compatible group work in the native lane. Sending only this
@@ -132,6 +129,40 @@ IntentSubmitResult EleroGroupCover::submit_group_intent_(const CommandIntent &in
 IntentSubmitResult EleroGroupCover::submit_to_members_(const CommandIntent &intent) {
   std::vector<CommandIntent> intents(this->members_.size(), intent);
   return this->submit_member_targets_(intents);
+}
+
+IntentSubmitResult EleroGroupCover::submit_intermediate_target_(float target_position) {
+  const auto states = this->member_position_states_();
+  const auto plan = group_position_logic::plan_intermediate_target(states.data(), states.size(),
+                                                                   target_position, this->native_group_);
+  if (plan.route == group_position_logic::Route::ALREADY_AT_TARGET)
+    return IntentSubmitResult::COALESCED;
+  if (group_position_logic::uses_native_start(plan.route)) {
+    ESP_LOGD(TAG, "Group '%s' using native synchronized %s start for target %.2f; member covers own stops",
+             this->get_name().c_str(), plan.native_direction == CommandIntentKind::OPEN ? "OPEN" : "CLOSE",
+             target_position);
+    return this->submit_group_intent_({plan.native_direction, 0}, target_position);
+  }
+  if (plan.route == group_position_logic::Route::REJECT) {
+    ESP_LOGW(TAG, "Group '%s' cannot safely position to %.2f: members need calibrated durations and known positions",
+             this->get_name().c_str(), target_position);
+    for (auto *member : this->members_)
+      member->schedule_immediate_poll();
+    if (this->parent_ != nullptr)
+      this->parent_->increment_tx_drop_count();
+    return IntentSubmitResult::REJECTED;
+  }
+
+  std::vector<CommandIntent> intents;
+  intents.reserve(this->members_.size());
+  for (auto *member : this->members_) {
+    const float member_position = member->get_cover_position();
+    CommandIntentKind kind = CommandIntentKind::CHECK;
+    if (std::fabs(target_position - member_position) > 0.005f)
+      kind = target_position > member_position ? CommandIntentKind::OPEN : CommandIntentKind::CLOSE;
+    intents.push_back({kind, 0});
+  }
+  return this->submit_member_targets_(intents, target_position);
 }
 
 IntentSubmitResult EleroGroupCover::submit_member_targets_(const std::vector<CommandIntent> &intents,
@@ -180,6 +211,21 @@ void EleroGroupCover::handle_native_outcome_(const DeliveryOutcome &outcome) {
     ESP_LOGW(TAG, "Stale native group command queue cleared without fan-out");
     this->parent_->increment_tx_drop_count();
   }
+}
+
+std::vector<group_position_logic::MemberState> EleroGroupCover::member_position_states_() const {
+  std::vector<group_position_logic::MemberState> states;
+  states.reserve(this->members_.size());
+  for (auto *member : this->members_) {
+    states.push_back({member->get_cover_position(), member->get_open_duration_ms(),
+                      member->get_close_duration_ms(), member->has_trusted_cover_position()});
+  }
+  return states;
+}
+
+bool EleroGroupCover::supports_group_position_() const {
+  const auto states = this->member_position_states_();
+  return group_position_logic::supports_group_position(states.data(), states.size());
 }
 
 bool EleroGroupCover::can_use_native_group_() const {

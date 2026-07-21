@@ -17,6 +17,8 @@ static const size_t ELERO_WEB_MAX_REQUEST_BODY = 2048;
 
 // json_escape() and parse_addr_url() are in elero_web_utils.h (extracted for testability)
 using web_utils::json_escape;
+using web_utils::format_json_float;
+using web_utils::format_json_position;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -446,38 +448,45 @@ void EleroWebServer::build_configured_json_(std::string &out) {
     first = false;
     auto *blind = pair.second;
     std::string esc_name = json_escape(blind->get_blind_name());
-    char buf[512];
-    snprintf(buf, sizeof(buf),
-      "{\"blind_address\":\"0x%06lx\","
-      "\"name\":\"%s\","
-      "\"position\":%.2f,"
-      "\"operation\":\"%s\","
-      "\"last_state\":\"%s\","
-      "\"last_seen_ms\":%lu,"
-      "\"rssi\":%.1f,"
-      "\"channel\":%d,"
-      "\"remote_address\":\"0x%06lx\","
-      "\"poll_interval_ms\":%lu,"
-      "\"open_duration_ms\":%lu,"
-      "\"close_duration_ms\":%lu,"
-      "\"supports_tilt\":%s,"
-      "\"device_type\":\"cover\","
-      "\"adopted\":false}",
-      static_cast<unsigned long>(pair.first),
-      esc_name.c_str(),
-      blind->get_cover_position(),
-      blind->get_operation_str(),
-      elero_state_to_string(blind->get_last_state_raw()),
-      (unsigned long)blind->get_last_seen_ms(),
-      blind->get_last_rssi(),
-      (int)blind->get_channel(),
-      static_cast<unsigned long>(blind->get_remote_address()),
-      (unsigned long)blind->get_poll_interval_ms(),
-      (unsigned long)blind->get_open_duration_ms(),
-      (unsigned long)blind->get_close_duration_ms(),
-      blind->get_supports_tilt() ? "true" : "false"
-    );
-    out += buf;
+    out += "{\"blind_address\":\"0x";
+    char addr_buf[16];
+    snprintf(addr_buf, sizeof(addr_buf), "%06lx", static_cast<unsigned long>(pair.first));
+    out += addr_buf;
+    out += "\",\"name\":\"";
+    out += esc_name;
+    out += "\",\"position\":";
+    format_json_position(blind->get_cover_position(), out);
+    out += ",\"operation\":\"";
+    out += blind->get_operation_str();
+    out += "\",\"last_state\":\"";
+    out += elero_state_to_string(blind->get_last_state_raw());
+    out += "\",\"last_seen_ms\":";
+    char ls_buf[32];
+    snprintf(ls_buf, sizeof(ls_buf), "%lu", (unsigned long)blind->get_last_seen_ms());
+    out += ls_buf;
+    out += ",\"rssi\":";
+    char rssi_buf[16];
+    snprintf(rssi_buf, sizeof(rssi_buf), "%.1f", blind->get_last_rssi());
+    out += rssi_buf;
+    out += ",\"channel\":";
+    char ch_buf[8];
+    snprintf(ch_buf, sizeof(ch_buf), "%d", (int)blind->get_channel());
+    out += ch_buf;
+    out += ",\"remote_address\":\"0x";
+    snprintf(addr_buf, sizeof(addr_buf), "%06lx", static_cast<unsigned long>(blind->get_remote_address()));
+    out += addr_buf;
+    out += "\",\"poll_interval_ms\":";
+    snprintf(ls_buf, sizeof(ls_buf), "%lu", (unsigned long)blind->get_poll_interval_ms());
+    out += ls_buf;
+    out += ",\"open_duration_ms\":";
+    snprintf(ls_buf, sizeof(ls_buf), "%lu", (unsigned long)blind->get_open_duration_ms());
+    out += ls_buf;
+    out += ",\"close_duration_ms\":";
+    snprintf(ls_buf, sizeof(ls_buf), "%lu", (unsigned long)blind->get_close_duration_ms());
+    out += ls_buf;
+    out += ",\"supports_tilt\":";
+    out += blind->get_supports_tilt() ? "true" : "false";
+    out += ",\"device_type\":\"cover\",\"adopted\":false}";
   }
 
   // Runtime adopted covers (device_type == COVER)
@@ -493,45 +502,43 @@ void EleroWebServer::build_configured_json_(std::string &out) {
     if (rb.moving_direction > 0) operation = "opening";
     else if (rb.moving_direction < 0) operation = "closing";
 
-    // Format position: null if unknown (-1.0), otherwise 0.00-1.00
-    char pos_str[16];
-    if (rb.position < 0.0f) {
-      snprintf(pos_str, sizeof(pos_str), "null");
-    } else {
-      snprintf(pos_str, sizeof(pos_str), "%.2f", rb.position);
-    }
-
-    char buf[512];
-    snprintf(buf, sizeof(buf),
-      "{\"blind_address\":\"0x%06lx\","
-      "\"name\":\"%s\","
-      "\"position\":%s,"
-      "\"operation\":\"%s\","
-      "\"last_state\":\"%s\","
-      "\"last_seen_ms\":%lu,"
-      "\"rssi\":%.1f,"
-      "\"channel\":%d,"
-      "\"remote_address\":\"0x%06lx\","
-      "\"poll_interval_ms\":%lu,"
-      "\"open_duration_ms\":%lu,"
-      "\"close_duration_ms\":%lu,"
-      "\"supports_tilt\":false,"
-      "\"device_type\":\"cover\","
-      "\"adopted\":true}",
-      static_cast<unsigned long>(rb.blind_address),
-      esc_name.c_str(),
-      pos_str,
-      operation,
-      elero_state_to_string(rb.last_state),
-      (unsigned long)rb.last_seen_ms,
-      rb.last_rssi,
-      (int)rb.channel,
-      static_cast<unsigned long>(rb.remote_address),
-      (unsigned long)rb.poll_intvl_ms,
-      (unsigned long)rb.open_duration_ms,
-      (unsigned long)rb.close_duration_ms
-    );
-    out += buf;
+    out += "{\"blind_address\":\"0x";
+    char addr_buf[16];
+    snprintf(addr_buf, sizeof(addr_buf), "%06lx", static_cast<unsigned long>(rb.blind_address));
+    out += addr_buf;
+    out += "\",\"name\":\"";
+    out += esc_name;
+    out += "\",\"position\":";
+    format_json_position(rb.position, out);
+    out += ",\"operation\":\"";
+    out += operation;
+    out += "\",\"last_state\":\"";
+    out += elero_state_to_string(rb.last_state);
+    out += "\",\"last_seen_ms\":";
+    char ls_buf[32];
+    snprintf(ls_buf, sizeof(ls_buf), "%lu", (unsigned long)rb.last_seen_ms);
+    out += ls_buf;
+    out += ",\"rssi\":";
+    char rssi_buf[16];
+    snprintf(rssi_buf, sizeof(rssi_buf), "%.1f", rb.last_rssi);
+    out += rssi_buf;
+    out += ",\"channel\":";
+    char ch_buf[8];
+    snprintf(ch_buf, sizeof(ch_buf), "%d", (int)rb.channel);
+    out += ch_buf;
+    out += ",\"remote_address\":\"0x";
+    snprintf(addr_buf, sizeof(addr_buf), "%06lx", static_cast<unsigned long>(rb.remote_address));
+    out += addr_buf;
+    out += "\",\"poll_interval_ms\":";
+    snprintf(ls_buf, sizeof(ls_buf), "%lu", (unsigned long)rb.poll_intvl_ms);
+    out += ls_buf;
+    out += ",\"open_duration_ms\":";
+    snprintf(ls_buf, sizeof(ls_buf), "%lu", (unsigned long)rb.open_duration_ms);
+    out += ls_buf;
+    out += ",\"close_duration_ms\":";
+    snprintf(ls_buf, sizeof(ls_buf), "%lu", (unsigned long)rb.close_duration_ms);
+    out += ls_buf;
+    out += ",\"supports_tilt\":false,\"device_type\":\"cover\",\"adopted\":true}";
   }
 
   out += "],\"lights\":[";
@@ -544,34 +551,40 @@ void EleroWebServer::build_configured_json_(std::string &out) {
     first = false;
     auto *light = pair.second;
     std::string esc_name = json_escape(light->get_light_name());
-    char buf[512];
-    snprintf(buf, sizeof(buf),
-      "{\"blind_address\":\"0x%06lx\","
-      "\"name\":\"%s\","
-      "\"is_on\":%s,"
-      "\"brightness\":%.2f,"
-      "\"operation\":\"%s\","
-      "\"last_state\":\"%s\","
-      "\"last_seen_ms\":%lu,"
-      "\"rssi\":%.1f,"
-      "\"channel\":%d,"
-      "\"remote_address\":\"0x%06lx\","
-      "\"dim_duration_ms\":%lu,"
-      "\"device_type\":\"light\","
-      "\"adopted\":false}",
-      static_cast<unsigned long>(pair.first),
-      esc_name.c_str(),
-      light->get_is_on() ? "true" : "false",
-      light->get_brightness(),
-      light->get_operation_str(),
-      elero_state_to_string(light->get_last_state_raw()),
-      (unsigned long)light->get_last_seen_ms(),
-      light->get_last_rssi(),
-      (int)light->get_channel(),
-      static_cast<unsigned long>(light->get_remote_address()),
-      (unsigned long)light->get_dim_duration_ms()
-    );
-    out += buf;
+
+    out += "{\"blind_address\":\"0x";
+    char addr_buf[16];
+    snprintf(addr_buf, sizeof(addr_buf), "%06lx", static_cast<unsigned long>(pair.first));
+    out += addr_buf;
+    out += "\",\"name\":\"";
+    out += esc_name;
+    out += "\",\"is_on\":";
+    out += light->get_is_on() ? "true" : "false";
+    out += ",\"brightness\":";
+    format_json_float(light->get_brightness(), out);
+    out += ",\"operation\":\"";
+    out += light->get_operation_str();
+    out += "\",\"last_state\":\"";
+    out += elero_state_to_string(light->get_last_state_raw());
+    out += "\",\"last_seen_ms\":";
+    char ls_buf[32];
+    snprintf(ls_buf, sizeof(ls_buf), "%lu", (unsigned long)light->get_last_seen_ms());
+    out += ls_buf;
+    out += ",\"rssi\":";
+    char rssi_buf[16];
+    snprintf(rssi_buf, sizeof(rssi_buf), "%.1f", light->get_last_rssi());
+    out += rssi_buf;
+    out += ",\"channel\":";
+    char ch_buf[8];
+    snprintf(ch_buf, sizeof(ch_buf), "%d", (int)light->get_channel());
+    out += ch_buf;
+    out += ",\"remote_address\":\"0x";
+    snprintf(addr_buf, sizeof(addr_buf), "%06lx", static_cast<unsigned long>(light->get_remote_address()));
+    out += addr_buf;
+    out += "\",\"dim_duration_ms\":";
+    snprintf(ls_buf, sizeof(ls_buf), "%lu", (unsigned long)light->get_dim_duration_ms());
+    out += ls_buf;
+    out += ",\"device_type\":\"light\",\"adopted\":false}";
   }
 
   // Runtime adopted lights (device_type == LIGHT)
@@ -581,31 +594,34 @@ void EleroWebServer::build_configured_json_(std::string &out) {
     if (!first) out += ",";
     first = false;
     std::string esc_name = json_escape(rb.name);
-    char buf[512];
-    snprintf(buf, sizeof(buf),
-      "{\"blind_address\":\"0x%06lx\","
-      "\"name\":\"%s\","
-      "\"is_on\":false,"
-      "\"brightness\":0.00,"
-      "\"operation\":\"idle\","
-      "\"last_state\":\"%s\","
-      "\"last_seen_ms\":%lu,"
-      "\"rssi\":%.1f,"
-      "\"channel\":%d,"
-      "\"remote_address\":\"0x%06lx\","
-      "\"dim_duration_ms\":%lu,"
-      "\"device_type\":\"light\","
-      "\"adopted\":true}",
-      static_cast<unsigned long>(rb.blind_address),
-      esc_name.c_str(),
-      elero_state_to_string(rb.last_state),
-      (unsigned long)rb.last_seen_ms,
-      rb.last_rssi,
-      (int)rb.channel,
-      static_cast<unsigned long>(rb.remote_address),
-      (unsigned long)rb.dim_duration_ms
-    );
-    out += buf;
+
+    out += "{\"blind_address\":\"0x";
+    char addr_buf[16];
+    snprintf(addr_buf, sizeof(addr_buf), "%06lx", static_cast<unsigned long>(rb.blind_address));
+    out += addr_buf;
+    out += "\",\"name\":\"";
+    out += esc_name;
+    out += "\",\"is_on\":false,\"brightness\":0.00,\"operation\":\"idle\",\"last_state\":\"";
+    out += elero_state_to_string(rb.last_state);
+    out += "\",\"last_seen_ms\":";
+    char ls_buf[32];
+    snprintf(ls_buf, sizeof(ls_buf), "%lu", (unsigned long)rb.last_seen_ms);
+    out += ls_buf;
+    out += ",\"rssi\":";
+    char rssi_buf[16];
+    snprintf(rssi_buf, sizeof(rssi_buf), "%.1f", rb.last_rssi);
+    out += rssi_buf;
+    out += ",\"channel\":";
+    char ch_buf[8];
+    snprintf(ch_buf, sizeof(ch_buf), "%d", (int)rb.channel);
+    out += ch_buf;
+    out += ",\"remote_address\":\"0x";
+    snprintf(addr_buf, sizeof(addr_buf), "%06lx", static_cast<unsigned long>(rb.remote_address));
+    out += addr_buf;
+    out += "\",\"dim_duration_ms\":";
+    snprintf(ls_buf, sizeof(ls_buf), "%lu", (unsigned long)rb.dim_duration_ms);
+    out += ls_buf;
+    out += ",\"device_type\":\"light\",\"adopted\":true}";
   }
 
   out += "]";

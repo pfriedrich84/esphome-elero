@@ -2,6 +2,7 @@
 // Elero cover position logic — extracted as pure functions for testability.
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 
 #define ELERO_HAS_COVER_POLL_HELPER 1
@@ -23,6 +24,16 @@ inline bool should_publish_position(uint32_t now, uint32_t last_publish_ms,
 
 inline bool command_cooldown_active(uint32_t now, uint32_t cooldown_until) {
   return cooldown_until != 0 && static_cast<int32_t>(now - cooldown_until) < 0;
+}
+
+// Endpoint targets represent OPEN/CLOSE commands in ESPHome's CoverCall and
+// must always reach RF even when the estimated position already matches. Only
+// an intermediate set-position target may be suppressed as redundant.
+inline bool is_redundant_intermediate_target(float current, float target,
+                                             bool position_trusted = true,
+                                             float tolerance = 0.01f) {
+  return position_trusted && std::isfinite(current) && std::isfinite(target) &&
+         target > 0.0f && target < 1.0f && std::abs(target - current) < tolerance;
 }
 
 // Returns the updated position after dead-reckoning.
