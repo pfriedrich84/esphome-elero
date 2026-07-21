@@ -14,6 +14,19 @@ TEST(CommandCooldown, BlocksUntilDeadlineIncludingMillisWrap) {
   EXPECT_FALSE(command_cooldown_active(20, 20));
 }
 
+TEST(RedundantPosition, SuppressesOnlyMatchingIntermediateTargets) {
+  EXPECT_TRUE(is_redundant_intermediate_target(0.75f, 0.75f));
+  EXPECT_TRUE(is_redundant_intermediate_target(0.754f, 0.75f));
+  EXPECT_FALSE(is_redundant_intermediate_target(0.70f, 0.75f));
+}
+
+TEST(RedundantPosition, NeverSuppressesOpenOrCloseEndpoints) {
+  EXPECT_FALSE(is_redundant_intermediate_target(1.0f, 1.0f));
+  EXPECT_FALSE(is_redundant_intermediate_target(0.0f, 0.0f));
+  EXPECT_FALSE(is_redundant_intermediate_target(0.995f, 1.0f));
+  EXPECT_FALSE(is_redundant_intermediate_target(0.005f, 0.0f));
+}
+
 // ─── recompute_position ──────────────────────────────────────────────────────
 
 TEST(RecomputePosition, Idle_NoChange) {
