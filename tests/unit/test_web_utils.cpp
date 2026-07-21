@@ -57,6 +57,24 @@ TEST(JsonFloatFormat, VeryLargeValue) {
   EXPECT_FALSE(out.empty());
 }
 
+TEST(JsonPositionFormat, NegativeUnknownBecomesNull) {
+  std::string out;
+  format_json_position(-1.0f, out);
+  EXPECT_EQ(out, "null");
+}
+
+TEST(JsonPositionFormat, NanBecomesNull) {
+  std::string out;
+  format_json_position(std::numeric_limits<float>::quiet_NaN(), out);
+  EXPECT_EQ(out, "null");
+}
+
+TEST(JsonPositionFormat, FiniteKnownPosition) {
+  std::string out;
+  format_json_position(0.5f, out);
+  EXPECT_EQ(out, "0.50");
+}
+
 // --- json_escape ---
 
 TEST(JsonEscape, EmptyString) { EXPECT_EQ(json_escape(""), ""); }

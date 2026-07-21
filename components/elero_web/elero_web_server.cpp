@@ -18,6 +18,7 @@ static const size_t ELERO_WEB_MAX_REQUEST_BODY = 2048;
 // json_escape() and parse_addr_url() are in elero_web_utils.h (extracted for testability)
 using web_utils::json_escape;
 using web_utils::format_json_float;
+using web_utils::format_json_position;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -454,7 +455,7 @@ void EleroWebServer::build_configured_json_(std::string &out) {
     out += "\",\"name\":\"";
     out += esc_name;
     out += "\",\"position\":";
-    format_json_float(blind->get_cover_position(), out);
+    format_json_position(blind->get_cover_position(), out);
     out += ",\"operation\":\"";
     out += blind->get_operation_str();
     out += "\",\"last_state\":\"";
@@ -508,7 +509,7 @@ void EleroWebServer::build_configured_json_(std::string &out) {
     out += "\",\"name\":\"";
     out += esc_name;
     out += "\",\"position\":";
-    format_json_float(rb.position, out);
+    format_json_position(rb.position, out);
     out += ",\"operation\":\"";
     out += operation;
     out += "\",\"last_state\":\"";
@@ -559,9 +560,9 @@ void EleroWebServer::build_configured_json_(std::string &out) {
     out += esc_name;
     out += "\",\"is_on\":";
     out += light->get_is_on() ? "true" : "false";
-    out += "\",\"brightness\":";
+    out += ",\"brightness\":";
     format_json_float(light->get_brightness(), out);
-    out += "\",\"operation\":\"";
+    out += ",\"operation\":\"";
     out += light->get_operation_str();
     out += "\",\"last_state\":\"";
     out += elero_state_to_string(light->get_last_state_raw());
@@ -569,21 +570,21 @@ void EleroWebServer::build_configured_json_(std::string &out) {
     char ls_buf[32];
     snprintf(ls_buf, sizeof(ls_buf), "%lu", (unsigned long)light->get_last_seen_ms());
     out += ls_buf;
-    out += "\",\"rssi\":";
+    out += ",\"rssi\":";
     char rssi_buf[16];
     snprintf(rssi_buf, sizeof(rssi_buf), "%.1f", light->get_last_rssi());
     out += rssi_buf;
-    out += "\",\"channel\":";
+    out += ",\"channel\":";
     char ch_buf[8];
     snprintf(ch_buf, sizeof(ch_buf), "%d", (int)light->get_channel());
     out += ch_buf;
-    out += "\",\"remote_address\":\"0x";
+    out += ",\"remote_address\":\"0x";
     snprintf(addr_buf, sizeof(addr_buf), "%06lx", static_cast<unsigned long>(light->get_remote_address()));
     out += addr_buf;
     out += "\",\"dim_duration_ms\":";
     snprintf(ls_buf, sizeof(ls_buf), "%lu", (unsigned long)light->get_dim_duration_ms());
     out += ls_buf;
-    out += "\",\"device_type\":\"light\",\"adopted\":false}";
+    out += ",\"device_type\":\"light\",\"adopted\":false}";
   }
 
   // Runtime adopted lights (device_type == LIGHT)
@@ -606,21 +607,21 @@ void EleroWebServer::build_configured_json_(std::string &out) {
     char ls_buf[32];
     snprintf(ls_buf, sizeof(ls_buf), "%lu", (unsigned long)rb.last_seen_ms);
     out += ls_buf;
-    out += "\",\"rssi\":";
+    out += ",\"rssi\":";
     char rssi_buf[16];
     snprintf(rssi_buf, sizeof(rssi_buf), "%.1f", rb.last_rssi);
     out += rssi_buf;
-    out += "\",\"channel\":";
+    out += ",\"channel\":";
     char ch_buf[8];
     snprintf(ch_buf, sizeof(ch_buf), "%d", (int)rb.channel);
     out += ch_buf;
-    out += "\",\"remote_address\":\"0x";
+    out += ",\"remote_address\":\"0x";
     snprintf(addr_buf, sizeof(addr_buf), "%06lx", static_cast<unsigned long>(rb.remote_address));
     out += addr_buf;
     out += "\",\"dim_duration_ms\":";
     snprintf(ls_buf, sizeof(ls_buf), "%lu", (unsigned long)rb.dim_duration_ms);
     out += ls_buf;
-    out += "\",\"device_type\":\"light\",\"adopted\":true}";
+    out += ",\"device_type\":\"light\",\"adopted\":true}";
   }
 
   out += "]";

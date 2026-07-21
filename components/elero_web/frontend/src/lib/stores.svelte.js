@@ -11,6 +11,7 @@ export const s = $state({
   covers: [],
   lights: [],
   settingsOpen: null,
+  statusError: '',
   // Discovery
   scanning: false,
   allDiscovered: [],
@@ -66,8 +67,9 @@ function schedulePoll() {
     try {
       await refreshStatus()
       pollAttempts = 0 // reset on success
-    } catch {
+    } catch (e) {
       pollAttempts++
+      s.statusError = e?.message || 'Status update failed'
     }
     polling = false
     schedulePoll()
@@ -79,9 +81,10 @@ export async function init() {
   try {
     await refreshStatus()
     pollAttempts = 0
-  } catch {
+  } catch (e) {
     // Initial load failed — still schedule retry polling
     pollAttempts = 1
+    s.statusError = e?.message || 'Status update failed'
   }
   await loadFrequency()
   schedulePoll()
@@ -102,6 +105,7 @@ export async function refreshStatus() {
   const params = { tab: s.tab }
   if (s.tab === 'log' && s.logLastTs) params.since = s.logLastTs
   const d = await api('GET', '/elero/api/status', params)
+  s.statusError = ''
 
   s.covers = (d.covers || []).map(c => ({
     ...c,

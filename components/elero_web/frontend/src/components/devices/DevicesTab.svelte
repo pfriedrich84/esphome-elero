@@ -4,6 +4,12 @@
   import LightCard from './LightCard.svelte'
 </script>
 
+{#if s.statusError}
+  <div class="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
+    Status update failed: {s.statusError}. Retrying automatically.
+  </div>
+{/if}
+
 {#if s.covers.length === 0 && s.lights.length === 0}
   <div class="flex flex-col items-center justify-center py-16 text-gray-500 dark:text-gray-400">
     <svg class="w-12 h-12 mb-4 text-gray-300 dark:text-gray-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
