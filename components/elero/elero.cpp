@@ -521,21 +521,31 @@ void Elero::advance_delivery_coordinators_() {
 
   const uint32_t now = millis();
   std::lock_guard<std::mutex> lock(this->delivery_coordinators_mutex_);
+  std::vector<ProfileDeliveryCoordinator *> profiles;
+  profiles.reserve(this->delivery_coordinators_.size());
   bool urgent_waiting = false;
-  for (const auto &entry : this->delivery_coordinators_)
+  for (const auto &entry : this->delivery_coordinators_) {
+    profiles.push_back(entry.second.get());
     urgent_waiting = urgent_waiting || entry.second->has_urgent(now);
+  }
 
-  for (auto &entry : this->delivery_coordinators_) {
-    if (!delivery_profile_is_eligible(urgent_waiting, entry.second->has_urgent(now)))
+  const size_t profile_count = profiles.size();
+  const size_t start = profile_count == 0 ? 0 : this->next_delivery_profile_index_ % profile_count;
+  for (size_t offset = 0; offset < profile_count; offset++) {
+    const size_t index = delivery_profile_round_robin_index(start, offset, profile_count);
+    auto *coordinator = profiles[index];
+    if (!delivery_profile_is_eligible(urgent_waiting, coordinator->has_urgent(now)))
       continue;
-    entry.second->advance(
+    coordinator->advance(
         now, this->send_delay_, this->send_repeats_,
         [this](const t_elero_command &packet, bool priority) {
           t_elero_command copy = packet;
           return this->submit_delivery_packet_(&copy, priority);
         });
-    if (this->tx_admission_.busy())
+    if (this->tx_admission_.busy()) {
+      this->next_delivery_profile_index_ = (index + 1) % profile_count;
       break;
+    }
   }
 }
 

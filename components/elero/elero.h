@@ -705,6 +705,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   uint16_t raw_packet_write_idx_{0};
   std::map<uint32_t, RuntimeBlind> runtime_blinds_; // protected by state_mutex_
   std::map<DeliveryProfileKey, std::unique_ptr<ProfileDeliveryCoordinator>> delivery_coordinators_;
+  size_t next_delivery_profile_index_{0};
   mutable std::mutex delivery_coordinators_mutex_;
   std::set<uint32_t> own_remote_addresses_;  // remote addrs we TX as — echoes are filtered
 

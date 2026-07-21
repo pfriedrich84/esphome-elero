@@ -70,6 +70,22 @@ TEST(RadioTxAdmission, AllowsOnlyOneRadioWideTransaction) {
   EXPECT_TRUE(delivery_profile_is_eligible(false, false));
   EXPECT_FALSE(delivery_profile_is_eligible(true, false));
   EXPECT_TRUE(delivery_profile_is_eligible(true, true));
+  EXPECT_EQ(delivery_profile_round_robin_index(0, 0, 3), 0u);
+  EXPECT_EQ(delivery_profile_round_robin_index(0, 2, 3), 2u);
+  EXPECT_EQ(delivery_profile_round_robin_index(2, 1, 3), 0u);
+  EXPECT_EQ(delivery_profile_round_robin_index(4, 0, 3), 1u);
+  EXPECT_EQ(delivery_profile_round_robin_index(0, 0, 0), 0u);
+}
+
+TEST(RadioTxAdmission, RoundRobinCursorRotatesAfterEachAdmission) {
+  std::vector<size_t> admitted;
+  size_t next = 0;
+  for (size_t i = 0; i < 6; i++) {
+    const size_t index = delivery_profile_round_robin_index(next, 0, 3);
+    admitted.push_back(index);
+    next = (index + 1) % 3;
+  }
+  EXPECT_EQ(admitted, (std::vector<size_t>{0, 1, 2, 0, 1, 2}));
 }
 
 TEST(CommandProfile, NativeGroupRequiresEverySharedRfField) {

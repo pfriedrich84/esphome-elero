@@ -8,6 +8,7 @@
 // it never overtakes an older packet already admitted to a physical queue.
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 
 namespace esphome {
@@ -15,6 +16,10 @@ namespace elero {
 
 inline bool delivery_profile_is_eligible(bool urgent_waiting, bool profile_has_urgent) {
   return !urgent_waiting || profile_has_urgent;
+}
+
+inline size_t delivery_profile_round_robin_index(size_t start, size_t offset, size_t count) {
+  return count == 0 ? 0 : (start + offset) % count;
 }
 
 class RadioTxAdmission {

@@ -211,7 +211,7 @@ The radio uses a simplified 3-state non-blocking TX state machine on Core 0:
 IDLE → TRANSMITTING → COOLDOWN → IDLE
 ```
 
-RadioLib's `standby()` handles the IDLE transition synchronously in `send_command_internal_()`. See `TxState` enum in `elero.h`. Commands are transferred through FreeRTOS queues (normal + priority) and consumed by Core 0, so Core 1 callers no longer need to check `is_tx_idle()` before enqueuing. A radio-wide transaction admission gate allows only one command packet to be queued or in flight at a time. Once its real TX completion returns, the hub selects waiting STOP work across all delivery profiles before admitting normal work. The separate queues therefore affect latency but cannot reorder two admitted command packets.
+RadioLib's `standby()` handles the IDLE transition synchronously in `send_command_internal_()`. See `TxState` enum in `elero.h`. Commands are transferred through FreeRTOS queues (normal + priority) and consumed by Core 0, so Core 1 callers no longer need to check `is_tx_idle()` before enqueuing. A radio-wide transaction admission gate allows only one command packet to be queued or in flight at a time. Once its real TX completion returns, the hub selects waiting STOP work across all delivery profiles before admitting normal work. Within each priority class, a rotating cursor resumes after the last admitted profile so a low-sorted profile cannot monopolize the radio with repeats or queued intents. The separate queues therefore affect latency but cannot reorder two admitted command packets.
 
 TX initiation in `send_command_internal_()` (Core 0):
 1. `radio_->standby()` — blocks until CC1101 is in IDLE (~1 ms)
