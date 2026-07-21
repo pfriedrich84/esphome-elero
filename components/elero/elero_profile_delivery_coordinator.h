@@ -161,6 +161,23 @@ class ProfileDeliveryCoordinator {
     return dispatch.outcome;
   }
 
+  bool has_urgent(uint32_t now) const {
+    std::lock_guard<std::mutex> lock(this->mutex_);
+    for (const auto *lane : this->lanes_) {
+      if (lane->not_before_ms_ != 0 && static_cast<int32_t>(now - lane->not_before_ms_) < 0)
+        continue;
+      for (size_t i = 0; i < lane->queue_.size; i++) {
+        const auto &entry = lane->queue_.entries[i];
+        if (entry.intent.kind == CommandIntentKind::STOP)
+          return true;
+        // Match select_next_locked_(): only CHECK may cross deferred work.
+        if (!entry.deferred || entry.intent.kind != CommandIntentKind::CHECK)
+          break;
+      }
+    }
+    return false;
+  }
+
   uint8_t counter() const {
     std::lock_guard<std::mutex> lock(this->mutex_);
     return this->counter_;

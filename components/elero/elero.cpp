@@ -516,38 +516,39 @@ void Elero::unregister_command_delivery(CommandIntentDelivery *delivery) {
 }
 
 void Elero::advance_delivery_coordinators_() {
+  if (this->tx_admission_.busy())
+    return;
+
   const uint32_t now = millis();
   std::lock_guard<std::mutex> lock(this->delivery_coordinators_mutex_);
+  bool urgent_waiting = false;
+  for (const auto &entry : this->delivery_coordinators_)
+    urgent_waiting = urgent_waiting || entry.second->has_urgent(now);
+
   for (auto &entry : this->delivery_coordinators_) {
+    if (!delivery_profile_is_eligible(urgent_waiting, entry.second->has_urgent(now)))
+      continue;
     entry.second->advance(
         now, this->send_delay_, this->send_repeats_,
         [this](const t_elero_command &packet, bool priority) {
           t_elero_command copy = packet;
           return this->submit_delivery_packet_(&copy, priority);
         });
+    if (this->tx_admission_.busy())
+      break;
   }
-}
-
-// ---------------------------------------------------------------------------
-// send_command — public API (Core 1): enqueue a TX command to the radio task
-// ---------------------------------------------------------------------------
-SendResult Elero::send_command(t_elero_command *cmd) {
-  return this->enqueue_tx_(cmd, false, 0);
-}
-
-// ---------------------------------------------------------------------------
-// send_command_priority — public API (Core 1): enqueue a high-priority TX
-// command (e.g. stop) that bypasses the normal queue.
-// ---------------------------------------------------------------------------
-SendResult Elero::send_command_priority(t_elero_command *cmd) {
-  return this->enqueue_tx_(cmd, true, 0);
 }
 
 PacketSubmission Elero::submit_delivery_packet_(t_elero_command *cmd, bool priority) {
   uint32_t transaction_id = this->next_tx_transaction_id_.fetch_add(1, std::memory_order_relaxed);
   if (transaction_id == 0)
     transaction_id = this->next_tx_transaction_id_.fetch_add(1, std::memory_order_relaxed);
+  if (!this->tx_admission_.try_reserve(transaction_id))
+    return PacketSubmission(SendResult::QUEUE_FULL);
+
   const SendResult result = this->enqueue_tx_(cmd, priority, transaction_id);
+  if (result != SendResult::OK)
+    this->tx_admission_.release(transaction_id);
   return result == SendResult::OK ? PacketSubmission::queued(transaction_id)
                                   : PacketSubmission(result);
 }
@@ -591,15 +592,23 @@ void Elero::publish_tx_completion_(uint32_t transaction_id, bool success) {
 }
 
 void Elero::dispatch_tx_completion_(const TxCompletion &completion) {
-  std::lock_guard<std::mutex> lock(this->delivery_coordinators_mutex_);
-  for (auto &entry : this->delivery_coordinators_) {
-    const DeliveryOutcome outcome = entry.second->complete(
-        completion.transaction_id, completion.success, completion.completed_at_ms);
-    if (outcome.event != DeliveryEvent::IDLE)
-      return;
+  bool handled = false;
+  {
+    std::lock_guard<std::mutex> lock(this->delivery_coordinators_mutex_);
+    for (auto &entry : this->delivery_coordinators_) {
+      const DeliveryOutcome outcome = entry.second->complete(
+          completion.transaction_id, completion.success, completion.completed_at_ms);
+      if (outcome.event != DeliveryEvent::IDLE) {
+        handled = true;
+        break;
+      }
+    }
   }
-  ESP_LOGV(TAG, "Ignoring stale TX completion for transaction %lu",
-           static_cast<unsigned long>(completion.transaction_id));
+  const bool admitted = this->tx_admission_.release(completion.transaction_id);
+  if (!handled || !admitted) {
+    ESP_LOGV(TAG, "Ignoring stale TX completion for transaction %lu",
+             static_cast<unsigned long>(completion.transaction_id));
+  }
 }
 
 void Elero::increment_parser_drop_count(const char *reason) {
