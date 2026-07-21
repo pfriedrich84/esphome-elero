@@ -17,6 +17,7 @@ static const size_t ELERO_WEB_MAX_REQUEST_BODY = 2048;
 
 // json_escape() and parse_addr_url() are in elero_web_utils.h (extracted for testability)
 using web_utils::json_escape;
+using web_utils::format_json_float;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 

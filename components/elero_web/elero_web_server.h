@@ -2,6 +2,7 @@
 
 #include "esphome/core/component.h"
 #include "esphome/components/web_server_base/web_server_base.h"
+#include "elero_web_utils.h"
 #include "../elero/elero.h"
 #include <atomic>
 #include <map>
