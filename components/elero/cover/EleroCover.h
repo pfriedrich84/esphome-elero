@@ -47,6 +47,7 @@ class EleroCover : public cover::Cover, public Component, public EleroBlindBase 
   // EleroBlindBase web API helpers — identity & state
   std::string get_blind_name() const override { return std::string(this->get_name().c_str()); }
   float get_cover_position() const override { return this->position; }
+  bool has_trusted_cover_position() const override { return this->position_trusted_for_redundancy_; }
   const char *get_operation_str() const override {
     return this->current_operation == cover::COVER_OPERATION_IDLE ? "idle" :
            this->current_operation == cover::COVER_OPERATION_OPENING ? "opening" : "closing";

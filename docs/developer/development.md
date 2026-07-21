@@ -697,6 +697,8 @@ Optional parameters:
 
 Requires 2–10 distinct members. Compatible RF profiles and command mappings use a dedicated native multi-destination lane on the shared profile coordinator. Incompatible groups atomically admit semantic intents to every member lane or to none. Native final failure falls back only before any repeat was accepted; partial native delivery never automatically fans out. Accepted group intents are mirrored into every member's ESPHome cover state so Home Assistant receives the same optimistic operation and dead-reckoned position updates as it does for individual control.
 
+Group position support is advertised only when every member has both `open_duration` and `close_duration`. For intermediate targets, the group requires known finite member positions. Compatible native groups use one synchronized multi-destination OPEN or CLOSE only when every moving member needs the same direction and no member is already at the requested target; each member then schedules its own calibrated STOP, so different travel durations remain safe. Mixed directions or incompatible RF profiles use atomic per-member movement intents. Unknown positions are rejected and immediate member status polls are requested instead of guessing. Stored receiver commands such as `0x44` are not treated as universal group-position semantics without hardware packet captures.
+
 ### Web UI (`elero_web`)
 
 ```yaml

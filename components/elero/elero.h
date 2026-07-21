@@ -306,6 +306,7 @@ class EleroBlindBase {
   // Web API helpers — identity & state
   virtual std::string get_blind_name() const = 0;
   virtual float get_cover_position() const = 0;
+  virtual bool has_trusted_cover_position() const = 0;
   virtual const char *get_operation_str() const = 0;
   virtual uint32_t get_last_seen_ms() const = 0;
   virtual float get_last_rssi() const = 0;
