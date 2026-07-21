@@ -189,7 +189,7 @@ Core 0: Radio Task (FreeRTOS, priority 19, 8KB stack)
 Core 1: ESPHome Main Loop (Elero::loop())
   ├─ Drain tx_completion_queue_ — apply actual RF outcomes to delivery coordinators
   ├─ Drain rx_queue_ via dispatch_rx_result_()  — route to covers/lights/sensors
-  ├─ send_command()         — queue producer (enqueues RadioMessage to tx_queue_)
+  ├─ submit_delivery_packet_() — radio-wide admission and RadioMessage enqueue
   ├─ advance_delivery_coordinators_() — profile-scoped ordering/counters for all command lanes
   ├─ poll_runtime_blinds_() — periodic status checks
   └─ recompute_runtime_positions_()  — dead-reckoning position updates
@@ -211,7 +211,7 @@ The radio uses a simplified 3-state non-blocking TX state machine on Core 0:
 IDLE → TRANSMITTING → COOLDOWN → IDLE
 ```
 
-RadioLib's `standby()` handles the IDLE transition synchronously in `send_command_internal_()`. See `TxState` enum in `elero.h`. Commands are buffered in FreeRTOS queues (normal + priority) and consumed by Core 0, so Core 1 callers no longer need to check `is_tx_idle()` before enqueuing.
+RadioLib's `standby()` handles the IDLE transition synchronously in `send_command_internal_()`. See `TxState` enum in `elero.h`. Commands are transferred through FreeRTOS queues (normal + priority) and consumed by Core 0, so Core 1 callers no longer need to check `is_tx_idle()` before enqueuing. A radio-wide transaction admission gate allows only one command packet to be queued or in flight at a time. Once its real TX completion returns, the hub selects waiting STOP work across all delivery profiles before admitting normal work. Within each priority class, a rotating cursor resumes after the last admitted profile so a low-sorted profile cannot monopolize the radio with repeats or queued intents. The separate queues therefore affect latency but cannot reorder two admitted command packets.
 
 TX initiation in `send_command_internal_()` (Core 0):
 1. `radio_->standby()` — blocks until CC1101 is in IDLE (~1 ms)
@@ -219,7 +219,7 @@ TX initiation in `send_command_internal_()` (Core 0):
 3. Load TX FIFO via burst write
 4. Issue `STX` strobe → state transitions to `TRANSMITTING`
 
-TX completion is detected via the `tx_done_` ISR flag (fast path) or by polling MARCSTATE (fallback) — when it leaves TX, the CC1101 has auto-transitioned to RX via MCSM1 TXOFF_MODE. Core 0 then publishes the transaction result to `tx_completion_queue_`. Delivery coordinators count repeats and advance rolling counters only after this result; timed cover position and light dimming start from the first successful RF completion timestamp rather than the earlier Core 1 queue-admission time.
+TX completion is detected via the `tx_done_` ISR flag (fast path) or by polling MARCSTATE (fallback) — when it leaves TX, the CC1101 has auto-transitioned to RX via MCSM1 TXOFF_MODE. Core 0 then publishes the transaction result to `tx_completion_queue_`. Core 1 releases radio-wide admission only for the matching transaction. Delivery coordinators count repeats and advance rolling counters only after this result; timed cover position and light dimming start from the first successful RF completion timestamp rather than the earlier Core 1 queue-admission time.
 
 ### Interrupt handling
 
@@ -229,7 +229,7 @@ Two separate `std::atomic<bool>` flags handle GDO0 ISR signals: `rx_ready_` (set
 
 The CC1101 can enter unrecoverable states (RXFIFO_OVERFLOW, stuck IDLE) during TX operations. Several mechanisms prevent and recover from these:
 
-- **FIFO flush before TX** — `send_command()` uses `standby()` to enter IDLE, then flushes both TX and RX FIFOs. The RX flush discards any partial packet data from the reception that SIDLE interrupted.
+- **FIFO flush before TX** — `send_command_internal_()` uses `standby()` to enter IDLE, then flushes both TX and RX FIFOs. The RX flush discards any partial packet data from the reception that SIDLE interrupted.
 - **No SFTX after TX completion** — The CC1101 auto-transitions to RX via MCSM1 TXOFF_MODE after TX. Issuing SFTX in this state is invalid per the CC1101 datasheet (only valid in IDLE or TXFIFO_UNDERFLOW) and can corrupt radio state.
 - **Post-TX FIFO health check** — After COOLDOWN, before resuming normal RX, the code reads RXBYTES to detect overflow or pending data that arrived during TX.
 - **Escalating radio watchdog** (`check_radio_state_()`, every 5 s) — Reads CC1101 MARCSTATE and applies 3-level recovery within a 60-second window: L1 = flush FIFO (up to 3×), L2 = full chip reset (up to 3×), L3 = mark permanently failed. Stuck IDLE is handled separately with a simple SRX restart. Only runs when TX is idle.
@@ -242,7 +242,7 @@ The CC1101 can enter unrecoverable states (RXFIFO_OVERFLOW, stuck IDLE) during T
 2. When the CC1101 signals a received packet (GDO0 interrupt), the ISR routes to `rx_ready_` (RX mode) or `tx_done_` (TX mode) based on `radio_mode_`.
 3. The radio task (Core 0) calls `process_rx()` when TX is idle — reads FIFO, decodes, decrypts, builds an `RxResult`, and pushes it to `rx_queue_`.
 4. `Elero::loop()` (Core 1) drains `rx_queue_` via `dispatch_rx_result_()` — routes decoded packets to covers/lights/sensors/discovery/runtime blinds.
-5. `EleroCover::loop()` / `EleroLight::loop()` (Core 1) handle polling timers and drain command queues by calling `parent_->send_command()` (normal) or `parent_->send_command_priority()` (stop commands), which enqueues a `RadioMessage` to `tx_queue_` or `tx_priority_queue_`.
+5. `Elero::advance_delivery_coordinators_()` (Core 1) selects urgent STOP work before normal work, reserves radio-wide admission, and enqueues one `RadioMessage` to `tx_priority_queue_` or `tx_queue_`. Cover/light loops only submit semantic intents to their delivery lanes.
 6. The radio task (Core 0) drains `tx_priority_queue_` first, then `tx_queue_`, and executes `send_command_internal_()` — the actual SPI TX.
 7. The radio task advances the TX state machine and runs `check_radio_state_()` for periodic health monitoring.
 
@@ -263,8 +263,6 @@ The implementation is split across three `.cpp` files (all part of the same `Ele
 Critical public API:
 - `register_cover(EleroBlindBase*)` — called by each `EleroCover` at setup
 - `register_light(EleroLightBase*)` — called by each `EleroLight` at setup
-- `send_command(t_elero_command*)` → `SendResult` — encodes, encrypts, and transmits a command via normal TX queue
-- `send_command_priority(t_elero_command*)` — priority TX queue for time-critical commands (e.g. stop), bypasses the normal queue
 - `is_tx_idle()` — check if TX state machine is ready for a new command
 - `get_tx_queue_depth()` — current normal TX queue depth (for dynamic latency compensation)
 - `increment_stop_urgent()` / `decrement_stop_urgent()` / `is_stop_urgent()` — atomic counter for multi-cover auto-stop coordination; other covers defer non-stop TX while urgent
@@ -286,7 +284,7 @@ Discovery and runtime:
 
 Radio health:
 - `check_radio_state_()` — periodic watchdog (every 5 s); recovers RXFIFO_OVERFLOW, stuck IDLE, and unexpected MARCSTATE
-- FIFO flush in `send_command()` via `standby()` + SFTX/SFRX — prevents stale data from corrupting post-TX RX
+- FIFO flush in `send_command_internal_()` via `standby()` + SFTX/SFRX — prevents stale data from corrupting post-TX RX
 - Post-TX FIFO health check in `COOLDOWN→IDLE` transition — detects overflow/pending data missed during TX
 
 Hub-level diagnostic sensors (auto-generated when `auto_sensors: true`, default):
@@ -341,7 +339,7 @@ State constants (`ELERO_STATE_*`): `UNKNOWN`, `TOP`, `BOTTOM`, `INTERMEDIATE`, `
 Key enums:
 - `RadioMode` — half-duplex radio mode (`RX`, `TX`) — tracked on Core 0 only, used by ISR to route GDO0 signals
 - `TxState` — TX state machine states (`IDLE`, `TRANSMITTING`, `COOLDOWN`)
-- `SendResult` — return type of `send_command()` (`OK`, `QUEUE_FULL`, `FAILED`) — lets callers distinguish transient queue-full from permanent SPI failure
+- `SendResult` — internal queue-submission result (`OK`, `QUEUE_FULL`, `FAILED`) used by command delivery to distinguish transient congestion from permanent SPI failure
 - `DeviceType` — device classification (`COVER = 0`, `LIGHT = 1`)
 
 Key structs:
@@ -980,9 +978,9 @@ The `tests/configs/compile_test.yaml` includes system monitoring sensors for Hom
 - **Using `web_server:` instead of `web_server_base:`**: Adding `web_server:` to your YAML re-enables the default ESPHome entity UI at `/`. Use `web_server_base:` (or rely on its auto-load via `elero_web`) to serve only the Elero UI at `/elero`. Navigating to `/` will redirect automatically to `/elero`.
 - **Position tracking**: Leave `open_duration` and `close_duration` at `0s` if you only need open/close without position — setting incorrect durations causes wrong position estimates. Both must be set or both zero (enforced by `_validate_duration_consistency`).
 - **Poll interval `never`**: Set `poll_interval: never` for blinds that reliably push state updates (avoids unnecessary RF traffic). Internally this maps to `uint32_t` max (4 294 967 295 ms).
-- **TX busy**: `send_command()` and `send_command_priority()` return `false` when the respective FreeRTOS queue is full. Callers should handle the rejection (the `tx_drop_count` diagnostic counter tracks dropped commands).
+- **TX busy**: radio-wide admission allows one queued/in-flight command. Additional coordinator submissions receive `QUEUE_FULL` semantics without consuming retry budget until the matching completion releases admission.
 - **CC1101 SFTX/SFRX validity**: SFTX is only valid in IDLE or TXFIFO_UNDERFLOW states; SFRX is only valid in IDLE or RXFIFO_OVERFLOW states (per CC1101 datasheet). Issuing these strobes in other states silently corrupts radio state. The TX state machine must respect this.
-- **RX FIFO stale data after TX**: When `standby()` interrupts an in-progress packet reception, partial data remains in the RX FIFO. `send_command()` flushes both FIFOs after entering IDLE to prevent `process_rx()` from misinterpreting stale data after TX completes.
+- **RX FIFO stale data after TX**: When `standby()` interrupts an in-progress packet reception, partial data remains in the RX FIFO. `send_command_internal_()` flushes both FIFOs after entering IDLE to prevent `process_rx()` from misinterpreting stale data after TX completes.
 - **RXFIFO_OVERFLOW during TX**: While TX is active, `process_rx()` does not run, so RX FIFO overflow goes undetected until the post-TX FIFO health check or the 5-second radio watchdog catches it.
 - **Command queue overflow**: Each blind's command queue is capped at `ELERO_MAX_COMMAND_QUEUE` (10) to prevent OOM on ESP32.
 - **ESP32-S3 compile OOM**: On memory-constrained build machines, the ESP32-S3 toolchain (`xtensa-esp-elf-g++`) can be killed by the OS during parallel compilation of large `.cpp` files (symptoms: `fatal error: Killed signal terminated program cc1plus`). Fix by limiting parallel compile jobs: add `compile_process_limit: 1` under `esphome:` in your YAML config. This serializes compilation, trading speed for reliability.
