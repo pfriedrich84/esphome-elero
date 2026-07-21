@@ -157,6 +157,8 @@ void Elero::advance_tx() {
           this->tx_count_.fetch_add(1, std::memory_order_relaxed);
           ESP_LOGV(TAG, "TX complete via ISR (marc=%s, %lums)",
                    marcstate_to_string(marc), (unsigned long) elapsed);
+          this->publish_tx_completion_(this->active_tx_transaction_id_, true);
+          this->active_tx_transaction_id_ = 0;
           this->tx_state_.store(TxState::COOLDOWN, std::memory_order_release);
           this->tx_state_entered_ms_ = now;
           this->last_tx_complete_ms_ = now;
@@ -184,6 +186,8 @@ void Elero::advance_tx() {
           this->tx_count_.fetch_add(1, std::memory_order_relaxed);
           ESP_LOGV(TAG, "TX complete (marc=%s, %lums)",
                    marcstate_to_string(marc), (unsigned long) elapsed);
+          this->publish_tx_completion_(this->active_tx_transaction_id_, true);
+          this->active_tx_transaction_id_ = 0;
           this->tx_state_.store(TxState::COOLDOWN, std::memory_order_release);
           this->tx_state_entered_ms_ = now;
           this->last_tx_complete_ms_ = now;
@@ -225,6 +229,8 @@ void Elero::advance_tx() {
 // ---------------------------------------------------------------------------
 void Elero::tx_abort_() {
   this->flush_and_rx();
+  this->publish_tx_completion_(this->active_tx_transaction_id_, false);
+  this->active_tx_transaction_id_ = 0;
   this->radio_mode_.store(static_cast<uint8_t>(RadioMode::RX), std::memory_order_relaxed);
   this->tx_state_.store(TxState::IDLE, std::memory_order_release);
 }

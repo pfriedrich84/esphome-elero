@@ -226,6 +226,14 @@ struct RxResult {
 struct TxRequest {
   t_elero_command cmd;
   uint32_t enqueued_at_ms{0};
+  uint32_t transaction_id{0};
+};
+
+/// Actual radio outcome returned from Core 0 to the delivery coordinator.
+struct TxCompletion {
+  uint32_t transaction_id{0};
+  uint32_t completed_at_ms{0};
+  bool success{false};
 };
 
 /// Control message types for the radio task.
@@ -613,6 +621,10 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void advance_tx();
   void dispatch_rx_result_(const RxResult &rx);  // runs on Core 1 main loop
   void advance_delivery_coordinators_();
+  PacketSubmission submit_delivery_packet_(t_elero_command *cmd, bool priority);
+  SendResult enqueue_tx_(t_elero_command *cmd, bool priority, uint32_t transaction_id);
+  void publish_tx_completion_(uint32_t transaction_id, bool success);
+  void dispatch_tx_completion_(const TxCompletion &completion);
   void poll_runtime_blinds_();
   void recompute_runtime_positions_();
   void update_runtime_blind_direction_(RuntimeBlind &rb, uint8_t state);
@@ -767,6 +779,9 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   QueueHandle_t tx_queue_{nullptr};           // Core 1 → Core 0: RadioMessage (TX commands, control)
   QueueHandle_t tx_priority_queue_{nullptr};  // Core 1 → Core 0: high-priority TX (stop commands)
   QueueHandle_t rx_queue_{nullptr};           // Core 0 → Core 1: RxResult (decoded packets)
+  QueueHandle_t tx_completion_queue_{nullptr}; // Core 0 → Core 1: actual TX outcomes
+  std::atomic<uint32_t> next_tx_transaction_id_{1};
+  uint32_t active_tx_transaction_id_{0};       // Core 0 only while TRANSMITTING
   std::atomic<uint8_t> stop_urgent_count_{0};  // >0 when cover(s) are sending urgent stop commands
   std::atomic<bool> task_shutdown_{false};       // Core 1 sets to signal radio task to exit
   std::atomic<bool> radio_fatal_error_{false};   // Core 0 sets when SPI permanently fails

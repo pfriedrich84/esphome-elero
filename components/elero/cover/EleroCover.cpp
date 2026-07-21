@@ -185,12 +185,19 @@ bool EleroCover::is_at_target() {
 
 void EleroCover::handle_delivery_outcome_(const DeliveryOutcome &outcome) {
   const bool packet_accepted = delivery_packet_was_accepted(outcome.event);
-  if (should_start_timed_action(this->pending_movement_start_, this->pending_movement_kind_, outcome)) {
+  const bool transmitted_movement = outcome.first_transmission &&
+      (outcome.intent.kind == CommandIntentKind::OPEN ||
+       outcome.intent.kind == CommandIntentKind::CLOSE);
+  if (transmitted_movement ||
+      should_start_timed_action(this->pending_movement_start_, this->pending_movement_kind_, outcome)) {
     const auto operation = outcome.intent.kind == CommandIntentKind::OPEN
                                ? COVER_OPERATION_OPENING
                                : COVER_OPERATION_CLOSING;
-    this->pending_movement_start_ = false;
-    this->begin_movement_tracking_(operation, millis());
+    if (this->pending_movement_kind_ == outcome.intent.kind)
+      this->pending_movement_start_ = false;
+    this->begin_movement_tracking_(operation, outcome.transmitted_at_ms != 0
+                                                 ? outcome.transmitted_at_ms
+                                                 : millis());
   }
 
   const bool first_stop_accepted = this->pending_stop_transition_ &&
@@ -600,7 +607,8 @@ void EleroCover::handle_group_delivery_outcome(const DeliveryOutcome &outcome) {
   }
   const bool terminal_failure = outcome.event == DeliveryEvent::DROPPED ||
       outcome.event == DeliveryEvent::STALE_CLEARED ||
-      (outcome.event == DeliveryEvent::FALLBACK_MEMBER_DROPPED && outcome.queue_size == 0);
+      (outcome.event == DeliveryEvent::FALLBACK_MEMBER_DROPPED &&
+       (outcome.fallback_member || outcome.queue_size == 0));
   if (!terminal_failure)
     return;
   if (outcome.intent.kind == CommandIntentKind::STOP && this->pending_stop_transition_) {

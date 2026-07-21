@@ -161,8 +161,12 @@ void EleroGroupCover::prepare_member_states_(const std::vector<CommandIntent> &i
 }
 
 void EleroGroupCover::handle_native_outcome_(const DeliveryOutcome &outcome) {
-  for (auto *member : this->members_)
-    member->handle_group_delivery_outcome(outcome);
+  if (outcome.fallback_member && outcome.fallback_member_index < this->members_.size()) {
+    this->members_[outcome.fallback_member_index]->handle_group_delivery_outcome(outcome);
+  } else {
+    for (auto *member : this->members_)
+      member->handle_group_delivery_outcome(outcome);
+  }
   if (outcome.event == DeliveryEvent::DROPPED ||
       outcome.event == DeliveryEvent::FALLBACK_MEMBER_DROPPED) {
     this->parent_->increment_tx_drop_count();

@@ -141,9 +141,15 @@ void EleroLight::loop() {
 }
 
 void EleroLight::handle_delivery_outcome_(const DeliveryOutcome &outcome) {
-  if (should_start_timed_action(this->pending_dimming_start_, this->pending_dimming_kind_, outcome)) {
-    this->pending_dimming_start_ = false;
-    this->dimming_start_ = millis();
+  const bool transmitted_dimming = outcome.first_transmission &&
+      (outcome.intent.kind == CommandIntentKind::DIM_UP ||
+       outcome.intent.kind == CommandIntentKind::DIM_DOWN);
+  if (transmitted_dimming ||
+      should_start_timed_action(this->pending_dimming_start_, this->pending_dimming_kind_, outcome)) {
+    if (this->pending_dimming_kind_ == outcome.intent.kind)
+      this->pending_dimming_start_ = false;
+    this->dim_up_ = outcome.intent.kind == CommandIntentKind::DIM_UP;
+    this->dimming_start_ = outcome.transmitted_at_ms != 0 ? outcome.transmitted_at_ms : millis();
     this->last_recompute_time_ = this->dimming_start_;
   }
 
