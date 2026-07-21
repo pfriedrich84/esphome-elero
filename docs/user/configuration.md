@@ -343,7 +343,7 @@ elero_group:
 - Positionssteuerung der Gruppe wird nur angeboten, wenn alle Mitglieder `open_duration` und `close_duration` gesetzt haben. Für Zwischenpositionen müssen die aktuellen Positionen aller Mitglieder bekannt sein.
 - Kompatible Gruppen verwenden für Zwischenpositionen ein synchrones natives OPEN- oder CLOSE-Startpaket, wenn alle fahrenden Mitglieder dieselbe Richtung benötigen. Unterschiedliche Laufzeiten sind erlaubt: jedes Mitglied stoppt anschließend anhand seiner eigenen Laufzeit.
 - Wenn Richtungen gemischt sind oder Profile nicht kompatibel sind, werden atomare Einzelbefehle für die Mitglieder verwendet. Bei unbekannten Positionen wird die Zwischenposition abgelehnt und ein Statuspoll der Mitglieder angestoßen, statt eine Richtung zu raten.
-- Gespeicherte Empfängerbefehle wie `0x44` werden nicht automatisch als universelle Zwischenpositions-Semantik interpretiert; dafür sind hardwareseitige Packet-Captures je Empfängervariante nötig.
+- Gespeicherte Empfängerpositionen/Befehle wie `0x44` werden für Gruppen-Zwischenpositionen bewusst nicht unterstützt. Gruppen-Zwischenpositionen werden ausschließlich über zeitgesteuerte Fahrt plus STOP umgesetzt.
 - Angenommene Gruppenbefehle aktualisieren auch den Zustand der einzelnen Cover-Entities in Home Assistant (z. B. `opening`, `closing` oder `idle`); konfigurierte Laufzeiten führen deren Positionsschätzung weiter.
 - Alle Mitglieder müssen als `cover: platform: elero` konfiguriert sein.
 
