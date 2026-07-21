@@ -823,7 +823,8 @@ CI runs automatically on pushes to `main`, `dev`, `feat/**`, `fix/**`, and `docs
 | Job | What it does | Trigger |
 |-----|-------------|---------|
 | **markdown** | `python3 scripts/check_markdown_links.py` | Every push/PR |
-| **lint** | `ruff check components/` + `ruff format --check components/` | Every implementation push/PR; skipped on direct `docs/**` pushes |
+| **esphome-lint** | `ruff check components/` + `ruff format --check components/` | Every implementation push/PR; skipped on direct `docs/**` pushes |
+| **hacs-lint** | Ruff lint/format plus `compileall` for `custom_components/` | Every implementation push/PR; skipped on direct `docs/**` pushes |
 | **esphome-compile** | `esphome compile` across 8 config variants (matrix, `fail-fast: false`) | Every implementation push/PR; skipped on direct `docs/**` pushes |
 | **frontend-build** | `npm ci` + `npm run build` from `components/elero_web/frontend/`, then verifies generated `elero_web_ui.h` | Every implementation push/PR; skipped on direct `docs/**` pushes |
 | **unit-tests** | CMake configure/build plus `ctest --output-on-failure -V` | Every implementation push/PR; skipped on direct `docs/**` pushes |
@@ -866,7 +867,7 @@ This ensures compile warnings (like deprecation notices) automatically become tr
 
 The `main` branch is protected via GitHub branch protection rules:
 
-- **Required status check:** `ci-ok` must pass (gates on all CI jobs: lint, compile, frontend-build, unit-tests, python-tests)
+- **Required status check:** `ci-ok` must pass (gates on markdown, ESPHome lint, HACS lint, compile, frontend build, C++ unit tests, and Python tests)
 - **Strict mode:** PRs must be up-to-date with `main` before merging
 - **Force pushes:** blocked
 - **Branch deletion:** blocked
@@ -886,11 +887,7 @@ bash .github/scripts/protect-main.sh
 
 ### Automated (CI)
 
-The CI pipeline runs lint + 8-config compile matrix on every push. See [CI Pipeline](#ci-pipeline) above.
-
-**Planned but not yet implemented:**
-- C++ unit tests with GoogleTest (see GitHub issue #133)
-- Python schema validation tests with pytest (see GitHub issue #134)
+On implementation pushes and pull requests, CI runs ESPHome and HACS linting, the 8-config compile matrix, the frontend build, C++ unit tests with GoogleTest, and Python schema tests with pytest. Direct pushes to `docs/**` intentionally run only Markdown validation. See [CI Pipeline](#ci-pipeline) above.
 
 ### Manual Hardware Testing
 
@@ -911,7 +908,7 @@ Validation on real hardware before release:
 These rules are enforced by the `/review` Claude skill and should be checked before merging.
 
 ### Gate 1: CI Green
-All CI jobs must pass: lint clean + all 8 compile configs succeed.
+The `ci-ok` aggregate job must pass. For implementation changes this requires Markdown validation, ESPHome and HACS linting, all 8 compile configs, the frontend build, C++ unit tests, and Python tests. Direct `docs/**` pushes require Markdown validation only.
 
 ### Gate 2: Thread Safety
 - `std::atomic` loads use `std::memory_order_acquire`, stores use `std::memory_order_release`

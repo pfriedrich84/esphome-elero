@@ -19,7 +19,8 @@ Refs #
 Run the smallest relevant checks from `docs/agent/CHECKS.md` and mark what applies.
 
 - [ ] Markdown links: `python3 scripts/check_markdown_links.py`
-- [ ] Python lint/format: `ruff check components/` and `ruff format --check components/`
+- [ ] ESPHome Python lint/format: `ruff check components/` and `ruff format --check components/`
+- [ ] HACS lint/compile: Ruff checks plus `python -m compileall custom_components/`
 - [ ] Python tests: `pytest tests/python/ -v --tb=short`
 - [ ] C++ unit tests: CMake build + CTest
 - [ ] ESPHome compile fixture(s)
