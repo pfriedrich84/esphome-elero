@@ -51,7 +51,7 @@ struct DeliveryProfileKey {
 
 class ProfileDeliveryCoordinator {
  public:
-  using SubmitCallback = std::function<SendResult(const t_elero_command &, bool priority)>;
+  using SubmitCallback = std::function<PacketSubmission(const t_elero_command &, bool priority)>;
 
   explicit ProfileDeliveryCoordinator(const DeliveryProfileKey &key) : key_(key) {}
   ProfileDeliveryCoordinator(const ProfileDeliveryCoordinator &) = delete;
@@ -80,7 +80,7 @@ class ProfileDeliveryCoordinator {
     if (it == this->lanes_.end())
       return false;
     if (this->active_lane_ == delivery) {
-      if (this->accepted_repeats_ > 0)
+      if (this->accepted_repeats_ > 0 || this->pending_transaction_id_ != 0)
         this->advance_counter_();
       this->reset_active_();
     }
@@ -92,121 +92,73 @@ class ProfileDeliveryCoordinator {
 
   DeliveryOutcome advance(uint32_t now, uint32_t base_delay_ms, uint8_t required_repeats,
                           const SubmitCallback &submitter) {
-    CommandIntentDelivery::OutcomeCallback callback;
-    DeliveryOutcome outcome{};
+    AttemptDispatch dispatch{};
     {
       std::unique_lock<std::mutex> lock(this->mutex_);
       if (this->active_lane_ == nullptr && !this->select_next_locked_(now))
-        return outcome;
+        return {};
 
       auto &entry = this->active_lane_->queue_.entries[this->active_index_];
+      const CommandIntent intent = entry.intent;
+      if (this->pending_transaction_id_ != 0)
+        return this->outcome_locked_(DeliveryEvent::WAITING, intent);
+
       if ((now - entry.last_progress_ms) > ELERO_COMMAND_QUEUE_MAX_AGE_MS) {
-        const CommandIntent stale = entry.intent;
         const bool partial = this->accepted_repeats_ > 0;
         if (partial)
           this->advance_counter_();
         this->active_lane_->queue_.size = 0;
-        outcome = this->outcome_locked_(DeliveryEvent::STALE_CLEARED, stale, partial);
-        callback = this->active_lane_->outcome_callback_;
+        dispatch.outcome = this->outcome_locked_(DeliveryEvent::STALE_CLEARED, intent, partial);
+        dispatch.callback = this->active_lane_->outcome_callback_;
+        dispatch.notify = true;
         this->reset_active_();
-        lock.unlock();
-        if (callback)
-          callback(outcome);
-        return outcome;
-      }
-
-      const CommandIntent intent = entry.intent;
-      const bool urgent = intent.kind == CommandIntentKind::STOP;
-      const uint8_t shift = std::min(this->failure_count_, static_cast<uint8_t>(3));
-      const uint32_t delay = (urgent ? 0u : base_delay_ms) +
-                             (this->failure_count_ == 0 ? 0u : (10u << shift));
-      if (this->attempt_started_ && (now - this->last_attempt_ms_) <= delay)
-        return this->outcome_locked_(DeliveryEvent::WAITING, intent);
-
-      const CommandDeliveryConfig &packet_config = this->active_config_locked_(entry);
-      const t_elero_command packet = this->build_packet_(packet_config, intent);
-      const SendResult result = submitter(packet, urgent);
-      if (result == SendResult::QUEUE_FULL)
-        return this->outcome_locked_(DeliveryEvent::QUEUE_FULL, intent);
-
-      this->last_attempt_ms_ = now;
-      this->attempt_started_ = true;
-      if (result == SendResult::FAILED) {
-        this->failure_count_++;
-        if (this->failure_count_ <= ELERO_SEND_RETRIES)
-          return this->outcome_locked_(DeliveryEvent::RETRY_SCHEDULED, intent,
-                                      this->accepted_repeats_ > 0);
-
-        const bool partial = this->accepted_repeats_ > 0;
-        if (partial)
-          this->advance_counter_();
-
-        if (!entry.fallback_active && !partial && this->active_lane_->fallback_member_count_ > 0) {
-          entry.fallback_active = true;
-          entry.fallback_index = 0;
-          this->reset_attempt_state_();
-          outcome = this->outcome_locked_(DeliveryEvent::FALLBACK_STARTED, intent);
-        } else if (entry.fallback_active &&
-                   entry.fallback_index + 1 < this->active_lane_->fallback_member_count_) {
-          entry.fallback_index++;
-          this->reset_attempt_state_();
-          outcome = this->outcome_locked_(DeliveryEvent::FALLBACK_MEMBER_DROPPED, intent, partial);
-        } else {
-          const bool fallback_active = entry.fallback_active;
-          this->active_lane_->erase_at_(this->active_index_);
-          outcome = this->outcome_locked_(fallback_active
-                                              ? DeliveryEvent::FALLBACK_MEMBER_DROPPED
-                                              : DeliveryEvent::DROPPED,
-                                          intent, partial);
-          callback = this->active_lane_->outcome_callback_;
-          this->reset_active_();
-          lock.unlock();
-          if (callback)
-            callback(outcome);
-          return outcome;
-        }
-        callback = this->active_lane_->outcome_callback_;
-        lock.unlock();
-        if (callback)
-          callback(outcome);
-        return outcome;
-      }
-
-      this->failure_count_ = 0;
-      this->accepted_repeats_++;
-      entry.last_progress_ms = now;
-      const uint8_t repeats = required_repeats == 0 ? 1 : required_repeats;
-      if (this->accepted_repeats_ < repeats) {
-        outcome = this->outcome_locked_(DeliveryEvent::PACKET_ACCEPTED, intent, true);
-        callback = this->active_lane_->outcome_callback_;
-        lock.unlock();
-        if (callback)
-          callback(outcome);
-        return outcome;
-      }
-
-      this->advance_counter_();
-      this->accepted_repeats_ = 0;
-      if (entry.fallback_active &&
-          entry.fallback_index + 1 < this->active_lane_->fallback_member_count_) {
-        entry.fallback_index++;
-        this->reset_attempt_state_();
-        outcome = this->outcome_locked_(DeliveryEvent::PACKET_ACCEPTED, intent, true);
       } else {
-        this->active_lane_->erase_at_(this->active_index_);
-        outcome = this->outcome_locked_(DeliveryEvent::COMPLETED, intent);
-        callback = this->active_lane_->outcome_callback_;
-        this->reset_active_();
-        lock.unlock();
-        if (callback)
-          callback(outcome);
-        return outcome;
+        const bool urgent = intent.kind == CommandIntentKind::STOP;
+        const uint8_t shift = std::min(this->failure_count_, static_cast<uint8_t>(3));
+        const uint32_t delay = (urgent ? 0u : base_delay_ms) +
+                               (this->failure_count_ == 0 ? 0u : (10u << shift));
+        if (this->attempt_started_ && (now - this->last_attempt_ms_) <= delay)
+          return this->outcome_locked_(DeliveryEvent::WAITING, intent);
+
+        const CommandDeliveryConfig &packet_config = this->active_config_locked_(entry);
+        const PacketSubmission submission = submitter(this->build_packet_(packet_config, intent), urgent);
+        if (submission.result == SendResult::QUEUE_FULL)
+          return this->outcome_locked_(DeliveryEvent::QUEUE_FULL, intent);
+        if (submission.result == SendResult::OK && !submission.completed_inline) {
+          if (submission.transaction_id == 0)
+            dispatch = this->finish_attempt_locked_(false, now, required_repeats);
+          else {
+            this->pending_transaction_id_ = submission.transaction_id;
+            this->pending_required_repeats_ = required_repeats;
+            return this->outcome_locked_(DeliveryEvent::WAITING, intent);
+          }
+        } else {
+          dispatch = this->finish_attempt_locked_(submission.result == SendResult::OK, now,
+                                                  required_repeats);
+        }
       }
-      callback = this->active_lane_->outcome_callback_;
     }
-    if (callback)
-      callback(outcome);
-    return outcome;
+    if (dispatch.notify && dispatch.callback)
+      dispatch.callback(dispatch.outcome);
+    return dispatch.outcome;
+  }
+
+  // Complete an asynchronous packet submission after Core 0 has observed the
+  // real RF outcome. Unknown/stale transaction IDs are deliberately ignored.
+  DeliveryOutcome complete(uint32_t transaction_id, bool success, uint32_t completed_at_ms) {
+    AttemptDispatch dispatch{};
+    {
+      std::lock_guard<std::mutex> lock(this->mutex_);
+      if (transaction_id == 0 || transaction_id != this->pending_transaction_id_ ||
+          this->active_lane_ == nullptr)
+        return {};
+      this->pending_transaction_id_ = 0;
+      dispatch = this->finish_attempt_locked_(success, completed_at_ms,
+                                              this->pending_required_repeats_);
+    }
+    if (dispatch.notify && dispatch.callback)
+      dispatch.callback(dispatch.outcome);
+    return dispatch.outcome;
   }
 
   uint8_t counter() const {
@@ -221,6 +173,118 @@ class ProfileDeliveryCoordinator {
 
  private:
   friend class CommandIntentDelivery;
+
+  struct AttemptDispatch {
+    DeliveryOutcome outcome{};
+    CommandIntentDelivery::OutcomeCallback callback{};
+    bool notify{false};
+  };
+
+  AttemptDispatch finish_attempt_locked_(bool success, uint32_t completed_at_ms,
+                                          uint8_t required_repeats) {
+    AttemptDispatch dispatch{};
+    if (this->active_lane_ == nullptr)
+      return dispatch;
+
+    auto &entry = this->active_lane_->queue_.entries[this->active_index_];
+    const CommandIntent intent = entry.intent;
+    const bool fallback_member = entry.fallback_active;
+    const uint8_t fallback_member_index = entry.fallback_index;
+    this->last_attempt_ms_ = completed_at_ms;
+    this->attempt_started_ = true;
+
+    if (!success) {
+      if (this->stop_after_pending_) {
+        const bool partial = this->accepted_repeats_ > 0;
+        if (partial)
+          this->advance_counter_();
+        dispatch.callback = this->active_lane_->outcome_callback_;
+        dispatch.notify = true;
+        this->active_lane_->erase_at_(this->active_index_);
+        dispatch.outcome = this->outcome_locked_(DeliveryEvent::DROPPED, intent, partial);
+        this->reset_active_();
+        return dispatch;
+      }
+      this->failure_count_++;
+      if (this->failure_count_ <= ELERO_SEND_RETRIES) {
+        dispatch.outcome = this->outcome_locked_(DeliveryEvent::RETRY_SCHEDULED, intent,
+                                                this->accepted_repeats_ > 0);
+        return dispatch;
+      }
+
+      const bool partial = this->accepted_repeats_ > 0;
+      if (partial)
+        this->advance_counter_();
+      dispatch.callback = this->active_lane_->outcome_callback_;
+      dispatch.notify = true;
+
+      if (!entry.fallback_active && !partial && this->active_lane_->fallback_member_count_ > 0) {
+        entry.fallback_active = true;
+        entry.fallback_index = 0;
+        this->reset_attempt_state_();
+        dispatch.outcome = this->outcome_locked_(DeliveryEvent::FALLBACK_STARTED, intent);
+      } else if (entry.fallback_active &&
+                 entry.fallback_index + 1 < this->active_lane_->fallback_member_count_) {
+        entry.fallback_index++;
+        this->reset_attempt_state_();
+        dispatch.outcome = this->outcome_locked_(DeliveryEvent::FALLBACK_MEMBER_DROPPED,
+                                                intent, partial, 0, false,
+                                                fallback_member, fallback_member_index);
+      } else {
+        const bool fallback_active = entry.fallback_active;
+        this->active_lane_->erase_at_(this->active_index_);
+        dispatch.outcome = this->outcome_locked_(fallback_active
+                                                    ? DeliveryEvent::FALLBACK_MEMBER_DROPPED
+                                                    : DeliveryEvent::DROPPED,
+                                                intent, partial, 0, false,
+                                                fallback_member, fallback_member_index);
+        this->reset_active_();
+      }
+      return dispatch;
+    }
+
+    this->failure_count_ = 0;
+    const bool first_transmission = this->accepted_repeats_ == 0;
+    this->accepted_repeats_++;
+    entry.last_progress_ms = completed_at_ms;
+    dispatch.callback = this->active_lane_->outcome_callback_;
+    dispatch.notify = true;
+    if (this->stop_after_pending_) {
+      this->advance_counter_();
+      this->accepted_repeats_ = 0;
+      this->active_lane_->erase_at_(this->active_index_);
+      dispatch.outcome = this->outcome_locked_(DeliveryEvent::COMPLETED, intent, false,
+                                              completed_at_ms, first_transmission,
+                                              fallback_member, fallback_member_index);
+      this->reset_active_();
+      return dispatch;
+    }
+    const uint8_t repeats = required_repeats == 0 ? 1 : required_repeats;
+    if (this->accepted_repeats_ < repeats) {
+      dispatch.outcome = this->outcome_locked_(DeliveryEvent::PACKET_ACCEPTED, intent, true,
+                                              completed_at_ms, first_transmission,
+                                              fallback_member, fallback_member_index);
+      return dispatch;
+    }
+
+    this->advance_counter_();
+    this->accepted_repeats_ = 0;
+    if (entry.fallback_active &&
+        entry.fallback_index + 1 < this->active_lane_->fallback_member_count_) {
+      entry.fallback_index++;
+      this->reset_attempt_state_();
+      dispatch.outcome = this->outcome_locked_(DeliveryEvent::PACKET_ACCEPTED, intent, true,
+                                              completed_at_ms, first_transmission,
+                                              fallback_member, fallback_member_index);
+    } else {
+      this->active_lane_->erase_at_(this->active_index_);
+      dispatch.outcome = this->outcome_locked_(DeliveryEvent::COMPLETED, intent, false,
+                                              completed_at_ms, first_transmission,
+                                              fallback_member, fallback_member_index);
+      this->reset_active_();
+    }
+    return dispatch;
+  }
 
   bool select_next_locked_(uint32_t now) {
     CommandIntentDelivery *best = nullptr;
@@ -265,6 +329,10 @@ class ProfileDeliveryCoordinator {
   void preempt_for_stop_locked_(CommandIntentDelivery *stop_lane) {
     if (this->active_lane_ == nullptr)
       return;
+    if (this->pending_transaction_id_ != 0) {
+      this->stop_after_pending_ = true;
+      return;
+    }
     if (this->accepted_repeats_ > 0) {
       // A priority STOP cannot reuse a partially transmitted profile counter.
       // The same-lane STOP candidate replaces its queue below; a cross-lane
@@ -281,11 +349,14 @@ class ProfileDeliveryCoordinator {
     this->failure_count_ = 0;
     this->last_attempt_ms_ = 0;
     this->attempt_started_ = false;
+    this->pending_transaction_id_ = 0;
+    this->pending_required_repeats_ = 1;
   }
 
   void reset_active_() {
     this->active_lane_ = nullptr;
     this->active_index_ = 0;
+    this->stop_after_pending_ = false;
     this->reset_attempt_state_();
   }
 
@@ -311,13 +382,20 @@ class ProfileDeliveryCoordinator {
   }
 
   DeliveryOutcome outcome_locked_(DeliveryEvent event, const CommandIntent &intent,
-                                  bool partial = false) const {
+                                  bool partial = false, uint32_t transmitted_at_ms = 0,
+                                  bool first_transmission = false,
+                                  bool fallback_member = false,
+                                  uint8_t fallback_member_index = 0) const {
     DeliveryOutcome outcome{};
     outcome.event = event;
     outcome.intent = intent;
     outcome.had_partial_delivery = partial;
     outcome.accepted_repeats = this->accepted_repeats_;
     outcome.queue_size = this->active_lane_ == nullptr ? 0 : this->active_lane_->queue_.size;
+    outcome.transmitted_at_ms = transmitted_at_ms;
+    outcome.first_transmission = first_transmission;
+    outcome.fallback_member = fallback_member;
+    outcome.fallback_member_index = fallback_member_index;
     return outcome;
   }
 
@@ -332,6 +410,9 @@ class ProfileDeliveryCoordinator {
   uint8_t failure_count_{0};
   uint32_t last_attempt_ms_{0};
   bool attempt_started_{false};
+  uint32_t pending_transaction_id_{0};
+  uint8_t pending_required_repeats_{1};
+  bool stop_after_pending_{false};
 };
 
 // ---------------------------------------------------------------------------
@@ -479,6 +560,18 @@ inline IntentSubmitResult CommandIntentDelivery::submit_batch(const CommandInten
       accepted_stop = accepted_stop || intents[i].kind == CommandIntentKind::STOP;
     }
   }
+  if (accepted_stop && coordinator->active_lane_ == this &&
+      coordinator->pending_transaction_id_ != 0) {
+    // The active RF transaction can no longer be cancelled. Preserve it ahead
+    // of the replacing STOP so its completion retires the correct counter;
+    // discard only other unsent work from this lane.
+    const QueuedIntent active = this->queue_.entries[coordinator->active_index_];
+    const QueuedIntent stop = candidate.entries[0];
+    candidate.size = 2;
+    candidate.entries[0] = active;
+    candidate.entries[1] = stop;
+    coordinator->active_index_ = 0;
+  }
   if (accepted_stop)
     coordinator->preempt_for_stop_locked_(this);
   this->queue_ = candidate;
@@ -547,8 +640,17 @@ inline IntentSubmitResult CommandIntentDelivery::submit_atomic(const AtomicInten
     auto *lane = targets[i].delivery;
     auto *coordinator = lane->coordinator_;
     if (results[i] == IntentSubmitResult::ACCEPTED &&
-        targets[i].intent.kind == CommandIntentKind::STOP)
+        targets[i].intent.kind == CommandIntentKind::STOP) {
+      if (coordinator->active_lane_ == lane && coordinator->pending_transaction_id_ != 0) {
+        const QueuedIntent active = lane->queue_.entries[coordinator->active_index_];
+        const QueuedIntent stop = candidates[i].entries[0];
+        candidates[i].size = 2;
+        candidates[i].entries[0] = active;
+        candidates[i].entries[1] = stop;
+        coordinator->active_index_ = 0;
+      }
       coordinator->preempt_for_stop_locked_(lane);
+    }
     lane->queue_ = candidates[i];
     any_accepted = any_accepted || results[i] == IntentSubmitResult::ACCEPTED;
   }
@@ -568,7 +670,9 @@ inline void CommandIntentDelivery::postpone_until(uint32_t not_before_ms) {
     return;
   std::lock_guard<std::mutex> lock(this->coordinator_->mutex_);
   this->not_before_ms_ = not_before_ms;
-  if (this->coordinator_->active_lane_ == this && this->coordinator_->accepted_repeats_ == 0)
+  if (this->coordinator_->active_lane_ == this &&
+      this->coordinator_->accepted_repeats_ == 0 &&
+      this->coordinator_->pending_transaction_id_ == 0)
     this->coordinator_->reset_active_();
 }
 
@@ -577,7 +681,8 @@ inline void CommandIntentDelivery::discard_pending() {
     return;
   std::lock_guard<std::mutex> lock(this->coordinator_->mutex_);
   if (this->coordinator_->active_lane_ == this) {
-    if (this->coordinator_->accepted_repeats_ > 0)
+    if (this->coordinator_->accepted_repeats_ > 0 ||
+        this->coordinator_->pending_transaction_id_ != 0)
       this->coordinator_->advance_counter_();
     this->coordinator_->reset_active_();
   }
@@ -592,7 +697,8 @@ inline void CommandIntentDelivery::discard_checks() {
     const size_t index = i - 1;
     if (this->queue_.entries[index].intent.kind == CommandIntentKind::CHECK) {
       if (this->coordinator_->active_lane_ == this && this->coordinator_->active_index_ == index) {
-        if (this->coordinator_->accepted_repeats_ > 0)
+        if (this->coordinator_->accepted_repeats_ > 0 ||
+            this->coordinator_->pending_transaction_id_ != 0)
           this->coordinator_->advance_counter_();
         this->coordinator_->reset_active_();
       }

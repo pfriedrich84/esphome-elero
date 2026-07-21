@@ -172,6 +172,7 @@ Elero::~Elero() {
   if (this->tx_queue_) { vQueueDelete(this->tx_queue_); this->tx_queue_ = nullptr; }
   if (this->tx_priority_queue_) { vQueueDelete(this->tx_priority_queue_); this->tx_priority_queue_ = nullptr; }
   if (this->rx_queue_) { vQueueDelete(this->rx_queue_); this->rx_queue_ = nullptr; }
+  if (this->tx_completion_queue_) { vQueueDelete(this->tx_completion_queue_); this->tx_completion_queue_ = nullptr; }
 #ifdef USE_LOGGER
   // Callback-based log listener — no heap allocation to clean up.
   this->log_listener_ = nullptr;
@@ -179,24 +180,30 @@ Elero::~Elero() {
 }
 
 void Elero::loop() {
-  // Check if the radio task detected a fatal SPI error
-  if (this->radio_fatal_error_.load(std::memory_order_acquire)) {
-    if (!this->is_failed()) {
-      this->mark_failed(LOG_STR("Radio task: SPI permanently broken — check pin assignments"));
-    }
-    return;
-  }
-  // Skip all processing if SPI is permanently broken (e.g. strapping pin issue).
-  if (this->spi_failed_.load(std::memory_order_acquire))
-    return;
+  const bool radio_unavailable = this->radio_fatal_error_.load(std::memory_order_acquire) ||
+                                 this->spi_failed_.load(std::memory_order_acquire);
+  if (radio_unavailable && !this->is_failed())
+    this->mark_failed(LOG_STR("Radio task: SPI permanently broken — check pin assignments"));
 
-  // 1. Advance every remote-profile coordinator. Coordinators are the sole
+  // 1. Apply actual RF outcomes before allowing coordinators to submit more
+  //    work. Queue admission alone is not command delivery. This must also run
+  //    after a fatal radio error so the final failed transaction is released.
+  if (this->tx_completion_queue_) {
+    TxCompletion completion;
+    while (xQueueReceive(this->tx_completion_queue_, &completion, 0) == pdTRUE)
+      this->dispatch_tx_completion_(completion);
+  }
+
+  // 2. Advance every remote-profile coordinator. Coordinators are the sole
   //    owners of RF ordering and rolling counters across configured devices,
-  //    runtime devices, and compatible native groups.
+  //    runtime devices, and compatible native groups. When the radio is down,
+  //    enqueue attempts fail synchronously and exhaust the bounded retry path.
   this->advance_delivery_coordinators_();
+  if (radio_unavailable)
+    return;
   this->poll_runtime_blinds_();
 
-  // 2. Drain RX results from radio task (Core 0 → Core 1 via queue).
+  // 3. Drain RX results from radio task (Core 0 → Core 1 via queue).
   if (this->rx_queue_) {
     RxResult rx;
     uint8_t rx_drain_count = 0;
@@ -207,10 +214,10 @@ void Elero::loop() {
     }
   }
 
-  // 3. Recompute dead-reckoning positions for runtime-adopted blinds.
+  // 4. Recompute dead-reckoning positions for runtime-adopted blinds.
   this->recompute_runtime_positions_();
 
-  // 4. Publish hub-level diagnostic sensors periodically (every 30 s).
+  // 5. Publish hub-level diagnostic sensors periodically (every 30 s).
 #ifdef USE_SENSOR
   {
     uint32_t now = millis();
@@ -298,7 +305,11 @@ void Elero::radio_task_loop_() {
   if (got_msg) {
     switch (msg.type) {
       case RadioControlType::TX_COMMAND:
-        this->send_command_internal_(&msg.tx.cmd, msg.tx.enqueued_at_ms);
+        if (this->send_command_internal_(&msg.tx.cmd, msg.tx.enqueued_at_ms)) {
+          this->active_tx_transaction_id_ = msg.tx.transaction_id;
+        } else {
+          this->publish_tx_completion_(msg.tx.transaction_id, false);
+        }
         break;
       case RadioControlType::REINIT_FREQ: {
         bool ok = false;
@@ -426,7 +437,9 @@ void Elero::setup() {
   this->tx_queue_ = xQueueCreate(ELERO_TX_QUEUE_DEPTH, sizeof(RadioMessage));
   this->tx_priority_queue_ = xQueueCreate(ELERO_TX_PRIORITY_QUEUE_DEPTH, sizeof(RadioMessage));
   this->rx_queue_ = xQueueCreate(32, sizeof(RxResult));
-  if (!this->tx_queue_ || !this->tx_priority_queue_ || !this->rx_queue_) {
+  this->tx_completion_queue_ = xQueueCreate(32, sizeof(TxCompletion));
+  if (!this->tx_queue_ || !this->tx_priority_queue_ || !this->rx_queue_ ||
+      !this->tx_completion_queue_) {
     ESP_LOGE(TAG, "Failed to create FreeRTOS queues for radio task");
     this->mark_failed(LOG_STR("Failed to allocate radio task queues"));
     return;
@@ -510,7 +523,7 @@ void Elero::advance_delivery_coordinators_() {
         now, this->send_delay_, this->send_repeats_,
         [this](const t_elero_command &packet, bool priority) {
           t_elero_command copy = packet;
-          return priority ? this->send_command_priority(&copy) : this->send_command(&copy);
+          return this->submit_delivery_packet_(&copy, priority);
         });
   }
 }
@@ -519,27 +532,7 @@ void Elero::advance_delivery_coordinators_() {
 // send_command — public API (Core 1): enqueue a TX command to the radio task
 // ---------------------------------------------------------------------------
 SendResult Elero::send_command(t_elero_command *cmd) {
-  if (this->spi_failed_.load(std::memory_order_acquire))
-    return SendResult::FAILED;
-  if (!this->tx_queue_)
-    return SendResult::FAILED;
-
-  // Backward compat: single-dest callers only set blind_addr, not dest_addrs[]
-  if (cmd->num_dests <= 1 && cmd->dest_addrs[0] == 0) {
-    cmd->num_dests = 1;
-    cmd->dest_addrs[0] = cmd->blind_addr;
-  }
-
-  RadioMessage msg{};
-  msg.type = RadioControlType::TX_COMMAND;
-  msg.tx.cmd = *cmd;
-  msg.tx.enqueued_at_ms = millis();
-  if (xQueueSend(this->tx_queue_, &msg, pdMS_TO_TICKS(10)) == pdTRUE) {
-    this->observe_tx_queue_depth_();
-    return SendResult::OK;
-  }
-  ESP_LOGV(TAG, "TX queue full, will retry for 0x%06lx", static_cast<unsigned long>(cmd->blind_addr));
-  return SendResult::QUEUE_FULL;
+  return this->enqueue_tx_(cmd, false, 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -547,12 +540,26 @@ SendResult Elero::send_command(t_elero_command *cmd) {
 // command (e.g. stop) that bypasses the normal queue.
 // ---------------------------------------------------------------------------
 SendResult Elero::send_command_priority(t_elero_command *cmd) {
-  if (this->spi_failed_.load(std::memory_order_acquire))
+  return this->enqueue_tx_(cmd, true, 0);
+}
+
+PacketSubmission Elero::submit_delivery_packet_(t_elero_command *cmd, bool priority) {
+  uint32_t transaction_id = this->next_tx_transaction_id_.fetch_add(1, std::memory_order_relaxed);
+  if (transaction_id == 0)
+    transaction_id = this->next_tx_transaction_id_.fetch_add(1, std::memory_order_relaxed);
+  const SendResult result = this->enqueue_tx_(cmd, priority, transaction_id);
+  return result == SendResult::OK ? PacketSubmission::queued(transaction_id)
+                                  : PacketSubmission(result);
+}
+
+SendResult Elero::enqueue_tx_(t_elero_command *cmd, bool priority, uint32_t transaction_id) {
+  if (cmd == nullptr || this->spi_failed_.load(std::memory_order_acquire))
     return SendResult::FAILED;
-  if (!this->tx_priority_queue_)
+  QueueHandle_t queue = priority ? this->tx_priority_queue_ : this->tx_queue_;
+  if (!queue)
     return SendResult::FAILED;
 
-  // Backward compat: single-dest callers only set blind_addr, not dest_addrs[]
+  // Backward compat: single-dest callers only set blind_addr, not dest_addrs[].
   if (cmd->num_dests <= 1 && cmd->dest_addrs[0] == 0) {
     cmd->num_dests = 1;
     cmd->dest_addrs[0] = cmd->blind_addr;
@@ -562,12 +569,37 @@ SendResult Elero::send_command_priority(t_elero_command *cmd) {
   msg.type = RadioControlType::TX_COMMAND;
   msg.tx.cmd = *cmd;
   msg.tx.enqueued_at_ms = millis();
-  if (xQueueSend(this->tx_priority_queue_, &msg, pdMS_TO_TICKS(10)) == pdTRUE) {
+  msg.tx.transaction_id = transaction_id;
+  if (xQueueSend(queue, &msg, pdMS_TO_TICKS(10)) == pdTRUE) {
     this->observe_tx_queue_depth_();
     return SendResult::OK;
   }
-  ESP_LOGV(TAG, "Priority TX queue full, will retry for 0x%06lx", static_cast<unsigned long>(cmd->blind_addr));
+  ESP_LOGV(TAG, "%s TX queue full, will retry for 0x%06lx", priority ? "Priority" : "Normal",
+           static_cast<unsigned long>(cmd->blind_addr));
   return SendResult::QUEUE_FULL;
+}
+
+void Elero::publish_tx_completion_(uint32_t transaction_id, bool success) {
+  if (transaction_id == 0 || !this->tx_completion_queue_)
+    return;
+  TxCompletion completion{transaction_id, millis(), success};
+  if (xQueueSend(this->tx_completion_queue_, &completion, pdMS_TO_TICKS(10)) != pdTRUE) {
+    ESP_LOGE(TAG, "TX completion queue full for transaction %lu",
+             static_cast<unsigned long>(transaction_id));
+    this->radio_fatal_error_.store(true, std::memory_order_release);
+  }
+}
+
+void Elero::dispatch_tx_completion_(const TxCompletion &completion) {
+  std::lock_guard<std::mutex> lock(this->delivery_coordinators_mutex_);
+  for (auto &entry : this->delivery_coordinators_) {
+    const DeliveryOutcome outcome = entry.second->complete(
+        completion.transaction_id, completion.success, completion.completed_at_ms);
+    if (outcome.event != DeliveryEvent::IDLE)
+      return;
+  }
+  ESP_LOGV(TAG, "Ignoring stale TX completion for transaction %lu",
+           static_cast<unsigned long>(completion.transaction_id));
 }
 
 void Elero::increment_parser_drop_count(const char *reason) {

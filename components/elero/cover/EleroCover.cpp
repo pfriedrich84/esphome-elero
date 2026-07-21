@@ -185,12 +185,28 @@ bool EleroCover::is_at_target() {
 
 void EleroCover::handle_delivery_outcome_(const DeliveryOutcome &outcome) {
   const bool packet_accepted = delivery_packet_was_accepted(outcome.event);
-  if (should_start_timed_action(this->pending_movement_start_, this->pending_movement_kind_, outcome)) {
-    const auto operation = outcome.intent.kind == CommandIntentKind::OPEN
-                               ? COVER_OPERATION_OPENING
-                               : COVER_OPERATION_CLOSING;
-    this->pending_movement_start_ = false;
-    this->begin_movement_tracking_(operation, millis());
+  const bool is_movement = outcome.intent.kind == CommandIntentKind::OPEN ||
+                           outcome.intent.kind == CommandIntentKind::CLOSE;
+  const auto operation = outcome.intent.kind == CommandIntentKind::OPEN
+                             ? COVER_OPERATION_OPENING
+                             : COVER_OPERATION_CLOSING;
+  // A first transmission without a matching pending flag represents an older
+  // command overtaken optimistically by a queued direction change. Re-anchor
+  // only for that real direction transition; repeated same-direction commands
+  // must not discard already elapsed travel time.
+  const CommandIntentKind current_movement =
+      this->current_operation == COVER_OPERATION_OPENING ? CommandIntentKind::OPEN
+                                                         : CommandIntentKind::CLOSE;
+  const bool transmitted_direction_change = is_movement &&
+      this->current_operation != COVER_OPERATION_IDLE &&
+      should_reanchor_transmitted_action(current_movement, outcome);
+  if (transmitted_direction_change ||
+      should_start_timed_action(this->pending_movement_start_, this->pending_movement_kind_, outcome)) {
+    if (this->pending_movement_kind_ == outcome.intent.kind)
+      this->pending_movement_start_ = false;
+    this->begin_movement_tracking_(operation, outcome.transmitted_at_ms != 0
+                                                 ? outcome.transmitted_at_ms
+                                                 : millis());
   }
 
   const bool first_stop_accepted = this->pending_stop_transition_ &&
@@ -600,7 +616,8 @@ void EleroCover::handle_group_delivery_outcome(const DeliveryOutcome &outcome) {
   }
   const bool terminal_failure = outcome.event == DeliveryEvent::DROPPED ||
       outcome.event == DeliveryEvent::STALE_CLEARED ||
-      (outcome.event == DeliveryEvent::FALLBACK_MEMBER_DROPPED && outcome.queue_size == 0);
+      (outcome.event == DeliveryEvent::FALLBACK_MEMBER_DROPPED &&
+       (outcome.fallback_member || outcome.queue_size == 0));
   if (!terminal_failure)
     return;
   if (outcome.intent.kind == CommandIntentKind::STOP && this->pending_stop_transition_) {

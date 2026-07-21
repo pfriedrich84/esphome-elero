@@ -25,6 +25,9 @@ class AttachedDelivery {
                           const ProfileDeliveryCoordinator::SubmitCallback &submitter) {
     return coordinator.advance(now, delay, repeats, submitter);
   }
+  DeliveryOutcome complete(uint32_t transaction_id, bool success, uint32_t completed_at_ms) {
+    return coordinator.complete(transaction_id, success, completed_at_ms);
+  }
   size_t size() const { return delivery.size(); }
   bool empty() const { return delivery.empty(); }
   uint8_t counter() const { return coordinator.counter(); }
@@ -79,6 +82,119 @@ TEST(CommandDelivery, BuildsSemanticMultiDestinationPacketAndCompletesRepeats) {
   EXPECT_EQ(packets[1].counter, 1);
   EXPECT_EQ(packets[0].num_dests, 2);
   EXPECT_EQ(packets[0].dest_addrs[1], 0x222222u);
+  EXPECT_EQ(delivery.counter(), 2);
+}
+
+TEST(CommandDelivery, AsyncSubmissionCompletesOnlyAfterActualRadioOutcome) {
+  AttachedDelivery delivery(config());
+  ASSERT_EQ(delivery.submit({CommandIntentKind::OPEN, 0}), IntentSubmitResult::ACCEPTED);
+  int submissions = 0;
+  auto submit = [&](const t_elero_command &, bool) {
+    submissions++;
+    return PacketSubmission::queued(42);
+  };
+
+  auto queued = delivery.advance(10, 0, 1, submit);
+  EXPECT_EQ(queued.event, DeliveryEvent::WAITING);
+  EXPECT_FALSE(delivery_packet_was_accepted(queued.event));
+  EXPECT_EQ(delivery.size(), 1u);
+  EXPECT_EQ(delivery.counter(), 1);
+
+  EXPECT_EQ(delivery.advance(20, 0, 1, submit).event, DeliveryEvent::WAITING);
+  EXPECT_EQ(submissions, 1);
+
+  auto completed = delivery.complete(42, true, 25);
+  EXPECT_EQ(completed.event, DeliveryEvent::COMPLETED);
+  EXPECT_EQ(completed.transmitted_at_ms, 25u);
+  EXPECT_TRUE(completed.first_transmission);
+  EXPECT_TRUE(delivery_packet_was_accepted(completed.event));
+  EXPECT_TRUE(delivery.empty());
+  EXPECT_EQ(delivery.counter(), 2);
+}
+
+TEST(CommandDelivery, PendingMovementCompletesBeforeReplacingStop) {
+  AttachedDelivery delivery(config());
+  ASSERT_EQ(delivery.submit({CommandIntentKind::OPEN, 0}), IntentSubmitResult::ACCEPTED);
+  t_elero_command open{};
+  EXPECT_EQ(delivery.advance(10, 0, 3, [&](const auto &packet, bool priority) {
+              EXPECT_FALSE(priority);
+              open = packet;
+              return PacketSubmission::queued(10);
+            }).event,
+            DeliveryEvent::WAITING);
+
+  ASSERT_EQ(delivery.submit({CommandIntentKind::STOP, 0}, 11), IntentSubmitResult::ACCEPTED);
+  EXPECT_EQ(delivery.counter(), 1);
+  EXPECT_EQ(delivery.complete(10, true, 20).event, DeliveryEvent::COMPLETED);
+  EXPECT_EQ(open.counter, 1);
+  EXPECT_EQ(delivery.counter(), 2);
+
+  t_elero_command stop{};
+  EXPECT_EQ(delivery.advance(21, 0, 1, [&](const auto &packet, bool priority) {
+              EXPECT_TRUE(priority);
+              stop = packet;
+              return PacketSubmission::queued(11);
+            }).event,
+            DeliveryEvent::WAITING);
+  EXPECT_EQ(stop.counter, 2);
+  EXPECT_EQ(stop.payload[4], config().mapping.stop);
+  EXPECT_EQ(delivery.complete(11, true, 25).event, DeliveryEvent::COMPLETED);
+  EXPECT_TRUE(delivery.empty());
+}
+
+TEST(CommandDelivery, StopAfterFailedPendingRepeatRetiresUsedCounter) {
+  AttachedDelivery delivery(config());
+  ASSERT_EQ(delivery.submit({CommandIntentKind::OPEN, 0}), IntentSubmitResult::ACCEPTED);
+  EXPECT_EQ(delivery.advance(1, 0, 3, [](const auto &, bool) {
+              return PacketSubmission::queued(20);
+            }).event,
+            DeliveryEvent::WAITING);
+  EXPECT_EQ(delivery.complete(20, true, 2).event, DeliveryEvent::PACKET_ACCEPTED);
+  EXPECT_EQ(delivery.advance(3, 0, 3, [](const auto &, bool) {
+              return PacketSubmission::queued(21);
+            }).event,
+            DeliveryEvent::WAITING);
+
+  CommandIntentDelivery::AtomicIntentTarget target{
+      &delivery.delivery, {CommandIntentKind::STOP, 0}, false};
+  ASSERT_EQ(CommandIntentDelivery::submit_atomic(&target, 1, 4), IntentSubmitResult::ACCEPTED);
+  auto failed = delivery.complete(21, false, 5);
+  EXPECT_EQ(failed.event, DeliveryEvent::DROPPED);
+  EXPECT_TRUE(failed.had_partial_delivery);
+  EXPECT_EQ(delivery.counter(), 2);
+
+  t_elero_command stop{};
+  EXPECT_EQ(delivery.advance(6, 0, 1, [&](const auto &packet, bool priority) {
+              EXPECT_TRUE(priority);
+              stop = packet;
+              return PacketSubmission::queued(22);
+            }).event,
+            DeliveryEvent::WAITING);
+  EXPECT_EQ(stop.counter, 2);
+  EXPECT_EQ(delivery.complete(22, true, 7).event, DeliveryEvent::COMPLETED);
+}
+
+TEST(CommandDelivery, AsyncRadioFailureKeepsIntentForRetry) {
+  AttachedDelivery delivery(config());
+  ASSERT_EQ(delivery.submit({CommandIntentKind::OPEN, 0}), IntentSubmitResult::ACCEPTED);
+  EXPECT_EQ(delivery.advance(10, 0, 1, [](const auto &, bool) {
+              return PacketSubmission::queued(7);
+            }).event,
+            DeliveryEvent::WAITING);
+
+  auto failed = delivery.complete(7, false, 20);
+  EXPECT_EQ(failed.event, DeliveryEvent::RETRY_SCHEDULED);
+  EXPECT_EQ(delivery.size(), 1u);
+  EXPECT_EQ(delivery.counter(), 1);
+
+  EXPECT_EQ(delivery.advance(41, 0, 1, [](const auto &, bool) {
+              return PacketSubmission::queued(8);
+            }).event,
+            DeliveryEvent::WAITING);
+  auto completed = delivery.complete(8, true, 45);
+  EXPECT_EQ(completed.event, DeliveryEvent::COMPLETED);
+  EXPECT_EQ(completed.transmitted_at_ms, 45u);
+  EXPECT_TRUE(delivery.empty());
   EXPECT_EQ(delivery.counter(), 2);
 }
 
@@ -442,8 +558,12 @@ TEST(ProfileCoordinator, NativeFailureFallsBackInOrderBeforeAnyAcceptance) {
   for (uint32_t now : {1u, 22u, 63u, 144u})
     outcome = coordinator.advance(now, 0, 1, submit);
   EXPECT_EQ(outcome.event, DeliveryEvent::FALLBACK_STARTED);
-  coordinator.advance(145, 0, 1, submit);
-  coordinator.advance(146, 0, 1, submit);
+  auto first_fallback = coordinator.advance(145, 0, 1, submit);
+  EXPECT_TRUE(first_fallback.fallback_member);
+  EXPECT_EQ(first_fallback.fallback_member_index, 0);
+  auto second_fallback = coordinator.advance(146, 0, 1, submit);
+  EXPECT_TRUE(second_fallback.fallback_member);
+  EXPECT_EQ(second_fallback.fallback_member_index, 1);
   EXPECT_EQ(destination_counts.back(), 1);
   EXPECT_TRUE(native.empty());
   EXPECT_EQ(coordinator.counter(), 3);
@@ -501,6 +621,10 @@ TEST(TimedAction, StartsOnlyOnFirstRelevantAcceptedPacket) {
 
   outcome.event = DeliveryEvent::COMPLETED;
   EXPECT_TRUE(should_start_timed_action(true, CommandIntentKind::DIM_DOWN, outcome));
+
+  outcome.first_transmission = true;
+  EXPECT_FALSE(should_reanchor_transmitted_action(CommandIntentKind::DIM_DOWN, outcome));
+  EXPECT_TRUE(should_reanchor_transmitted_action(CommandIntentKind::DIM_UP, outcome));
 }
 
 TEST(CommandDelivery, SubmissionIsThreadSafe) {

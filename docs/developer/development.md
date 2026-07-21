@@ -187,6 +187,7 @@ Core 0: Radio Task (FreeRTOS, priority 19, 8KB stack)
   └─ RadioMessage handler   — REINIT_FREQ, START/STOP_SCAN, START/STOP_DUMP, SHUTDOWN
 
 Core 1: ESPHome Main Loop (Elero::loop())
+  ├─ Drain tx_completion_queue_ — apply actual RF outcomes to delivery coordinators
   ├─ Drain rx_queue_ via dispatch_rx_result_()  — route to covers/lights/sensors
   ├─ send_command()         — queue producer (enqueues RadioMessage to tx_queue_)
   ├─ advance_delivery_coordinators_() — profile-scoped ordering/counters for all command lanes
@@ -196,10 +197,11 @@ Core 1: ESPHome Main Loop (Elero::loop())
 
 **ALL SPI access is exclusively on Core 0** after `setup()` completes. No SPI mutex is needed because only one core touches the SPI bus.
 
-Communication between cores uses three FreeRTOS queues:
+Communication between cores uses four FreeRTOS queues:
 - `tx_queue_` (Core 1 → Core 0): 16-deep `RadioMessage` queue (normal TX commands + control)
 - `tx_priority_queue_` (Core 1 → Core 0): 8-deep `RadioMessage` queue (time-critical stop commands, drained first)
-- `rx_queue_` (Core 0 → Core 1): 16-deep `RxResult` queue (decoded RX packets)
+- `rx_queue_` (Core 0 → Core 1): 32-deep `RxResult` queue (decoded RX packets)
+- `tx_completion_queue_` (Core 0 → Core 1): 32-deep actual TX outcomes keyed by transaction ID
 
 ### Non-blocking TX state machine
 
@@ -217,7 +219,7 @@ TX initiation in `send_command_internal_()` (Core 0):
 3. Load TX FIFO via burst write
 4. Issue `STX` strobe → state transitions to `TRANSMITTING`
 
-TX completion is detected via the `tx_done_` ISR flag (fast path) or by polling MARCSTATE (fallback) — when it leaves TX, the CC1101 has auto-transitioned to RX via MCSM1 TXOFF_MODE.
+TX completion is detected via the `tx_done_` ISR flag (fast path) or by polling MARCSTATE (fallback) — when it leaves TX, the CC1101 has auto-transitioned to RX via MCSM1 TXOFF_MODE. Core 0 then publishes the transaction result to `tx_completion_queue_`. Delivery coordinators count repeats and advance rolling counters only after this result; timed cover position and light dimming start from the first successful RF completion timestamp rather than the earlier Core 1 queue-admission time.
 
 ### Interrupt handling
 

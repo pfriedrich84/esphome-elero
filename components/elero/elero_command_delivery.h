@@ -24,6 +24,28 @@ static const uint32_t ELERO_COMMAND_QUEUE_MAX_AGE_MS = 30000;
 
 enum class SendResult : uint8_t { OK, QUEUE_FULL, FAILED };
 
+// Result of handing one RF packet to the hub. Production submissions are
+// asynchronous and carry a transaction ID completed by the radio task. The
+// converting constructor keeps dependency-light tests and synchronous users
+// able to report an immediate result.
+struct PacketSubmission {
+  SendResult result{SendResult::FAILED};
+  uint32_t transaction_id{0};
+  bool completed_inline{false};
+
+  PacketSubmission() = default;
+  PacketSubmission(SendResult immediate_result)
+      : result(immediate_result), completed_inline(immediate_result == SendResult::OK) {}
+
+  static PacketSubmission queued(uint32_t transaction_id) {
+    return {SendResult::OK, transaction_id, false};
+  }
+
+ private:
+  PacketSubmission(SendResult result, uint32_t transaction_id, bool completed_inline)
+      : result(result), transaction_id(transaction_id), completed_inline(completed_inline) {}
+};
+
 typedef struct {
   uint8_t counter;
   uint32_t blind_addr;
@@ -147,6 +169,12 @@ struct DeliveryOutcome {
   bool had_partial_delivery{false};
   uint8_t accepted_repeats{0};
   uint8_t queue_size{0};
+  // Monotonic timestamp reported by Core 0 after the RF packet actually
+  // completed. Zero for queueing, waiting, and failure outcomes.
+  uint32_t transmitted_at_ms{0};
+  bool first_transmission{false};
+  bool fallback_member{false};
+  uint8_t fallback_member_index{0};
 };
 
 class ProfileDeliveryCoordinator;
