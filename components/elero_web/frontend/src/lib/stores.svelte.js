@@ -56,22 +56,35 @@ export function showToast(msg, isError = false) {
 
 // ── Polling ──────────────────────────────────────────────────────────────────
 let polling = false
-
-export async function init() {
-  await refreshInfo()
-  await refreshStatus()
-  await loadFrequency()
-  schedulePoll()
-}
+let pollAttempts = 0
 
 function schedulePoll() {
+  const delay = pollAttempts > 0 ? Math.min(3000 * Math.pow(2, pollAttempts), 30000) : 3000
   setTimeout(async () => {
     if (polling) { schedulePoll(); return }
     polling = true
-    try { await refreshStatus() } catch {}
+    try {
+      await refreshStatus()
+      pollAttempts = 0 // reset on success
+    } catch {
+      pollAttempts++
+    }
     polling = false
     schedulePoll()
-  }, 3000)
+  }, delay)
+}
+
+export async function init() {
+  await refreshInfo()
+  try {
+    await refreshStatus()
+    pollAttempts = 0
+  } catch {
+    // Initial load failed — still schedule retry polling
+    pollAttempts = 1
+  }
+  await loadFrequency()
+  schedulePoll()
 }
 
 export async function refreshInfo() {

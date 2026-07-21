@@ -37,6 +37,17 @@ inline std::string json_escape(const std::string &s) {
   return out;
 }
 
+// Format a float as valid JSON: "null" for non-finite values, otherwise %.2f
+inline void format_json_float(float v, std::string &out) {
+  if (!std::isfinite(v)) {
+    out += "null";
+  } else {
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%.2f", v);
+    out += buf;
+  }
+}
+
 inline bool parse_cover_intent(const std::string &value, CommandIntent &intent) {
   if (value == "up" || value == "open") intent = {CommandIntentKind::OPEN, 0};
   else if (value == "down" || value == "close") intent = {CommandIntentKind::CLOSE, 0};

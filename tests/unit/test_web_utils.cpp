@@ -1,8 +1,62 @@
 #include "elero_web/elero_web_utils.h"
+#include "elero_web/elero_web_server.h"
 #include <gtest/gtest.h>
+#include <cmath>
+#include <limits>
 
 using namespace esphome::elero;
 using namespace esphome::elero::web_utils;
+
+// --- json_float_format ---
+
+TEST(JsonFloatFormat, NormalValue) {
+  std::string out;
+  format_json_float(0.75f, out);
+  EXPECT_EQ(out, "0.75");
+}
+
+TEST(JsonFloatFormat, Zero) {
+  std::string out;
+  format_json_float(0.0f, out);
+  EXPECT_EQ(out, "0.00");
+}
+
+TEST(JsonFloatFormat, One) {
+  std::string out;
+  format_json_float(1.0f, out);
+  EXPECT_EQ(out, "1.00");
+}
+
+TEST(JsonFloatFormat, NanBecomesNull) {
+  std::string out;
+  format_json_float(std::numeric_limits<float>::quiet_NaN(), out);
+  EXPECT_EQ(out, "null");
+}
+
+TEST(JsonFloatFormat, PosInfBecomesNull) {
+  std::string out;
+  format_json_float(std::numeric_limits<float>::infinity(), out);
+  EXPECT_EQ(out, "null");
+}
+
+TEST(JsonFloatFormat, NegInfBecomesNull) {
+  std::string out;
+  format_json_float(-std::numeric_limits<float>::infinity(), out);
+  EXPECT_EQ(out, "null");
+}
+
+TEST(JsonFloatFormat, VerySmallValue) {
+  std::string out;
+  format_json_float(0.001f, out);
+  EXPECT_EQ(out, "0.00");
+}
+
+TEST(JsonFloatFormat, VeryLargeValue) {
+  std::string out;
+  format_json_float(1e10f, out);
+  EXPECT_NE(out, "null");
+  EXPECT_FALSE(out.empty());
+}
 
 // --- json_escape ---
 
