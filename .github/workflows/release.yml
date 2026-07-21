@@ -3,13 +3,15 @@ name: Release
 on:
   schedule:
     - cron: "0 6 * * 6"   # every Saturday at 06:00 UTC
-  workflow_dispatch:       # allow manual trigger
+  repository_dispatch:
+    types: [release]        # manual trigger from the default branch only
 
 permissions:
   contents: write
 
 jobs:
   release:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.0

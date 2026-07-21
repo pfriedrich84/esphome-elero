@@ -12,6 +12,7 @@ on:
     branches:
       - main
       - dev
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
   workflow_dispatch:
 
 concurrency:
@@ -22,6 +23,36 @@ permissions:
   contents: read
 
 jobs:
+  target-branch-policy:
+    runs-on: ubuntu-latest
+    env:
+      EVENT_NAME: ${{ github.event_name }}
+      BASE_REF: ${{ github.base_ref }}
+      HEAD_REF: ${{ github.head_ref }}
+      HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+      REPOSITORY: ${{ github.repository }}
+      IS_HOTFIX: ${{ contains(github.event.pull_request.labels.*.name, 'hotfix') }}
+    steps:
+      - name: Enforce main promotion and hotfix policy
+        run: |
+          if [[ "$EVENT_NAME" != "pull_request" || "$BASE_REF" != "main" ]]; then
+            echo "Main-target policy does not apply"
+            exit 0
+          fi
+
+          if [[ "$HEAD_REF" == "dev" && "$HEAD_REPO" == "$REPOSITORY" ]]; then
+            echo "Release promotion from dev to main"
+            exit 0
+          fi
+
+          if [[ "$IS_HOTFIX" == "true" ]]; then
+            echo "Explicitly labeled hotfix targeting main"
+            exit 0
+          fi
+
+          echo "::error::Pull requests to main must come from dev or carry the hotfix label"
+          exit 1
+
   markdown:
     runs-on: ubuntu-latest
     steps:
@@ -216,13 +247,18 @@ jobs:
 
   ci-ok:
     if: always()
-    needs: [markdown, esphome-lint, hacs-lint, esphome-compile, frontend-build, unit-tests, python-tests]
+    needs: [target-branch-policy, markdown, esphome-lint, hacs-lint, esphome-compile, frontend-build, unit-tests, python-tests]
     runs-on: ubuntu-latest
     env:
       DOCS_PUSH: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/docs/') }}
     steps:
       - name: Verify all jobs passed
         run: |
+          if [[ "${{ needs.target-branch-policy.result }}" != "success" ]]; then
+            echo "::error::Target branch policy failed"
+            exit 1
+          fi
+
           if [[ "${{ needs.markdown.result }}" != "success" ]]; then
             echo "::error::Markdown validation failed"
             exit 1

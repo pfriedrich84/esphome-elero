@@ -816,12 +816,13 @@ The typical workflow for a new installation:
 
 ## CI Pipeline
 
-CI runs automatically on pushes to `main`, `dev`, `feat/**`, `fix/**`, and `docs/**`, and on pull requests targeting `main` or `dev`. Pushes to `docs/**` run markdown validation only; full CI runs on implementation branches and PRs to `main` or `dev`. `docs/**` branches are documentation/governance-only and must not carry code, dependency, generated artifact, or runtime workflow changes. Defined in `.github/workflows/ci.yml`.
+CI runs automatically on pushes to `main`, `dev`, `feat/**`, `fix/**`, and `docs/**`, and on pull requests targeting `main` or `dev`. Normal pull requests target `dev`; only same-repository `dev` promotion PRs or PRs carrying the `hotfix` label may target `main`. Pushes to `docs/**` run markdown validation only; full CI runs on implementation branches and PRs to `main` or `dev`. `docs/**` branches are documentation/governance-only and must not carry code, dependency, generated artifact, or runtime workflow changes. Defined in `.github/workflows/ci.yml`.
 
 ### Jobs
 
 | Job | What it does | Trigger |
 |-----|-------------|---------|
+| **target-branch-policy** | Allows only same-repository `dev` promotions or `hotfix`-labeled PRs to target `main` | Every push/PR |
 | **markdown** | `python3 scripts/check_markdown_links.py` | Every push/PR |
 | **lint** | `ruff check components/` + `ruff format --check components/` | Every implementation push/PR; skipped on direct `docs/**` pushes |
 | **esphome-compile** | `esphome compile` across 8 config variants (matrix, `fail-fast: false`) | Every implementation push/PR; skipped on direct `docs/**` pushes |
@@ -864,20 +865,21 @@ This ensures compile warnings (like deprecation notices) automatically become tr
 
 ### Branch Protection
 
-The `main` branch is protected via GitHub branch protection rules:
+The `main` release branch and `dev` integration branch use the same GitHub branch protection rules:
 
-- **Required status check:** `ci-ok` must pass (gates on all CI jobs: lint, compile, frontend-build, unit-tests, python-tests)
-- **Strict mode:** PRs must be up-to-date with `main` before merging
+- **Required status check:** `ci-ok` must pass and includes the target-branch policy plus all validation jobs
+- **Strict mode:** PRs must be up-to-date with their target branch before merging
 - **Force pushes:** blocked
 - **Branch deletion:** blocked
 - **PR reviews:** not required (solo maintainer)
 - **Admin bypass:** allowed for emergencies
 
-Protection settings are codified in `.github/scripts/protect-main.sh`. To apply or update rules, run:
+Protection settings are codified in `.github/scripts/protect-main.sh`. To apply or update both branches, run:
 
 ```bash
 # Requires gh CLI authenticated as repo admin
-bash .github/scripts/protect-main.sh
+bash .github/scripts/protect-main.sh pfriedrich84/esphome-elero main
+bash .github/scripts/protect-main.sh pfriedrich84/esphome-elero dev
 ```
 
 ---
