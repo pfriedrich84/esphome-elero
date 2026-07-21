@@ -45,7 +45,7 @@ Last reviewed: 2026-07-21
 - Secret scanning and push protection are enabled in GitHub repository settings.
 - Vulnerability alerts and Dependabot security updates are enabled.
 - `.github/dependabot.yml` defines one monthly multi-ecosystem Dependabot version-update group for GitHub Actions and npm frontend dependencies with a 3-day cooldown.
-- `main` branch protection is enabled through `.github/scripts/protect-main.sh`: `ci-ok` is required, strict status checks are enabled, force pushes are blocked, and branch deletion is blocked.
+- `main` and `dev` branch protection is reproducible through `.github/scripts/protect-main.sh`: `ci-ok` is required, strict status checks are enabled, force pushes are blocked, and branch deletion is blocked.
 - Code scanning/CodeQL status is not established from repository files; GitHub API returned no analysis.
 - GitHub Actions are enabled and currently allow all actions; workflow files pin common first-party actions by major version.
 

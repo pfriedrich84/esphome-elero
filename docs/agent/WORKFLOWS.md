@@ -11,7 +11,9 @@ Use these branch names for new work so GitHub Actions CI runs predictably:
 - `fix/<short-topic>` for bug fixes.
 - `docs/<short-topic>` for documentation-only or governance cleanup work.
 
-Avoid legacy prefixes such as `feature/`, `bugfix/`, ad-hoc names, or direct work on `main` unless a maintainer explicitly requests a different branch. CI is configured for pushes to `main`, `dev`, `feat/**`, `fix/**`, and `docs/**`, plus pull requests targeting `main` or `dev`. Pushes to `docs/**` run markdown validation only; open a PR to `main` or `dev` when full CI is needed before merge. Do not carry code, dependency, generated artifact, or runtime workflow changes on `docs/**` branches. Other branch names are validated when opened as PRs to `main` or `dev`.
+Avoid legacy prefixes such as `feature/`, `bugfix/`, ad-hoc names, or direct work on `main` unless a maintainer explicitly requests a different branch. Normal feature, fix, and documentation pull requests target `dev`. Promote `dev` to `main` through a dedicated pull request for release. A direct pull request to `main` is allowed only for an urgent hotfix and must carry the `hotfix` label; CI enforces this target policy.
+
+CI is configured for pushes to `main`, `dev`, `feat/**`, `fix/**`, and `docs/**`, plus pull requests targeting `main` or `dev`. Pushes to `docs/**` run markdown validation only; open a PR to `dev` when full CI is needed before merge. Do not carry code, dependency, generated artifact, or runtime workflow changes on `docs/**` branches. Other branch names are validated when opened as PRs to `dev`.
 
 ## Standard change workflow
 
@@ -69,7 +71,8 @@ If one check fails, continue with independent checks where practical so the fina
 
 Release automation is defined in `.github/workflows/release.yml`.
 
-- Releases run weekly on Saturday at 06:00 UTC and can also be triggered manually with `workflow_dispatch`.
+- Releases run weekly on Saturday at 06:00 UTC and can also be triggered manually from the default branch with `gh api --method POST repos/pfriedrich84/esphome-elero/dispatches -f event_type=release`.
+- Manual releases use `repository_dispatch` rather than selectable-ref `workflow_dispatch`, so the active workflow always comes from `main`.
 - The workflow creates date-based tags in `YYYY-MM-NN` format only when non-merge commits exist since the previous date-based release tag.
 - Release notes are generated from conventional-commit-style prefixes (`feat`, `fix`, `perf`, `ci`/`devops`, `docs`, `refactor`/`test`).
 - The workflow needs `contents: write` and uses the repository `GITHUB_TOKEN` through the `gh` CLI to create tags and GitHub releases.
