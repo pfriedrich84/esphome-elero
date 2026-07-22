@@ -1,0 +1,87 @@
+# Example: Lilygo T-Embed CC1101 minimal setup
+# Replace Wi-Fi secrets and Elero addresses before use.
+# Board notes: docs/user/boards/lilygo-t-embed-cc1101.md
+
+esphome:
+  name: elero-lilygo
+  friendly_name: "Elero Lilygo"
+  compile_process_limit: 1
+  on_boot:
+    priority: 800
+    then:
+      - switch.turn_on: power_rail
+      - switch.turn_off: ant_sw1
+      - switch.turn_on: ant_sw0
+      - delay: 150ms
+
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: esp32s3
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+
+logger:
+  level: DEBUG
+
+api:
+
+ota:
+  - platform: esphome
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "Elero Lilygo Fallback"
+    password: !secret ap_password
+
+captive_portal:
+
+external_components:
+  - source: github://pfriedrich84/esphome-elero
+
+switch:
+  - platform: gpio
+    pin: GPIO15
+    id: power_rail
+    restore_mode: ALWAYS_ON
+
+  - platform: gpio
+    pin: GPIO47
+    id: ant_sw1
+    restore_mode: ALWAYS_OFF
+    internal: true
+
+  - platform: gpio
+    pin: GPIO48
+    id: ant_sw0
+    restore_mode: ALWAYS_ON
+    internal: true
+
+spi:
+  clk_pin: GPIO11
+  mosi_pin: GPIO9
+  miso_pin: GPIO10
+
+elero:
+  cs_pin: GPIO12
+  gdo0_pin: GPIO3
+  freq0: 0x7a
+  freq1: 0x71
+  freq2: 0x21
+
+cover:
+  - platform: elero
+    name: "Dummy"
+    blind_address: 0x000001
+    channel: 1
+    remote_address: 0x000001
+
+button:
+  - platform: elero
+    name: "Elero Start Scan"
+    scan_start: true
+  - platform: elero
+    name: "Elero Stop Scan"
+    scan_start: false

@@ -1,0 +1,15 @@
+# Example snippet: Elero cover with tilt / venetian blind support
+# Replace addresses and channel with values discovered from your remote.
+
+cover:
+  - platform: elero
+    id: cover_raffstore
+    name: "Raffstore"
+    blind_address: 0xa831e5
+    channel: 4
+    remote_address: 0xf0d008
+    supports_tilt: true
+
+    # Optional but recommended when using Home Assistant position controls.
+    open_duration: 25s
+    close_duration: 22s

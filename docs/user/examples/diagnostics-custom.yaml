@@ -1,0 +1,41 @@
+# Example snippet: custom diagnostic entity names
+# Add this to a working base configuration. Use this when the auto-generated
+# names do not fit your Home Assistant naming scheme.
+
+elero:
+  cs_pin: GPIO5
+  gdo0_pin: GPIO26
+  auto_sensors: false
+  frequency_sensor:
+    name: "Elero Radio Frequency"
+  rx_count_sensor:
+    name: "Elero Packets Received"
+  tx_count_sensor:
+    name: "Elero Packets Sent"
+  watchdog_recovery_sensor:
+    name: "Elero Watchdog Recoveries"
+  drop_crc_fail_sensor:
+    name: "Elero CRC Drops"
+  drop_too_many_dests_sensor:
+    name: "Elero Destination Drops"
+  drop_bounds_sensor:
+    name: "Elero Bounds Drops"
+  tx_queue_latency_sensor:
+    name: "Elero TX Queue Latency"
+  dispatch_latency_sensor:
+    name: "Elero Dispatch Latency"
+
+cover:
+  - platform: elero
+    id: cover_schlafzimmer
+    name: "Schlafzimmer"
+    blind_address: 0xa831e5
+    channel: 4
+    remote_address: 0xf0d008
+    auto_sensors: false
+    rssi_sensor:
+      name: "Schlafzimmer RSSI"
+    status_sensor:
+      name: "Schlafzimmer Status"
+    refresh_button:
+      name: "Schlafzimmer Refresh"
