@@ -1,0 +1,17 @@
+# Example snippet: RF discovery with Home Assistant buttons and ESPHome logs
+# Add this to a working base configuration with spi: and elero: already set.
+
+cover:
+  - platform: elero
+    name: "Dummy"
+    blind_address: 0x000001
+    channel: 1
+    remote_address: 0x000001
+
+button:
+  - platform: elero
+    name: "Elero Start Scan"
+    scan_start: true
+  - platform: elero
+    name: "Elero Stop Scan"
+    scan_start: false

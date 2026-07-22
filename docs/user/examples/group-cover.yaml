@@ -1,0 +1,25 @@
+# Example snippet: group multiple Elero covers
+# The entries in members: are ESPHome IDs, not Home Assistant entity IDs.
+
+cover:
+  - platform: elero
+    id: cover_schlafzimmer
+    name: "Schlafzimmer"
+    blind_address: 0xa831e5
+    channel: 4
+    remote_address: 0xf0d008
+
+  - platform: elero
+    id: cover_wohnzimmer
+    name: "Wohnzimmer"
+    blind_address: 0xb912f3
+    channel: 5
+    remote_address: 0xf0d008
+
+elero_group:
+  - name: "Alle Rollläden"
+    assumed_state: true
+    hide_members: false
+    members:
+      - cover_schlafzimmer
+      - cover_wohnzimmer

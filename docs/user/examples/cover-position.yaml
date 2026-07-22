@@ -1,0 +1,17 @@
+# Example snippet: one Elero cover with timed position control
+# Replace blind_address, channel, remote_address, and measured durations.
+
+cover:
+  - platform: elero
+    id: cover_schlafzimmer
+    name: "Schlafzimmer"
+    blind_address: 0xa831e5
+    channel: 4
+    remote_address: 0xf0d008
+
+    # Measure these with a stopwatch for your own shutter.
+    open_duration: 25s
+    close_duration: 22s
+
+    # Optional status polling. Use "never" to disable periodic polling.
+    poll_interval: 5min

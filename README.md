@@ -136,7 +136,8 @@ z.B.:
 - [Home Assistant Integration](docs/user/home-assistant.md) — Entities, Dashboard, Automationen
 - [Common Issues](docs/user/common-issues.md) — Troubleshooting
 - [Board Notes](docs/user/boards/README.md) — board-spezifische Hinweise
-- [example.yaml](example.yaml) — minimales Beispiel
+- [example.yaml](example.yaml) — kompaktes Beispiel
+- [User Examples](docs/user/examples/README.md) — copy-paste-nahe YAML-Beispiele
 
 ## Credits
 

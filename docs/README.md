@@ -8,7 +8,7 @@
 - [`user/home-assistant.md`](user/home-assistant.md) — Home Assistant entities, dashboard examples, automations, and Web-UI role.
 - [`user/common-issues.md`](user/common-issues.md) — symptom-based troubleshooting and setup checks.
 - [`user/boards/`](user/boards/README.md) — board-specific wiring and setup notes.
-- [`user/examples/`](user/examples/) — additional example configuration placeholders.
+- [`user/examples/`](user/examples/README.md) — copy-paste-oriented YAML examples for common setups and feature snippets.
 
 ## Developer docs
 

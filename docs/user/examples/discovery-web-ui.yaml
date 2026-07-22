@@ -1,0 +1,25 @@
+# Example snippet: RF discovery with the Elero Web-UI
+# Add this to a working base configuration with spi: and elero: already set.
+# Open http://<device-ip>/elero after flashing.
+
+cover:
+  - platform: elero
+    name: "Dummy"
+    blind_address: 0x000001
+    channel: 1
+    remote_address: 0x000001
+
+# HTTP server used by elero_web.
+# Do not use web_server: here; that would enable the default ESPHome UI at /.
+web_server_base:
+  port: 80
+
+elero_web:
+  id: elero_web_ui
+
+# Optional Home Assistant switch to enable/disable /elero at runtime.
+switch:
+  - platform: elero_web
+    name: "Elero Web UI"
+    id: elero_web_switch
+    restore_mode: RESTORE_DEFAULT_ON
