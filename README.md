@@ -653,6 +653,8 @@ entities:
 
 ## Fehlerbehebung
 
+Weitere Fehlerbilder und Diagnosepfade: [Common Issues](docs/user/common-issues.md)
+
 ### Kein Log-Output beim Drücken der Fernbedienung
 
 - **Frequenz testen**: Europäische Elero-Module verwenden meist 868 MHz, aber es gibt zwei gängige Varianten:
@@ -691,7 +693,7 @@ entities:
 
 | Board | CC1101 | Framework | Frequenz | Bewertung |
 |---|---|---|---|---|
-| **Lilygo T-Embed CC1101** | Integriert (868 MHz) | ESP-IDF | 868 MHz | Empfohlen — kompakte Bauform, TFT-Display, Rotary-Encoder |
+| **[Lilygo T-Embed CC1101](docs/user/boards/lilygo-t-embed-cc1101.md)** | Integriert (868 MHz) | ESP-IDF | 868 MHz | Empfohlen — benötigt Board-Power-/Antennen-Switch-Setup |
 | ESP32-DevKit V1 | Externes Modul | Arduino | 868 MHz | Gut |
 
 ---

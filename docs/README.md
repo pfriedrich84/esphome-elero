@@ -4,6 +4,8 @@
 
 - [`user/installation.md`](user/installation.md) — hardware, ESPHome setup, discovery, and Home Assistant integration.
 - [`user/configuration.md`](user/configuration.md) — complete YAML configuration reference and REST API notes.
+- [`user/common-issues.md`](user/common-issues.md) — symptom-based troubleshooting and setup checks.
+- [`user/boards/`](user/boards/README.md) — board-specific wiring and setup notes.
 - [`user/examples/`](user/examples/) — additional example configuration placeholders.
 
 ## Developer docs
