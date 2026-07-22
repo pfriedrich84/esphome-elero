@@ -2,8 +2,10 @@
 
 ## User docs
 
-- [`user/installation.md`](user/installation.md) — hardware, ESPHome setup, discovery, and Home Assistant integration.
+- [`user/installation.md`](user/installation.md) — hardware, ESPHome setup, first flash, and final setup walkthrough.
 - [`user/configuration.md`](user/configuration.md) — complete YAML configuration reference and REST API notes.
+- [`user/discovery.md`](user/discovery.md) — RF scan, manual log analysis, Web-UI discovery, and frequency testing.
+- [`user/home-assistant.md`](user/home-assistant.md) — Home Assistant entities, dashboard examples, automations, and Web-UI role.
 - [`user/common-issues.md`](user/common-issues.md) — symptom-based troubleshooting and setup checks.
 - [`user/boards/`](user/boards/README.md) — board-specific wiring and setup notes.
 - [`user/examples/`](user/examples/) — additional example configuration placeholders.

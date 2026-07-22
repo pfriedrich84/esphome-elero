@@ -1,74 +1,43 @@
 # Elero Remote Control Component for ESPHome
 
 > Steuere Elero Rollläden und Lichter bidirektional via ESP32 + CC1101 direkt aus Home Assistant.
-> Inklusive WebGui für RF-Scan mit Geräteerkennung und YAML-Template für die weitere Nutzung.
-> Zahlreiche Detailverbesserung (Motorquitierung, variabler Poll bei Handbedienung etc.)
+> Inklusive RF-Discovery, optionaler Web-UI mit YAML-Export, Diagnose-Sensoren,
+> Positionssteuerung, Tilt, Gruppen und Licht-Unterstützung.
 
 [![ESPHome](https://img.shields.io/badge/ESPHome-Component-blue)](https://esphome.io/)
 [![License](https://img.shields.io/badge/License-GPLv3-green)](LICENSE)
 
 ---
 
-## Inhaltsverzeichnis
-
-- [Funktionsumfang](#funktionsumfang)
-- [Voraussetzungen](#voraussetzungen)
-- [Schnellstart](#schnellstart)
-- [Konfigurationsreferenz](#konfigurationsreferenz)
-- [Blind-Adressen ermitteln](#blind-adressen-ermitteln)
-- [Positionssteuerung](#positionssteuerung)
-- [Tilt-Steuerung](#tilt-steuerung)
-- [Lichtsteuerung](#lichtsteuerung)
-- [Gruppensteuerung](#gruppensteuerung)
-- [Diagnose-Sensoren](#diagnose-sensoren)
-- [RF-Discovery (Scan)](#rf-discovery-scan)
-- [Home Assistant Integration](#home-assistant-integration)
-- [Fehlerbehebung](#fehlerbehebung)
-- [Getestete Konfigurationen](#getestete-konfigurationen)
-- [Weiterführende Dokumentation](#weiterführende-dokumentation)
-- [Credits](#credits)
-
----
-
-## Funktionsumfang
+## Features
 
 | Feature | Status |
 |---|---|
 | Rollläden hoch/runter/stopp steuern | Stabil |
-| Bidirektionale Kommunikation (Status empfangen) | Stabil |
-| Positionssteuerung (zeitbasiert) | Stabil |
-| Tilt/Kipp-Steuerung | Stabil |
-| RSSI-Signalstärke als Sensor | Stabil |
-| Blind-Status als Text-Sensor | Stabil |
-| RF-Discovery (Blinds finden) | Stabil |
-| Web-UI fuer Discovery und YAML-Export | Stabil |
-| Mehrere Blinds gleichzeitig | Stabil |
+| Bidirektionale Kommunikation mit Statusfeedback | Stabil |
+| RF-Discovery und Web-UI mit YAML-Export | Stabil |
+| Positionssteuerung und Tilt/Kipp-Unterstützung | Stabil |
+| RSSI-, Status- und Hub-Diagnose-Entities | Stabil |
+| Gruppensteuerung mehrerer Rollläden | Stabil |
+| Elero-Lichter schalten und optional dimmen | Beta |
 | TempoTel 2 Kompatibilität | Getestet |
-| Gruppensteuerung (mehrere Rollläden gleichzeitig) | Stabil |
-| Lichter schalten (Ein/Aus und Dimmen) | Beta (ungetestet) |
 
-## Voraussetzungen
+## Unterstützte Hardware
 
-### Hardware
+- **[Lilygo T-Embed CC1101](docs/user/boards/lilygo-t-embed-cc1101.md)** — ESP32-S3 mit integriertem CC1101, empfohlen.
+- **ESP32/ESP32-S3 + externes CC1101-Modul** — freie SPI-Pinwahl, 868 MHz empfohlen.
 
-- **Lilygo T-Embed CC1101** (empfohlen — ESP32-S3 mit integriertem CC1101 868 MHz, TFT-Display und Rotary-Encoder)
-- Alternativ: Beliebiger **ESP32/ESP32-S3** mit separatem **CC1101 Funkmodul** (868 MHz) via SPI
-- Bestehende Elero-Fernbedienung (z.B. TempoTel 2) zum Auslesen der Protokollwerte
-
-### Software
-
-- [ESPHome](https://esphome.io/) 2026.3.0 oder neuer
-- [Home Assistant](https://www.home-assistant.io/) (empfohlen, aber nicht zwingend)
-
-### Hinweise zur Verkabelung
-
-Bei separatem CC1101-Modul werden 5 Kabelverbindungen benötigt (SPI + GDO0). GDO2 wird **nicht** benötigt. Die Pin-Zuordnung ist frei wählbar und wird in der YAML-Konfiguration festgelegt (`cs_pin`, `gdo0_pin`, SPI-Bus). Hinweise zu Strapping-Pins und SPI-Konflikten siehe [docs/user/installation.md](docs/user/installation.md).
+Vollständige Hardware- und Flash-Anleitung: [Installation](docs/user/installation.md).
 
 ## Schnellstart
 
-### 1. ESPHome-Projekt einrichten
+1. ESPHome YAML anlegen.
+2. Board-spezifische Pins und ggf. Power-Setup eintragen.
+3. Dummy-Cover und Scan-Buttons hinzufügen.
+4. Flashen, RF-Scan starten und echte Fernbedienung betätigen.
+5. Gefundene Werte in echte Cover-/Light-Konfiguration übernehmen.
 
-Erstelle eine neue YAML-Datei (z.B. `elero-blinds.yaml`). Beispiel fuer Lilygo T-Embed CC1101:
+Minimaler Einstieg für Lilygo T-Embed CC1101:
 
 ```yaml
 esphome:
@@ -80,640 +49,99 @@ esp32:
   framework:
     type: esp-idf
 
-wifi:
-  ssid: !secret wifi_ssid
-  password: !secret wifi_password
-  ap:
-    ssid: "Elero-Blinds Fallback"
-    password: !secret ap_password
-
 logger:
   level: DEBUG
 
 api:
-  encryption:
-    key: !secret api_key
 
 ota:
   - platform: esphome
-    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
 
 external_components:
   - source: github://pfriedrich84/esphome-elero
 
-# SPI-Bus (Lilygo T-Embed CC1101 Pins)
 spi:
   clk_pin: GPIO11
-  mosi_pin: GPIO09
+  mosi_pin: GPIO9
   miso_pin: GPIO10
 
-# Elero CC1101 Hub
 elero:
   cs_pin: GPIO12
-  gdo0_pin: GPIO03
-  # Standard 868.35 MHz — alternativ freq0: 0xc0 fuer 868.95 MHz
-  freq0: 0x7a
-  freq1: 0x71
-  freq2: 0x21
+  gdo0_pin: GPIO3
 ```
 
-> **Andere Boards:** Die SPI-Pins und `cs_pin`/`gdo0_pin` muessen an das jeweilige Board angepasst werden. Siehe [docs/user/installation.md](docs/user/installation.md) fuer Details.
+> Lilygo T-Embed CC1101 benötigt auf manchen Boards zusätzlich Board-Power- und
+> Antennen-Switch-Setup. Siehe [Lilygo Board Notes](docs/user/boards/lilygo-t-embed-cc1101.md).
 
-### 2. Blind-Adressen ermitteln
-
-Füge zunächst eine Dummy-Konfiguration hinzu und aktiviere den RF-Scan:
-
-```yaml
-# Dummy-Cover (wird später mit echten Werten ersetzt)
-cover:
-  - platform: elero
-    blind_address: 0x000001
-    channel: 1
-    remote_address: 0x000001
-    name: "Dummy"
-
-# Scan-Buttons zum Entdecken
-button:
-  - platform: elero
-    name: "Elero Start Scan"
-    scan_start: true
-  - platform: elero
-    name: "Elero Stop Scan"
-    scan_start: false
-```
-
-Flashe das Gerät, öffne den Log und drücke Tasten auf deiner echten Fernbedienung. Die Adressen erscheinen im Log. Details dazu im Abschnitt [Blind-Adressen ermitteln](#blind-adressen-ermitteln).
-
-### 3. Konfiguration vervollständigen
-
-Ersetze die Dummy-Werte mit den ermittelten Adressen:
-
-```yaml
-cover:
-  - platform: elero
-    blind_address: 0xa831e5    # Adresse deines Rollos
-    channel: 4                  # Kanal
-    remote_address: 0xf0d008   # Adresse der Fernbedienung
-    name: "Schlafzimmer"
-```
-
-### 4. Flashen und testen
-
-```bash
-esphome run elero-blinds.yaml
-```
-
----
-
-## Konfigurationsreferenz
-
-### Plattform `elero` (Hub)
-
-Der zentrale Hub für die CC1101-Kommunikation.
-
-```yaml
-elero:
-  cs_pin: GPIO12         # Pflicht: SPI Chip-Select (Board-abhaengig)
-  gdo0_pin: GPIO03       # Pflicht: CC1101 GDO0 Interrupt-Pin (Board-abhaengig)
-  freq0: 0x7a            # Optional: Frequenz-Register FREQ0 (Standard: 0x7a)
-  freq1: 0x71            # Optional: Frequenz-Register FREQ1 (Standard: 0x71)
-  freq2: 0x21            # Optional: Frequenz-Register FREQ2 (Standard: 0x21)
-  send_repeats: 1        # Optional: RF-Pakete pro Befehl (1-20, Standard: 1 = keine Wiederholung)
-  send_delay: 0ms        # Optional: Pause zwischen Wiederholungen (Standard: 0ms)
-  dedup_window: 0ms      # Optional: 0ms=aus (Default), sonst z.B. 500ms für Duplikat-Unterdrückung
-```
-
-| Parameter | Typ | Pflicht | Standard | Beschreibung |
-|---|---|---|---|---|
-| `cs_pin` | GPIO-Pin | Ja | - | SPI Chip-Select Pin |
-| `gdo0_pin` | GPIO-Pin | Ja | - | CC1101 GDO0 Interrupt Pin |
-| `freq0` | Hex (0x00-0xFF) | Nein | `0x7a` | CC1101 FREQ0 Register |
-| `freq1` | Hex (0x00-0xFF) | Nein | `0x71` | CC1101 FREQ1 Register |
-| `freq2` | Hex (0x00-0xFF) | Nein | `0x21` | CC1101 FREQ2 Register |
-| `send_repeats` | Int (1-20) | Nein | `1` | RF-Pakete pro Befehl; `1` bedeutet keine Wiederholung |
-| `send_delay` | Zeitdauer | Nein | `0ms` | Pause zwischen Wiederholungen |
-| `dedup_window` | Zeitdauer | Nein | `0ms` | `0ms` deaktiviert Deduplication (Default); zum Unterdrücken von Statuspaket-Duplikaten gleicher Quelle/Zähler z.B. `500ms` setzen |
-| `auto_sensors` | Boolean | Nein | `true` | Hub-Diagnose-Sensoren automatisch erstellen |
-
-### Plattform `cover` (Rollladen)
-
-Jeder Rollladen wird als eigener Cover-Eintrag konfiguriert.
-
-```yaml
-cover:
-  - platform: elero
-    name: "Schlafzimmer"          # Pflicht
-    blind_address: 0xa831e5       # Pflicht
-    channel: 4                     # Pflicht
-    remote_address: 0xf0d008      # Pflicht
-    open_duration: 25s             # Optional: Für Positionssteuerung
-    close_duration: 22s            # Optional: Für Positionssteuerung
-    poll_interval: 5min            # Optional
-    supports_tilt: false           # Optional
-    payload_1: 0x00                # Optional
-    payload_2: 0x04                # Optional
-    pck_inf1: 0x6a                 # Optional
-    pck_inf2: 0x00                 # Optional
-    hop: 0x0a                      # Optional
-    command_up: 0x20               # Optional
-    command_down: 0x40             # Optional
-    command_stop: 0x10             # Optional
-    command_check: 0x00            # Optional
-    command_tilt: 0x24             # Optional
-```
-
-| Parameter | Typ | Pflicht | Standard | Beschreibung |
-|---|---|---|---|---|
-| `name` | String | Ja | - | Name in Home Assistant |
-| `blind_address` | Hex (24-bit) | Ja | - | Adresse des Rollladens |
-| `channel` | Int (0-255) | Ja | - | Kanal des Rollladens |
-| `remote_address` | Hex (24-bit) | Ja | - | Adresse der zu simulierenden Fernbedienung |
-| `open_duration` | Zeitdauer | Nein | `0s` | Fahrzeit zum vollständigen Öffnen |
-| `close_duration` | Zeitdauer | Nein | `0s` | Fahrzeit zum vollständigen Schließen |
-| `poll_interval` | Zeitdauer / `never` | Nein | `5min` | Status-Abfrageintervall (`never` deaktiviert; während Fahrt alle 5 s) |
-| `supports_tilt` | Boolean | Nein | `false` | Tilt/Kipp-Unterstützung aktivieren |
-| `assumed_state` | Boolean | Nein | `true` | `true` = Hoch/Runter-Buttons immer aktiv (kein Warten auf Positionsrückmeldung) |
-| `auto_sensors` | Boolean | Nein | `true` | RSSI-Sensor, Status-Text-Sensor und Refresh-Button automatisch erstellen |
-| `payload_1` | Hex (0x00-0xFF) | Nein | `0x00` | Erstes Payload-Byte |
-| `payload_2` | Hex (0x00-0xFF) | Nein | `0x04` | Zweites Payload-Byte |
-| `pck_inf1` | Hex (0x00-0xFF) | Nein | `0x6a` | Erstes Paket-Info-Byte |
-| `pck_inf2` | Hex (0x00-0xFF) | Nein | `0x00` | Zweites Paket-Info-Byte |
-| `hop` | Hex (0x00-0xFF) | Nein | `0x0a` | Hop-Byte |
-| `command_up` | Hex (0x00-0xFF) | Nein | `0x20` | Befehlscode: Hoch |
-| `command_down` | Hex (0x00-0xFF) | Nein | `0x40` | Befehlscode: Runter |
-| `command_stop` | Hex (0x00-0xFF) | Nein | `0x10` | Befehlscode: Stopp |
-| `command_check` | Hex (0x00-0xFF) | Nein | `0x00` | Befehlscode: Status abfragen |
-| `command_tilt` | Hex (0x00-0xFF) | Nein | `0x24` | Befehlscode: Tilt/Kipp |
-
-### Plattform `sensor` (RSSI Signalstärke)
-
-Zeigt die Empfangsstärke (RSSI) des letzten empfangenen Pakets eines bestimmten Rollladens in dBm.
-
-```yaml
-sensor:
-  - platform: elero
-    blind_address: 0xa831e5
-    name: "Schlafzimmer RSSI"
-```
-
-| Parameter | Typ | Pflicht | Standard | Beschreibung |
-|---|---|---|---|---|
-| `blind_address` | Hex (24-bit) | Ja | - | Adresse des Rollladens |
-| `name` | String | Ja | - | Name in Home Assistant |
-
-### Plattform `text_sensor` (Status-Text)
-
-Zeigt den aktuellen Blind-Status als lesbaren Text.
-
-```yaml
-text_sensor:
-  - platform: elero
-    blind_address: 0xa831e5
-    name: "Schlafzimmer Status"
-```
-
-Mögliche Werte: `top`, `bottom`, `intermediate`, `tilt`, `top_tilt`, `bottom_tilt`, `moving_up`, `moving_down`, `start_moving_up`, `start_moving_down`, `stopped`, `blocking`, `overheated`, `timeout`, `on`, `unknown`
-
-| Parameter | Typ | Pflicht | Standard | Beschreibung |
-|---|---|---|---|---|
-| `blind_address` | Hex (24-bit) | Ja | - | Adresse des Rollladens |
-| `name` | String | Ja | - | Name in Home Assistant |
-
-### Plattform `button` (RF-Scan)
-
-Startet/stoppt einen RF-Discovery-Scan zum Finden von Elero-Geräten.
-
-```yaml
-button:
-  - platform: elero
-    name: "Elero Start Scan"
-    scan_start: true
-  - platform: elero
-    name: "Elero Stop Scan"
-    scan_start: false
-```
-
-| Parameter | Typ | Pflicht | Standard | Beschreibung |
-|---|---|---|---|---|
-| `scan_start` | Boolean | Nein | `true` | `true` = Scan starten, `false` = Scan stoppen |
-| `name` | String | Ja | - | Name in Home Assistant |
-
----
+Für externe CC1101-Module und vollständige Beispiele siehe
+[Installation](docs/user/installation.md) und [example.yaml](example.yaml).
 
 ## Blind-Adressen ermitteln
 
-Es gibt zwei Methoden, um die notwendigen Protokollwerte zu ermitteln:
+Zum Auslesen von `blind_address`, `remote_address`, `channel` und optionalen
+Protokollwerten gibt es drei Wege:
 
-### Methode 1: RF-Scan (empfohlen)
+- Web-UI unter `/elero` mit YAML-Export
+- RF-Scan per Home-Assistant-Buttons und ESPHome-Log
+- manuelle Log-Analyse der Rohpakete
 
-1. Flashe die Konfiguration mit Scan-Buttons und Dummy-Cover
-2. Öffne den ESPHome-Log (`esphome logs elero-blinds.yaml`)
-3. Drücke den "Start Scan"-Button in Home Assistant
-4. Betätige die physische Elero-Fernbedienung (Taste hoch/runter/stopp)
-5. Drücke den "Stop Scan"-Button
-6. Im Log erscheinen die entdeckten Geräte:
-   ```
-   [I][elero:xxx]: Discovered new device: addr=0xa831e5, remote=0xf0d008, ch=4, rssi=-52.0
-   [I][elero.button:xxx]: Stopped Elero RF scan. Discovered 1 device(s).
-   [I][elero.button:xxx]:   addr=0xa831e5 remote=0xf0d008 ch=4 rssi=-52.0 state=top seen=3
-   ```
+Details: [Discovery: Blind-Adressen und RF-Scan](docs/user/discovery.md).
 
-### Methode 2: Log-Analyse (manuell)
+## Konfiguration
 
-1. Flashe die Konfiguration mit einem Dummy-Cover
-2. Aktiviere Log-Level `DEBUG`
-3. Drücke eine Taste auf der Fernbedienung und beobachte das Log:
+Die vollständige YAML-Referenz liegt in [docs/user/configuration.md](docs/user/configuration.md):
 
-   ```
-   rcv'd: len=29, cnt=45, typ=0x6a, typ2=0x00, hop=0x0a, syst=0x01, chl=09,
-          src=0x908bef, bwd=0x908bef, fwd=0x908bef, #dst=01, dst=0xe039c9,
-          rssi=-84.0, lqi=47, crc= 1,
-          payload=[0x00 0x04 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00]
-   ```
+- Hub: `elero`
+- Covers: `cover: platform: elero`
+- Lights: `light: platform: elero`
+- Gruppen: `elero_group`
+- RSSI- und Status-Entities
+- Scan-Buttons
+- Web-UI und REST-API
+- Diagnose-Sensoren
 
-4. Suche die Zeile, in der `src`, `bwd` und `fwd` identisch sind. Daraus liest du ab:
+## Home Assistant
 
-   | Log-Feld | Konfiguration | Wert im Beispiel |
-   |---|---|---|
-   | `src` / `bwd` / `fwd` | `remote_address` | `0x908bef` |
-   | `dst` | `blind_address` | `0xe039c9` |
-   | `chl` | `channel` | `9` |
-   | `typ` | `pck_inf1` | `0x6a` |
-   | `typ2` | `pck_inf2` | `0x00` |
-   | `hop` | `hop` | `0x0a` |
-   | `payload[0]` | `payload_1` | `0x00` |
-   | `payload[1]` | `payload_2` | `0x04` |
+Die ESPHome-API erzeugt Covers, Lights, Diagnose-Sensoren, Text-Sensoren und
+Buttons direkt in Home Assistant. Dashboard- und Automation-Beispiele stehen in
+[Home Assistant Integration](docs/user/home-assistant.md).
 
-5. Drücke Hoch/Runter/Stopp und prüfe das 5. Payload-Byte (payload[4]):
-   - **Hoch** (`0x20`): `payload=[... 0x20 ...]`
-   - **Runter** (`0x40`): `payload=[... 0x40 ...]`
-   - **Stopp** (`0x10`): `payload=[... 0x10 ...]`
+## Troubleshooting
 
-> **Wichtig:** Nur Pakete mit `len=29` sind relevant. Pakete mit `len=27` sind interne Nachrichten.
+Häufige Symptome und erste Checks stehen in [Common Issues](docs/user/common-issues.md),
+z.B.:
 
----
-
-## Positionssteuerung
-
-Die Positionssteuerung basiert auf Zeitmessung: Der Rollladen wird nach einer berechneten Fahrzeit gestoppt. Dafür müssen `open_duration` und `close_duration` konfiguriert sein.
-
-```yaml
-cover:
-  - platform: elero
-    # ...
-    open_duration: 25s    # Zeit für komplettes Öffnen
-    close_duration: 22s   # Zeit für komplettes Schließen
-```
-
-**Kalibrierung:**
-1. Stoppe den Rollladen in der vollständig geschlossenen Position
-2. Messe die Zeit bis zur vollständigen Öffnung mit einer Stoppuhr
-3. Messe die Zeit für das vollständige Schließen
-4. Trage die Werte ein
-
-> **Hinweis:** Die Positionssteuerung ist experimentell. Bei vollständig offen oder geschlossen wird kein Stopp-Befehl gesendet, da der Rollladen selbst an den Endpositionen stoppt.
-
----
-
-## Tilt-Steuerung
-
-Für Rollläden mit Kipp-/Tilt-Funktion (z.B. Raffstore):
-
-```yaml
-cover:
-  - platform: elero
-    # ...
-    supports_tilt: true
-```
-
-- Jeder Tilt-Wert > 0 sendet den Tilt-Befehl
-- Tilt auf 0 setzen sendet aktuell keinen Befehl
-
----
-
-## Lichtsteuerung
-
-Elero-Lichtempfänger werden als `light`-Plattform konfiguriert und erscheinen in Home Assistant als vollständige Licht-Entitäten.
-
-### Einfaches Ein/Aus-Licht
-
-Ohne `dim_duration` (oder `dim_duration: 0s`) wird nur Ein/Aus unterstützt:
-
-```yaml
-light:
-  - platform: elero
-    name: "Hauslicht"
-    blind_address: 0xc41a2b
-    channel: 6
-    remote_address: 0xf0d008
-```
-
-### Dimmbar (Helligkeitssteuerung)
-
-Mit `dim_duration` wird die Zeit angegeben, die der Empfänger benötigt, um von 0 % auf 100 % zu dimmen. Home Assistant zeigt dann einen Helligkeitsregler:
-
-```yaml
-light:
-  - platform: elero
-    name: "Wohnzimmerlicht"
-    blind_address: 0xc41a2b
-    channel: 6
-    remote_address: 0xf0d008
-    dim_duration: 5s
-```
-
-- Der richtige Wert für `dim_duration` hängt vom jeweiligen Empfänger ab — typisch sind 3–8 Sekunden.
-- Alle Protokoll-Parameter (`blind_address`, `channel`, `remote_address`, `payload_*`, `pck_inf*`, `hop`) werden genauso ermittelt wie bei einem Rollladen (via RF-Log oder Web-UI-Discovery).
-- Vollständige Parameterliste: [Konfigurationsreferenz](docs/user/configuration.md#plattform-light)
-
----
-
-## Gruppensteuerung
-
-Mehrere Rollläden können zu einer Gruppe zusammengefasst werden. Die Gruppe erscheint in Home Assistant als eigenes Cover-Entity und steuert alle Mitglieder gleichzeitig.
-
-```yaml
-cover:
-  - platform: elero
-    id: cover_schlafzimmer  # diese ESPHome-ID wird unten in members verwendet
-    name: "Schlafzimmer"
-    blind_address: 0xa831e5
-    channel: 4
-    remote_address: 0xf0d008
-
-  - platform: elero
-    id: cover_wohnzimmer
-    name: "Wohnzimmer"
-    blind_address: 0xb912f3
-    channel: 4
-    remote_address: 0xf0d008
-
-elero_group:
-  - name: "Alle Rollläden"
-    assumed_state: true
-    hide_members: false
-    members:
-      - cover_schlafzimmer
-      - cover_wohnzimmer
-```
-
-| Parameter | Typ | Pflicht | Standard | Beschreibung |
-|---|---|---|---|---|
-| `name` | String | Ja | - | Anzeigename in Home Assistant |
-| `members` | Liste von Cover-IDs | Ja | - | Mitglieder der Gruppe (2–10 Covers) |
-| `assumed_state` | Boolean | Nein | `true` | `true` = Hoch/Runter-Buttons immer aktiv (keine Positionsrückmeldung von der Gruppe) |
-| `hide_members` | Boolean | Nein | `false` | Blendet alle Mitglieder global als einzelne Home-Assistant-Entities aus (`internal`). |
-
-**Hinweise:**
-- Die Einträge unter `members` sind die ESPHome-IDs der einzelnen `cover: platform: elero`-Blöcke (`id:`), nicht `name`, `blind_address` oder die Home-Assistant-Entity-ID.
-- Vergib für jedes Gruppenmitglied am besten explizit eine stabile `id:` wie `cover_schlafzimmer`; diese ID wird dann unverändert in `members` referenziert.
-- Eine Gruppe benötigt 2–10 unterschiedliche Mitglieder; doppelte IDs werden bei der YAML-Validierung abgelehnt.
-- Nur vollständig kompatible RF- und Befehlsprofile verwenden ein natives Multi-Destination-RF-Paket. Inkompatible Gruppen nehmen semantische Command Intents atomar in alle Mitglieds-Queues oder in keine auf.
-- Ein nativer endgültiger Fehler fällt nur ohne bereits akzeptierte Wiederholung auf Mitglieder zurück; nach teilweiser nativer Übertragung wird nicht automatisch gefächert.
-- Angenommene Gruppenbefehle aktualisieren auch die Zustände und Positionsschätzungen der einzelnen Cover-Entities in Home Assistant.
-- Wenn ESPHome beim Kompilieren meldet, dass ein Mitglied nicht aufgelöst werden kann, prüfe `id:` und Schreibweise in `members`.
-- Vollständige Parameterliste: [Konfigurationsreferenz](docs/user/configuration.md#plattform-elero_group-gruppensteuerung)
-
----
-
-## Diagnose-Sensoren
-
-### Hub-Diagnose-Sensoren
-
-Bei `auto_sensors: true` (Standard) erzeugt der Hub Diagnose-Sensoren für Funkzustand und Latenz:
-
-| Sensor | Einheit | Beschreibung |
-|---|---|---|
-| Elero Frequency | MHz | Aktuelle CC1101-Frequenz |
-| Elero RX Count | - | Empfangene Pakete (gesamt) |
-| Elero TX Count | - | Gesendete Pakete (gesamt) |
-| Elero Watchdog Recovery Count | - | Radio-Watchdog-Wiederherstellungen |
-| Elero Drop CRC Fail | - | Verworfene RF-Pakete mit ungültigem CRC |
-| Elero Drop Too Many Destinations | - | Verworfene RF-Pakete mit zu vielen Zieladressen |
-| Elero Drop Bounds | - | Verworfene RF-Pakete mit ungültiger Länge/Grenze |
-| Elero TX Queue Latency | ms | Letzte Wartezeit vom Einreihen bis zum TX-Start |
-| Elero Dispatch Latency | ms | Letzte Verteilzeit vom RX-Decode bis zu Entity-Updates |
-
-Weitere Diagnosewerte wie `drop_stale_counter`, `tx_queue_latency_max_ms`, `tx_queue_depth_max` und `dispatch_latency_max_ms` stehen in `/elero/api/status`. Die Zähler gelten pro Boot und können mit `/elero/api/diagnostics/reset` zurückgesetzt werden.
-
-Diese können mit `auto_sensors: false` am Hub deaktiviert oder individuell überschrieben werden (`frequency_sensor`, `rx_count_sensor`, `tx_count_sensor`, `watchdog_recovery_sensor`, `drop_crc_fail_sensor`, `drop_too_many_dests_sensor`, `drop_bounds_sensor`, `tx_queue_latency_sensor`, `dispatch_latency_sensor`).
-
-### Cover-/Light-Diagnose (auto_sensors)
-
-Bei `auto_sensors: true` (Standard) erzeugt jeder Cover und jedes Light automatisch drei Diagnose-Entitäten:
-
-| Entity | Typ | Beschreibung |
-|---|---|---|
-| *Name* RSSI | Sensor (dBm) | Signalstärke des letzten empfangenen Pakets |
-| *Name* Status | Text Sensor | Aktueller Blind-/Licht-Status als Text |
-| *Name* Refresh | Button (Diagnose) | Sendet einen CHECK-Befehl zur sofortigen Statusabfrage |
-
-Diese können mit `auto_sensors: false` am Cover/Light deaktiviert oder individuell überschrieben werden (`rssi_sensor`, `status_sensor`, `refresh_button`).
-
-### RSSI-Sensor
-
-Überwacht die Signalstärke der Kommunikation:
-
-```yaml
-sensor:
-  - platform: elero
-    blind_address: 0xa831e5
-    name: "Schlafzimmer RSSI"
-```
-
-**Richtwerte:**
-| RSSI (dBm) | Bewertung |
-|---|---|
-| > -50 | Ausgezeichnet |
-| -50 bis -70 | Gut |
-| -70 bis -85 | Akzeptabel |
-| < -85 | Schwach / unzuverlässig |
-
-### Status-Text-Sensor
-
-Zeigt den letzten empfangenen Blind-Status als Text:
-
-```yaml
-text_sensor:
-  - platform: elero
-    blind_address: 0xa831e5
-    name: "Schlafzimmer Status"
-```
-
-Kann für Home-Assistant-Automationen genutzt werden:
-
-```yaml
-# Home Assistant Automation Beispiel
-automation:
-  - alias: "Warnung bei Rollladen-Blockade"
-    trigger:
-      - platform: state
-        entity_id: text_sensor.schlafzimmer_status
-        to: "blocking"
-    action:
-      - service: notify.notify
-        data:
-          message: "Rollladen Schlafzimmer ist blockiert!"
-```
-
----
-
-## RF-Discovery (Scan)
-
-Der RF-Scan empfängt alle Elero-Nachrichten im Funkbereich und protokolliert sie:
-
-```yaml
-button:
-  - platform: elero
-    name: "Elero Start Scan"
-    scan_start: true
-  - platform: elero
-    name: "Elero Stop Scan"
-    scan_start: false
-```
-
-**Ablauf:**
-1. "Start Scan" drücken (löscht vorherige Ergebnisse)
-2. Alle Fernbedienungen und Rollläden im Bereich betätigen
-3. "Stop Scan" drücken
-4. Ergebnisse im ESPHome-Log ablesen
-
-Pro entdecktem Gerät werden protokolliert: Adresse, Remote-Adresse, Kanal, RSSI, Status, Häufigkeit.
-
-### Web-UI (Alternative zum Log)
-
-Fuer eine komfortablere Geräteerkennung steht eine optionale Web-Oberflaeche bereit:
-
-```yaml
-# HTTP-Server (wird von elero_web automatisch geladen)
-# Nicht web_server: verwenden – das aktiviert die Standard-UI unter / wieder
-web_server_base:
-  port: 80
-
-# Elero Web-UI aktivieren
-elero_web:
-```
-
-Danach ist die Oberflaeche unter `http://<device-ip>/elero` erreichbar. Funktionen:
-
-- **RF-Scan steuern** - Scan starten/stoppen direkt im Browser
-- **Gefundene Geraete anzeigen** - Adresse, Kanal, Remote, RSSI, Status, Hop
-- **Konfigurierte Covers anzeigen** - Name, Position, Betriebszustand
-- **YAML exportieren** - Generiert Copy-Paste-fertige YAML-Konfiguration
-
-Die Web-UI bietet zudem eine REST-API unter `/elero/api/*` mit CORS-Unterstuetzung fuer Cross-Origin-Zugriff.
-
-#### Web-UI zur Laufzeit deaktivieren
-
-Optional kann die Web-UI zur Laufzeit über einen Switch aktiviert/deaktiviert werden:
-
-```yaml
-switch:
-  - platform: elero_web
-    name: "Elero Web UI"
-    restore_mode: RESTORE_DEFAULT_ON
-```
-
-Wenn der Switch ausgeschaltet ist, antworten alle `/elero`-Endpoints mit HTTP 503. Dies ist nützlich, um unerwünschten Zugriff zu blockieren, ohne die Komponente neu zu flashen.
-
----
-
-## Home Assistant Integration
-
-Nach dem Flashen erscheint das Gerät automatisch in Home Assistant (wenn `api:` konfiguriert ist). Dieser ESPHome-Weg bleibt der empfohlene Standardpfad: RF-Steuerung, Statusfeedback, Discovery und Diagnose laufen firmware-nah auf dem ESP32 + CC1101.
-
-Die ESPHome-Entities:
-
-| Entity-Typ | Beispiel | Beschreibung |
-|---|---|---|
-| `cover.schlafzimmer` | Cover | Hoch/Runter/Stopp, Position, Tilt |
-| `cover.alle_rolllaeden` | Cover (Gruppe) | Steuert mehrere Covers gleichzeitig |
-| `light.wohnzimmerlicht` | Light | Ein/Aus, optional Helligkeit |
-| `sensor.schlafzimmer_rssi` | Sensor | Signalstärke in dBm (auto-generiert) |
-| `text_sensor.schlafzimmer_status` | Text Sensor | Aktueller Status (auto-generiert) |
-| `button.schlafzimmer_refresh` | Button (Diagnose) | Sofortige Statusabfrage (auto-generiert) |
-| `button.elero_start_scan` | Button | RF-Scan starten |
-| `button.elero_stop_scan` | Button | RF-Scan stoppen |
-
-### Dashboard-Karte
-
-```yaml
-type: entities
-title: Elero Rollläden
-entities:
-  - entity: cover.schlafzimmer
-  - entity: sensor.schlafzimmer_rssi
-  - entity: text_sensor.schlafzimmer_status
-  - type: divider
-  - entity: button.elero_start_scan
-  - entity: button.elero_stop_scan
-```
-
----
-
-## Fehlerbehebung
-
-Weitere Fehlerbilder und Diagnosepfade: [Common Issues](docs/user/common-issues.md)
-
-### Kein Log-Output beim Drücken der Fernbedienung
-
-- **Frequenz testen**: Europäische Elero-Module verwenden meist 868 MHz, aber es gibt zwei gängige Varianten:
-  - **Standard (868.35 MHz):** `freq0: 0x7a` ← **versuche zuerst diese**
-  - **Alternative (868.95 MHz):** `freq0: 0xc0` ← falls obige nicht funktioniert
-  - Die Frequenz kann auch zur Laufzeit ueber die Web-UI getestet werden (`/elero/api/frequency/set_mhz`)
-- **Verkabelung prüfen** (bei externem CC1101-Modul): Alle SPI-Pins korrekt? 3.3V stabil?
-
-### Rollladen reagiert nicht auf Befehle
-
-- Alle Werte sorgfältig mit der echten Fernbedienung vergleichen
-- Alle Werte außer `cnt` müssen exakt übereinstimmen
-- `blind_address` und `remote_address` nicht vertauscht?
-
-### Schwaches Signal / unzuverlässige Steuerung
-
-- RSSI-Sensor hinzufügen und beobachten
-- Werte > -70 dBm sind typischerweise gut
-- CC1101-Antenne repositionieren
-- 868 MHz Module haben deutlich bessere Reichweite als 433 MHz
-
-### Blind meldet BLOCKING oder OVERHEATED
-
-- Das sind Fehlerzustände des Rollladen-Motors
-- Den Rollladen physisch prüfen (Blockade, Überhitzung)
-- Die Komponente loggt Warnungen für diese Zustände
-
-### ESP32 startet nicht / Bootloop
-
-- Bei externem CC1101: SPI-Pins nicht mit Strapping-GPIOs belegen (ESP32: GPIO0, GPIO2, GPIO12, GPIO15; ESP32-S3: GPIO0, GPIO3, GPIO45, GPIO46)
-- Ausreichend Strom (mindestens 500mA) sicherstellen
-
----
+- `SPI Status: FAILED — CC1101 communication broken`
+- keine RF-Pakete beim Drücken der Fernbedienung
+- ESP32-S3 Compile-OOM
+- schwaches Signal oder unzuverlässige Steuerung
 
 ## Getestete Konfigurationen
 
-| Board | CC1101 | Framework | Frequenz | Bewertung |
+| Board | CC1101 | Framework | Frequenz | Hinweise |
 |---|---|---|---|---|
-| **[Lilygo T-Embed CC1101](docs/user/boards/lilygo-t-embed-cc1101.md)** | Integriert (868 MHz) | ESP-IDF | 868 MHz | Empfohlen — benötigt Board-Power-/Antennen-Switch-Setup |
-| ESP32-DevKit V1 | Externes Modul | Arduino | 868 MHz | Gut |
+| **[Lilygo T-Embed CC1101](docs/user/boards/lilygo-t-embed-cc1101.md)** | Integriert (868 MHz) | ESP-IDF | 868 MHz | Empfohlen; Board-Power-/Antennen-Switch beachten |
+| ESP32-DevKit V1 | Externes Modul | Arduino | 868 MHz | Gut; sichere SPI-Pins wählen |
 
----
+## Dokumentation
 
-## Weiterführende Dokumentation
-
-- [docs/README.md](docs/README.md) - Dokumentationsindex für User-, Developer- und Agent-Dokumente
-- [docs/user/installation.md](docs/user/installation.md) - Detaillierte Schritt-für-Schritt Installationsanleitung
-- [docs/user/configuration.md](docs/user/configuration.md) - Vollständige Konfigurationsreferenz mit Beispielen
-- [docs/developer/architecture.md](docs/developer/architecture.md) - Architektur- und Modul-Seams
-- [AGENTS.md](AGENTS.md) - Tool-neutrale Hinweise für Coding-Agents
-- [example.yaml](example.yaml) - Minimales Beispiel
-- [docs/user/examples/](docs/user/examples/) - Weitere Beispielkonfigurationen
-
----
+- [docs/README.md](docs/README.md) — Dokumentationsindex
+- [Installation](docs/user/installation.md) — Hardware, ESPHome Setup und Erstinstallation
+- [Konfigurationsreferenz](docs/user/configuration.md) — vollständige YAML-Referenz
+- [Discovery](docs/user/discovery.md) — RF-Scan, Log-Analyse, Web-UI und Frequenztest
+- [Home Assistant Integration](docs/user/home-assistant.md) — Entities, Dashboard, Automationen
+- [Common Issues](docs/user/common-issues.md) — Troubleshooting
+- [Board Notes](docs/user/boards/README.md) — board-spezifische Hinweise
+- [example.yaml](example.yaml) — minimales Beispiel
 
 ## Credits
 
 Dieses Projekt basiert auf der Arbeit von:
 
-- [QuadCorei8085/elero_protocol](https://github.com/QuadCorei8085/elero_protocol) (MIT) - Verschlüsselungs-/Entschlüsselungsstrukturen
-- [stanleypa/eleropy](https://github.com/stanleypa/eleropy) (GPLv3) - Fernbedienungs-Handling
-- [andyboeh/esphome-elero](https://github.com/pfriedrich84/esphome-elero) - Grundlage für diese Steuerung, wobei deses Repo ein nahezu vollständiger Rebuild ist
+- [QuadCorei8085/elero_protocol](https://github.com/QuadCorei8085/elero_protocol) (MIT) — Verschlüsselungs-/Entschlüsselungsstrukturen
+- [stanleypa/eleropy](https://github.com/stanleypa/eleropy) (GPLv3) — Fernbedienungs-Handling
+- [andyboeh/esphome-elero](https://github.com/pfriedrich84/esphome-elero) — Grundlage für diese Steuerung, wobei dieses Repo ein nahezu vollständiger Rebuild ist
