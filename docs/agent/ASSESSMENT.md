@@ -1,6 +1,6 @@
 # Repository Governance Assessment
 
-Last reviewed: 2026-07-21
+Last reviewed: 2026-07-23
 
 ## Maturity summary
 
@@ -29,13 +29,13 @@ Last reviewed: 2026-07-21
 - Refreshed the active frontend lockfile, verified `npm ci`, and switched frontend CI to lockfile-based installs.
 - Documented external documentation/Context7 expectations for dependency-sensitive changes.
 - Documented frontend dependency workflow and noted lockfile drift risk.
+- Removed the inactive Alpine.js legacy frontend and its obsolete npm dependency surface.
 
 ## Structure audit — 2026-05-17
 
 - Current topology is coherent: root `AGENTS.md` is the canonical agent operating contract; `docs/README.md` is the documentation index; `docs/agent/` contains modular governance; `docs/user/` contains user-facing setup/configuration; `docs/developer/` contains architecture and development guidance; `docs/developer/adr/` is reserved for significant architecture decision records.
 - No documentation files should be merged, moved, or deleted as part of the current cleanup. Apparent overlap is intentional: `README.md` is a user quickstart, `docs/user/configuration.md` is the full configuration reference, and `docs/developer/development.md` is the detailed maintainer guide.
 - Tool-specific files are shims or command references rather than competing governance: `CLAUDE.md` points to `AGENTS.md`, and `.claude/skills/*.md` documents Claude command workflows.
-- `components/elero_web/frontend-legacy/` is not duplicate active source; it is documented reference/rollback material until a future cleanup explicitly decides its lifecycle.
 - Preserve content when tightening structure: prefer links, ownership notes, and stale-status labels before moving or deleting files.
 
 ## Platform and governance observations — 2026-06-03
@@ -53,12 +53,10 @@ Last reviewed: 2026-07-21
 
 - One accepted formal ADR currently records command-intent delivery; significant future architecture changes should add or supersede ADRs as needed.
 - Supply-chain scanning is optional and not wired into CI.
-- `frontend-legacy` remains in the repository as documented reference/rollback source; decide in a future cleanup whether to retain or remove it.
 - Hardware validation remains external/manual; docs correctly avoid implying automated RF hardware coverage.
 
 ## Recommended next steps
 
 1. Keep the accepted command-intent delivery ADR current and add or supersede ADRs when other major RF/runtime decisions change.
-2. Decide whether `components/elero_web/frontend-legacy/` should remain as rollback/reference material or be removed in a future cleanup.
-3. Consider optional `npm audit` or OSV scanning for periodic dependency reviews.
-4. Keep issue/PR templates lightweight; adjust after observing contributor friction.
+2. Consider optional `npm audit` or OSV scanning for periodic dependency reviews.
+3. Keep issue/PR templates lightweight; adjust after observing contributor friction.

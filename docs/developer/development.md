@@ -110,21 +110,20 @@ esphome-elero/
         │   ├── __init__.py            # Switch schema (depends on elero_web)
         │   ├── elero_web_switch.h     # Switch class header
         │   └── elero_web_switch.cpp   # Switch logic (31 lines)
-        ├── frontend/                  # Active Web UI source (Svelte 5 + Vite + Flowbite/Tailwind)
-        │   ├── package.json           # npm project
-        │   ├── package-lock.json      # Dependency lockfile
-        │   ├── svelte.config.js       # Svelte configuration
-        │   ├── vite.config.js         # Vite bundler config (single-file output)
-        │   ├── index.html             # HTML template
-        │   ├── scripts/
-        │   │   └── generate_header.mjs  # Post-build: HTML → elero_web_ui.h
-        │   └── src/
-        │       ├── App.svelte         # Main Svelte application
-        │       ├── app.css            # App-level styles
-        │       ├── main.js            # Frontend entry point
-        │       ├── style.css          # Global styles
-        │       └── lib/               # API, stores, and utility helpers
-        └── frontend-legacy/           # Retained Alpine.js frontend reference/rollback source
+        └── frontend/                  # Active Web UI source (Svelte 5 + Vite + Flowbite/Tailwind)
+            ├── package.json           # npm project
+            ├── package-lock.json      # Dependency lockfile
+            ├── svelte.config.js       # Svelte configuration
+            ├── vite.config.js         # Vite bundler config (single-file output)
+            ├── index.html             # HTML template
+            ├── scripts/
+            │   └── generate_header.mjs  # Post-build: HTML → elero_web_ui.h
+            └── src/
+                ├── App.svelte         # Main Svelte application
+                ├── app.css            # App-level styles
+                ├── main.js            # Frontend entry point
+                ├── style.css          # Global styles
+                └── lib/               # API, stores, and utility helpers
 ```
 
 ---
@@ -515,7 +514,6 @@ The active web UI is built from source files in `components/elero_web/frontend/`
 - **Build pipeline:** `vite build` → produces `dist/index.html` (single file with inlined CSS/JS) → `scripts/generate_header.mjs` → writes `../elero_web_ui.h` (C++ raw string literal wrapped in `PROGMEM`)
 - **Output:** `elero_web_ui.h` is auto-generated and should not be edited by hand
 - **Dev server:** `npm run dev` starts Vite dev server for frontend development
-- **Legacy source:** `components/elero_web/frontend-legacy/` contains the previous Alpine.js implementation for reference/rollback only; do not build or edit it unless a maintenance task explicitly targets the legacy frontend.
 
 ---
 
