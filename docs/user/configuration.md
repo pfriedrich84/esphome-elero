@@ -356,11 +356,7 @@ elero_group:
 Optionale Web-Oberfläche zur Geräteerkennung und YAML-Generierung. Erreichbar unter `http://<device-ip>/elero`.
 
 ```yaml
-# web_server_base wird von elero_web automatisch geladen.
-# Explizit angeben um den Port zu konfigurieren:
-web_server_base:
-  port: 80
-
+# Der HTTP-Server wird von elero_web automatisch geladen.
 elero_web:
   username: admin     # Optional: HTTP Basic Auth Benutzername
   password: secret    # Optional: HTTP Basic Auth Passwort
@@ -374,7 +370,7 @@ elero_web:
 Wenn beide gesetzt sind, erfordern alle `/elero`-Endpoints HTTP Basic Authentication (401 bei fehlender/falscher Authentifizierung).
 
 **Voraussetzungen:**
-- `web_server_base` wird automatisch von `elero_web` geladen. **Nicht** `web_server:` verwenden – das aktiviert die Standard-ESPHome-UI unter `/` wieder. Zugriff auf `/` leitet automatisch zu `/elero` weiter.
+- Der interne `web_server_base` wird automatisch von `elero_web` geladen und lauscht auf Port 80. Er muss nicht in der YAML stehen und bietet selbst keine `port`-Option. **Nicht** `web_server:` verwenden – das aktiviert die Standard-ESPHome-UI unter `/` wieder. Zugriff auf `/` leitet automatisch zu `/elero` weiter.
 
 **Funktionen:**
 - **RF-Scan steuern** – Scan starten/stoppen direkt im Browser
@@ -550,10 +546,8 @@ button:
     name: "Elero Stop Scan"
     scan_start: false
 
-# Web UI for discovery and YAML export (do NOT use web_server: — use web_server_base: instead)
-web_server_base:
-  port: 80
-
+# Web UI for discovery and YAML export; its HTTP server is auto-loaded.
+# Do not add web_server:, as that enables ESPHome's default UI.
 elero_web:
 
 # Optional: Runtime control to disable/enable the web UI

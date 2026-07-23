@@ -9,11 +9,8 @@ cover:
     channel: 1
     remote_address: 0x000001
 
-# HTTP server used by elero_web.
+# elero_web auto-loads its HTTP server on port 80.
 # Do not use web_server: here; that would enable the default ESPHome UI at /.
-web_server_base:
-  port: 80
-
 elero_web:
   id: elero_web_ui
 
