@@ -702,12 +702,8 @@ Group position support is advertised only when every member has both `open_durat
 ### Web UI (`elero_web`)
 
 ```yaml
-# Use web_server_base (not web_server) to keep only the /elero UI
-# web_server_base is auto-loaded by elero_web, but you can declare it
-# explicitly to configure the port:
-web_server_base:
-  port: 80
-
+# The internal web_server_base is auto-loaded on port 80.
+# Do not use web_server, which would enable ESPHome's default UI.
 elero_web:
   id: elero_web_ui   # Optional ID
   username: admin     # Optional: HTTP Basic Auth username
@@ -976,7 +972,7 @@ The `tests/configs/compile_test.yaml` includes system monitoring sensors for Hom
 - **Wrong frequency**: Most European Elero motors use 868.35 MHz (`freq0=0x7a`). Some use 868.95 MHz (`freq0=0xc0`). If discovery finds nothing, try the alternate frequency. Use the `/elero/api/frequency/set` endpoint to test at runtime.
 - **ESP32 strapping pins and SPI**: Do **not** use GPIO12 as SPI MISO (or any SPI signal). GPIO12 is a strapping pin that controls VDD_SDIO voltage at boot. If the CC1101 module pulls it HIGH, VDD_SDIO is set to 1.8V, breaking all SPI communication (symptoms: all SPI write verify fail with `rc=-16`, MARCSTATE stuck at `0x00`). Safe SPI pins: CLK=GPIO18, MISO=GPIO19, MOSI=GPIO23. Avoid GPIO0, GPIO2, GPIO5, GPIO12, GPIO15 for SPI signals. The component detects persistent SPI failure at runtime and marks itself as failed with a diagnostic error message.
 - **SPI conflicts**: The CC1101 CS pin must not be shared with any other SPI device.
-- **Using `web_server:` instead of `web_server_base:`**: Adding `web_server:` to your YAML re-enables the default ESPHome entity UI at `/`. Use `web_server_base:` (or rely on its auto-load via `elero_web`) to serve only the Elero UI at `/elero`. Navigating to `/` will redirect automatically to `/elero`.
+- **Adding `web_server:` alongside `elero_web:`**: This re-enables the default ESPHome entity UI at `/`. Let `elero_web` auto-load the internal `web_server_base` instead; it serves the Elero UI on port 80 without a YAML declaration. Navigating to `/` redirects automatically to `/elero`.
 - **Position tracking**: Leave `open_duration` and `close_duration` at `0s` if you only need open/close without position — setting incorrect durations causes wrong position estimates. Both must be set or both zero (enforced by `_validate_duration_consistency`).
 - **Poll interval `never`**: Set `poll_interval: never` for blinds that reliably push state updates (avoids unnecessary RF traffic). Internally this maps to `uint32_t` max (4 294 967 295 ms).
 - **TX busy**: radio-wide admission allows one queued/in-flight command. Additional coordinator submissions receive `QUEUE_FULL` semantics without consuming retry budget until the matching completion releases admission.
