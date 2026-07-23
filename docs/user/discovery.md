@@ -18,12 +18,8 @@ Wenn SPI noch nicht funktioniert, zuerst [Common Issues](common-issues.md) prüf
 Aktiviere die optionale Elero-Web-UI:
 
 ```yaml
-# HTTP-Server (wird von elero_web automatisch geladen)
-# Nicht web_server: verwenden – das aktiviert die Standard-UI unter / wieder
-web_server_base:
-  port: 80
-
-# Elero Web-UI aktivieren
+# Der HTTP-Server auf Port 80 wird automatisch geladen.
+# Nicht web_server: verwenden – das aktiviert die Standard-UI unter / wieder.
 elero_web:
 ```
 
