@@ -35,7 +35,6 @@ Dependabot version updates are intentionally limited to dependency manifests tha
 
 - GitHub Actions in `.github/workflows/`.
 - Active web frontend npm dependencies in `components/elero_web/frontend/`.
-- Legacy web frontend npm dependencies in `components/elero_web/frontend-legacy/`.
 
 The repository does not currently have Python dependency lockfiles or package manifests for Dependabot to maintain. CI pins Python tools directly in workflow files, so those pins are covered by the GitHub Actions ecosystem review.
 
@@ -47,7 +46,6 @@ Run only when tools are available or explicitly approved:
 
 ```bash
 npm audit --prefix components/elero_web/frontend
-npm audit --prefix components/elero_web/frontend-legacy
 ```
 
 For broader supply-chain reviews, optional tools include `osv-scanner`, `pip-audit`, `trivy`, `grype`, or `syft`. Do not add these tools to CI without maintainer approval.
