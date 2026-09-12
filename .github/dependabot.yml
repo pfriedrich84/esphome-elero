@@ -6,6 +6,7 @@ multi-ecosystem-groups:
       interval: "monthly"
     labels:
       - "dependencies"
+    open-pull-requests-limit: 1
 
 updates:
   - package-ecosystem: "github-actions"
@@ -15,7 +16,6 @@ updates:
     multi-ecosystem-group: "monthly-dependencies"
     cooldown:
       default-days: 3
-    open-pull-requests-limit: 1
 
   - package-ecosystem: "npm"
     directory: "/components/elero_web/frontend"
@@ -24,4 +24,3 @@ updates:
     multi-ecosystem-group: "monthly-dependencies"
     cooldown:
       default-days: 3
-    open-pull-requests-limit: 1
