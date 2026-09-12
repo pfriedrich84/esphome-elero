@@ -222,8 +222,7 @@ button:
     cover_id: cover_schlafzimmer
     command_byte: 0x44
 
-web_server_base:
-
+# web_server_base is auto-loaded by elero_web.
 elero_web:
   id: elero_web_ui
 
