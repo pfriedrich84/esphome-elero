@@ -120,26 +120,50 @@ TEST(PacketReplay, CounterLogicAllowsResyncAfterLongGap) {
   EXPECT_TRUE(counter_logic::should_resync_counter(0xFFFF0000u, 100u));
 }
 
-TEST(PacketReplay, CounterLogicRequiresQuietGapAfterStaleTraffic) {
-  const uint8_t last_counter = 8;
-  const uint8_t stale_counter = 7;
-  const uint32_t first_activity_ms = 1000;
-  const uint32_t stale_activity_ms = first_activity_ms + counter_logic::COUNTER_RESYNC_GAP_MS - 1;
+TEST(PacketReplay, CounterResetResynchronizesDespiteContinuousFiveSecondTraffic) {
+  counter_logic::CounterState state;
+  ASSERT_TRUE(counter_logic::evaluate_status_counter(state, 100, 0).accept);
+  for (uint8_t n = 1; n <= 5; n++) {
+    EXPECT_FALSE(counter_logic::evaluate_status_counter(state, n, n * 5000).accept);
+    EXPECT_EQ(state.accepted_at_ms, 0u);
+    EXPECT_EQ(state.accepted, 100);
+  }
+  const auto resync = counter_logic::evaluate_status_counter(state, 6, 30000);
+  EXPECT_TRUE(resync.accept); EXPECT_TRUE(resync.resynced);
+  EXPECT_TRUE(counter_logic::evaluate_status_counter(state, 7, 35000).accept);
+}
 
-  auto first_stale = counter_logic::evaluate_status_counter(
-      last_counter, stale_counter, first_activity_ms, stale_activity_ms);
-  EXPECT_FALSE(first_stale.accept);
-  EXPECT_EQ(first_stale.next_activity_ms, stale_activity_ms);
+TEST(PacketReplay, SingleOldFrameAndRepeatedReplayNeverAuthorizeResync) {
+  counter_logic::CounterState state;
+  counter_logic::evaluate_status_counter(state, 100, 0);
+  for (uint32_t now = 30000; now <= 120000; now += 5000)
+    EXPECT_FALSE(counter_logic::evaluate_status_counter(state, 1, now).accept);
+  EXPECT_EQ(state.accepted, 100); EXPECT_EQ(state.accepted_at_ms, 0u);
+  EXPECT_EQ(state.activity_at_ms, 120000u);
+}
 
-  auto repeated_stale = counter_logic::evaluate_status_counter(
-      last_counter, stale_counter, first_stale.next_activity_ms,
-      first_activity_ms + counter_logic::COUNTER_RESYNC_GAP_MS);
-  EXPECT_FALSE(repeated_stale.accept);
+TEST(PacketReplay, CounterCandidatesMustAdvanceAndCannotResyncFromABurstOrOldGap) {
+  counter_logic::CounterState state;
+  counter_logic::evaluate_status_counter(state, 100, 0);
+  EXPECT_FALSE(counter_logic::evaluate_status_counter(state, 3, 31000).accept);
+  EXPECT_FALSE(counter_logic::evaluate_status_counter(state, 2, 32000).accept);
+  EXPECT_FALSE(counter_logic::evaluate_status_counter(state, 1, 33000).accept);
+  EXPECT_FALSE(counter_logic::evaluate_status_counter(state, 2, 33001).accept);
+  EXPECT_FALSE(counter_logic::evaluate_status_counter(state, 3, 33002).accept);
+  EXPECT_FALSE(counter_logic::evaluate_status_counter(state, 4, 45000).accept); // expired sequence
+  EXPECT_FALSE(counter_logic::evaluate_status_counter(state, 5, 46000).accept);
+  EXPECT_TRUE(counter_logic::evaluate_status_counter(state, 6, 47000).resynced);
+}
 
-  auto after_quiet_gap = counter_logic::evaluate_status_counter(
-      last_counter, stale_counter, repeated_stale.next_activity_ms,
-      repeated_stale.next_activity_ms + counter_logic::COUNTER_RESYNC_GAP_MS);
-  EXPECT_TRUE(after_quiet_gap.accept);
+TEST(PacketReplay, CounterFrontierHandlesCounterAndMillisWrapAndNormalTrafficCancelsCandidates) {
+  counter_logic::CounterState state;
+  EXPECT_TRUE(counter_logic::evaluate_status_counter(state, 254, UINT32_MAX - 100).accept);
+  EXPECT_TRUE(counter_logic::evaluate_status_counter(state, 255, UINT32_MAX - 50).accept);
+  EXPECT_TRUE(counter_logic::evaluate_status_counter(state, 1, 10).accept);
+  EXPECT_FALSE(counter_logic::evaluate_status_counter(state, 255, 31000).accept);
+  EXPECT_FALSE(counter_logic::evaluate_status_counter(state, 1, 32000).accept);
+  EXPECT_TRUE(counter_logic::evaluate_status_counter(state, 2, 33000).accept);
+  EXPECT_EQ(state.candidate_count, 0);
 }
 
 TEST(PacketReplay, DropReasonsMapToStableDiagnosticBuckets) {

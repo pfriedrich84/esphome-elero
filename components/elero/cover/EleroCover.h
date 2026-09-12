@@ -40,6 +40,8 @@ class EleroCover : public cover::Cover, public Component, public EleroBlindBase 
   void set_supports_tilt(bool tilt) { this->supports_tilt_ = tilt; }
   void set_assumed_state(bool assumed) { this->assumed_state_ = assumed; }
   void set_rx_state(uint8_t state) override;
+  void set_rx_status(uint8_t state, const RxMetadata &meta) override;
+  IntentSubmitResult request_stop(bool already_admitted = false) override;
   void notify_rx_meta(uint32_t ms, float rssi) override {
     this->last_seen_ms_ = ms;
     this->last_rssi_ = rssi;
@@ -97,11 +99,17 @@ class EleroCover : public cover::Cover, public Component, public EleroBlindBase 
   bool retry_stop_verification_(uint32_t now, const char *reason);
   void fail_stop_verification_(uint32_t now);
   void finish_stop_verification_();
+  void publish_stop_result_(const char *result);
+  void apply_rx_state_(uint8_t state, const RxMetadata &meta);
 
   t_elero_command command_ = {
     .counter = 1,
   };
   Elero *parent_;
+  std::recursive_mutex cover_mutex_;  // loop, RF dispatch and AsyncWebServer intent entry
+  RxCutoff stop_rx_cutoff_{};
+  bool stop_burst_pending_{false};
+  const char *stop_result_{"none"};
   uint32_t last_poll_{0};
   uint32_t command_cooldown_until_{0};
   uint32_t poll_offset_{0};

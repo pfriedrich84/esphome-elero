@@ -204,21 +204,21 @@ Communication between cores uses four FreeRTOS queues:
 
 ### Non-blocking TX state machine
 
-The radio uses a simplified 3-state non-blocking TX state machine on Core 0:
+The radio uses a bounded four-state non-blocking TX state machine on Core 0:
 
 ```
-IDLE → TRANSMITTING → COOLDOWN → IDLE
+IDLE → CCA (RX/listen/backoff) → TRANSMITTING → COOLDOWN → IDLE
 ```
 
 RadioLib's `standby()` handles the IDLE transition synchronously in `send_command_internal_()`. See `TxState` enum in `elero.h`. Commands are transferred through FreeRTOS queues (normal + priority) and consumed by Core 0, so Core 1 callers no longer need to check `is_tx_idle()` before enqueuing. A radio-wide transaction admission gate allows only one command packet to be queued or in flight at a time. Once its real TX completion returns, the hub selects waiting STOP work across all delivery profiles before admitting normal work. Within each priority class, a rotating cursor resumes after the last admitted profile so a low-sorted profile cannot monopolize the radio with repeats or queued intents. The separate queues therefore affect latency but cannot reorder two admitted command packets.
 
 TX initiation in `send_command_internal_()` (Core 0):
-1. `radio_->standby()` — blocks until CC1101 is in IDLE (~1 ms)
-2. Flush both TX and RX FIFOs (valid in IDLE per CC1101 spec)
-3. Load TX FIFO via burst write
-4. Issue `STX` strobe → state transitions to `TRANSMITTING`
+1. Preserve RX first: wait up to 20 ms for an in-flight packet before interrupting reception.
+2. `radio_->standby()` plus stable MARCSTATE verifies IDLE; drain each length/body/appended-status tuple separately. With CRC_AUTOFLUSH enabled no FIFO length byte is consumed during active RX. An interrupted trailing fragment is explicitly counted/discarded, never concatenated with a later packet.
+3. Flush TX only, load TX FIFO, issue `SRX` and enter `CCA`.
+4. Allow a 1 ms listen interval, require RX and hardware CCA, then issue `STX` **from RX**. Busy/refused attempts remain in RX with bounded 2–19 ms jittered backoff, at most five busy decisions or 50 ms. Existing coordinator retries remain separate and bounded.
 
-TX completion is detected via the `tx_done_` ISR flag (fast path) or by polling MARCSTATE (fallback) — when it leaves TX, the CC1101 has auto-transitioned to RX via MCSM1 TXOFF_MODE. Core 0 then publishes the transaction result to `tx_completion_queue_`. Core 1 releases radio-wide admission only for the matching transaction. Delivery coordinators count repeats and advance rolling counters only after this result; timed cover position and light dimming start from the first successful RF completion timestamp rather than the earlier Core 1 queue-admission time.
+The `tx_done_` ISR flag is only a hint. Local completion requires stable MARCSTATE/TXBYTES, previously observed TX/TX_END, empty TX FIFO without an error bit, and the expected RX state via MCSM1 TXOFF_MODE. Underflow and inconclusive/unexpected states never become success through an empty-byte fast path. Core 0 publishes the local transaction result and RX cutoff to `tx_completion_queue_`. Core 1 releases admission only for the matching transaction. Coordinators count repeats and advance counters only after this result; timed cover position and light dimming start from its timestamp rather than queue admission. This is explicitly **unconfirmed motor delivery**, not a protocol ACK. STOP has separate causal state verification.
 
 ### Interrupt handling
 
@@ -228,7 +228,7 @@ Two separate `std::atomic<bool>` flags handle GDO0 ISR signals: `rx_ready_` (set
 
 The CC1101 can enter unrecoverable states (RXFIFO_OVERFLOW, stuck IDLE) during TX operations. Several mechanisms prevent and recover from these:
 
-- **FIFO flush before TX** — `send_command_internal_()` uses `standby()` to enter IDLE, then flushes both TX and RX FIFOs. The RX flush discards any partial packet data from the reception that SIDLE interrupted.
+- **RX preservation before TX** — `send_command_internal_()` first invokes the CRC-autoflush-safe packet reader, then loads TX in IDLE and returns to RX for CCA. Normal preparation does not flush RX; overflow, malformed length and an interrupted tail have explicit recovery/drop accounting.
 - **No SFTX after TX completion** — The CC1101 auto-transitions to RX via MCSM1 TXOFF_MODE after TX. Issuing SFTX in this state is invalid per the CC1101 datasheet (only valid in IDLE or TXFIFO_UNDERFLOW) and can corrupt radio state.
 - **Post-TX FIFO health check** — After COOLDOWN, before resuming normal RX, the code reads RXBYTES to detect overflow or pending data that arrived during TX.
 - **Escalating radio watchdog** (`check_radio_state_()`, every 5 s) — Reads CC1101 MARCSTATE and applies 3-level recovery within a 60-second window: L1 = flush FIFO (up to 3×), L2 = full chip reset (up to 3×), L3 = mark permanently failed. Stuck IDLE is handled separately with a simple SRX restart. Only runs when TX is idle.
@@ -239,7 +239,7 @@ The CC1101 can enter unrecoverable states (RXFIFO_OVERFLOW, stuck IDLE) during T
 
 1. `Elero::setup()` (Core 1) configures CC1101 via RadioLib's `begin()` and direct register writes, attaches GDO0 interrupt, creates FreeRTOS queues, then spawns the radio task on Core 0.
 2. When the CC1101 signals a received packet (GDO0 interrupt), the ISR routes to `rx_ready_` (RX mode) or `tx_done_` (TX mode) based on `radio_mode_`.
-3. The radio task (Core 0) calls `process_rx()` when TX is idle — reads FIFO, decodes, decrypts, builds an `RxResult`, and pushes it to `rx_queue_`.
+3. The radio task (Core 0) calls `process_rx()` before new TX, during CCA receive opportunities and after completion/cooldown — reads complete packets safely, decodes, decrypts, builds an `RxResult` with receive-causality metadata, and pushes it to `rx_queue_`.
 4. `Elero::loop()` (Core 1) drains `rx_queue_` via `dispatch_rx_result_()` — routes decoded packets to covers/lights/sensors/discovery/runtime blinds.
 5. `Elero::advance_delivery_coordinators_()` (Core 1) selects urgent STOP work before normal work, reserves radio-wide admission, and enqueues one `RadioMessage` to `tx_priority_queue_` or `tx_queue_`. Cover/light loops only submit semantic intents to their delivery lanes.
 6. The radio task (Core 0) drains `tx_priority_queue_` first, then `tx_queue_`, and executes `send_command_internal_()` — the actual SPI TX.
@@ -283,7 +283,7 @@ Discovery and runtime:
 
 Radio health:
 - `check_radio_state_()` — periodic watchdog (every 5 s); recovers RXFIFO_OVERFLOW, stuck IDLE, and unexpected MARCSTATE
-- FIFO flush in `send_command_internal_()` via `standby()` + SFTX/SFRX — prevents stale data from corrupting post-TX RX
+- Packetwise frozen FIFO reads preserve valid feedback before TX; `SFTX` loads a new transmission, while `SFRX` is reserved for explicit recovery. See [RF reliability](rf-reliability.md).
 - Post-TX FIFO health check in `COOLDOWN→IDLE` transition — detects overflow/pending data missed during TX
 
 Hub-level diagnostic sensors (auto-generated when `auto_sensors: true`, default):

@@ -59,6 +59,7 @@ void EleroCover::setup() {
 }
 
 void EleroCover::loop() {
+  std::lock_guard<std::recursive_mutex> lock(this->cover_mutex_);
   uint32_t intvl = this->poll_intvl_;
   uint32_t now = millis();
   if(this->current_operation != COVER_OPERATION_IDLE) {
@@ -74,7 +75,8 @@ void EleroCover::loop() {
     }
   }
 
-  if (cover_logic::should_poll(now, this->last_poll_, intvl) &&
+  if (!this->stop_verification_active_.load() &&
+      cover_logic::should_poll(now, this->last_poll_, intvl) &&
       intent_was_accepted(this->submit_intent({CommandIntentKind::CHECK, 0}))) {
     this->last_poll_ = now;
   }
@@ -90,7 +92,9 @@ void EleroCover::loop() {
 
   // Stop verification: poll motor to confirm it actually stopped. If no
   // status arrives, retry one bounded STOP burst before failing open.
-  if (this->stop_verify_at_ > 0 && now >= this->stop_verify_at_ && !this->pending_stop_transition_) {
+  if (this->stop_verification_active_.load() &&
+      static_cast<int32_t>(now - this->stop_verify_at_) >= 0 &&
+      !this->pending_stop_transition_ && !this->stop_burst_pending_) {
     if (this->stop_verify_retries_ < ELERO_STOP_VERIFY_MAX_RETRIES) {
       this->stop_verify_retries_++;
       ESP_LOGD(TAG, "Stop verify poll #%d for blind 0x%06lx",
@@ -117,16 +121,7 @@ void EleroCover::loop() {
         // Queueing locally is not proof that the hub accepted the priority
         // packet. Keep tracking movement until advance() reports first RF queue
         // acceptance; only then transition to idle and start verification.
-        this->stop_trigger_position_ = this->position;
-        this->stop_trigger_ms_ = now;
-        this->stop_verify_stop_retries_ = 0;
-        this->stop_verification_active_.store(true);
-        if (!intent_was_accepted(this->submit_intent({CommandIntentKind::STOP, 0}))) {
-          this->stop_trigger_ms_ = 0;
-          this->stop_verification_active_.store(false);
-        } else {
-          this->pending_stop_transition_ = true;
-        }
+        this->request_stop();
       }
     }
 
@@ -164,6 +159,26 @@ bool EleroCover::is_at_target() {
 }
 
 void EleroCover::handle_delivery_outcome_(const DeliveryOutcome &outcome) {
+  std::lock_guard<std::recursive_mutex> lock(this->cover_mutex_);
+  if (outcome.intent.kind == CommandIntentKind::STOP &&
+      (outcome.event == DeliveryEvent::COMPLETED || outcome.event == DeliveryEvent::DROPPED ||
+       outcome.event == DeliveryEvent::STALE_CLEARED))
+    this->stop_burst_pending_ = false;
+  if (outcome.intent.kind == CommandIntentKind::STOP &&
+      (outcome.event == DeliveryEvent::DROPPED || outcome.event == DeliveryEvent::STALE_CLEARED)) {
+    this->parent_->increment_tx_drop_count();
+    if (this->stop_verification_active_.load())
+      this->fail_stop_verification_(millis());
+    return;
+  }
+  if (const char *result = ordinary_delivery_result(outcome)) {
+    ESP_LOGI(TAG, "Blind 0x%06lx: %s (no protocol ACK)",
+             static_cast<unsigned long>(this->command_.blind_addr), result);
+#ifdef USE_TEXT_SENSOR
+    if (!this->stop_verification_active_.load())
+      this->parent_->publish_text_sensor_state(this->command_.blind_addr, result);
+#endif
+  }
   const bool packet_accepted = delivery_packet_was_accepted(outcome.event);
   const bool is_movement = outcome.intent.kind == CommandIntentKind::OPEN ||
                            outcome.intent.kind == CommandIntentKind::CLOSE;
@@ -193,8 +208,14 @@ void EleroCover::handle_delivery_outcome_(const DeliveryOutcome &outcome) {
       outcome.intent.kind == CommandIntentKind::STOP && packet_accepted;
   if (first_stop_accepted) {
     this->pending_stop_transition_ = false;
-    this->current_operation = COVER_OPERATION_IDLE;
+    this->current_operation = COVER_OPERATION_IDLE;  // UI estimate, not physical confirmation
+    this->stop_rx_cutoff_ = outcome.rx_cutoff;
     this->schedule_stop_verification_(outcome.transmitted_at_ms != 0 ? outcome.transmitted_at_ms : millis());
+    this->publish_stop_result_("stop_verifying");
+    ESP_LOGD(TAG, "STOP verification begins: cutoff seq=%llu epoch=%llu tx=%lu",
+             static_cast<unsigned long long>(this->stop_rx_cutoff_.sequence),
+             static_cast<unsigned long long>(this->stop_rx_cutoff_.epoch),
+             static_cast<unsigned long>(this->stop_rx_cutoff_.completed_at_ms));
     this->publish_state(false);
     this->last_publish_ = millis();
   }
@@ -203,11 +224,6 @@ void EleroCover::handle_delivery_outcome_(const DeliveryOutcome &outcome) {
     ESP_LOGE(TAG, "Delivery retries exhausted for blind 0x%06lx",
              static_cast<unsigned long>(this->command_.blind_addr));
     this->parent_->increment_tx_drop_count();
-    if (outcome.intent.kind == CommandIntentKind::STOP && this->pending_stop_transition_) {
-      this->pending_stop_transition_ = false;
-      this->stop_trigger_ms_ = 0;
-      this->finish_stop_verification_();
-    }
     if (this->pending_movement_start_ && outcome.intent.kind == this->pending_movement_kind_) {
       this->pending_movement_start_ = false;
       this->current_operation = COVER_OPERATION_IDLE;
@@ -217,11 +233,6 @@ void EleroCover::handle_delivery_outcome_(const DeliveryOutcome &outcome) {
     ESP_LOGW(TAG, "Stale Command queue cleared for blind 0x%06lx",
              static_cast<unsigned long>(this->command_.blind_addr));
     this->parent_->increment_tx_drop_count();
-    if (outcome.intent.kind == CommandIntentKind::STOP && this->pending_stop_transition_) {
-      this->pending_stop_transition_ = false;
-      this->stop_trigger_ms_ = 0;
-      this->finish_stop_verification_();
-    }
     if (this->pending_movement_start_) {
       this->pending_movement_start_ = false;
       this->current_operation = COVER_OPERATION_IDLE;
@@ -253,6 +264,9 @@ CommandDeliveryConfig EleroCover::get_command_delivery_config() const {
 }
 
 IntentSubmitResult EleroCover::submit_intent(const CommandIntent &intent) {
+  std::lock_guard<std::recursive_mutex> lock(this->cover_mutex_);
+  if (intent.kind == CommandIntentKind::STOP)
+    return this->request_stop();
   const bool deferred = this->should_defer_intent(intent);
   auto result = this->delivery_.submit(intent, millis(), deferred);
   if (result == IntentSubmitResult::REJECTED) {
@@ -266,6 +280,45 @@ IntentSubmitResult EleroCover::submit_intent(const CommandIntent &intent) {
 #endif
   }
   return result;
+}
+
+IntentSubmitResult EleroCover::request_stop(bool already_admitted) {
+  std::lock_guard<std::recursive_mutex> lock(this->cover_mutex_);
+  const uint32_t now = millis();
+  const auto result = already_admitted ? IntentSubmitResult::ACCEPTED
+      : this->delivery_.submit({CommandIntentKind::STOP, 0}, now);
+  if (!intent_was_accepted(result)) {
+    this->fail_stop_verification_(now);
+    return result;
+  }
+  if (this->stop_verification_active_.load())
+    return result;  // repeated user requests do not reset the bounded budget
+  if (this->current_operation != COVER_OPERATION_IDLE && !this->pending_movement_start_ &&
+      this->open_duration_ > 0 && this->close_duration_ > 0)
+    this->recompute_position();
+  this->stop_trigger_position_ = this->position;
+  this->stop_trigger_ms_ = now;
+  this->stop_verify_stop_retries_ = 0;
+  this->stop_verify_at_ = 0;
+  this->post_movement_poll_at_ = 0;  // STOP owns its bounded CHECK schedule
+  this->stop_rx_cutoff_ = {};
+  this->stop_verification_active_.store(true);
+  this->delivery_.set_stop_verifying(true);
+  this->pending_movement_start_ = false;
+  this->pending_stop_transition_ = true;
+  this->stop_burst_pending_ = true;
+  this->publish_stop_result_("stop_queued");
+  return result;
+}
+
+void EleroCover::publish_stop_result_(const char *result) {
+  if (this->stop_result_ != result) {
+    ESP_LOGI(TAG, "Blind 0x%06lx delivery=%s", static_cast<unsigned long>(this->command_.blind_addr), result);
+    this->stop_result_ = result;
+  }
+#ifdef USE_TEXT_SENSOR
+  this->parent_->publish_text_sensor_state(this->command_.blind_addr, result);
+#endif
 }
 
 float EleroCover::get_setup_priority() const { return setup_priority::DATA; }
@@ -284,6 +337,19 @@ cover::CoverTraits EleroCover::get_traits() {
 }
 
 void EleroCover::set_rx_state(uint8_t state) {
+  this->set_rx_status(state, {});  // metadata-free callers cannot confirm a command
+}
+
+void EleroCover::set_rx_status(uint8_t state, const RxMetadata &meta) {
+  std::lock_guard<std::recursive_mutex> lock(this->cover_mutex_);
+  // An old buffered status must not change movement or position while stopping.
+  if (this->stop_verification_active_.load() &&
+      !meta.after(this->stop_rx_cutoff_, this->command_.blind_addr))
+    return;
+  this->apply_rx_state_(state, meta);
+}
+
+void EleroCover::apply_rx_state_(uint8_t state, const RxMetadata &meta) {
   this->last_state_raw_ = state;
   ESP_LOGV(TAG, "Got state: 0x%02x (%s) for blind 0x%06lx", state, elero_state_to_string(state),
            static_cast<unsigned long>(this->command_.blind_addr));
@@ -375,39 +441,32 @@ void EleroCover::set_rx_state(uint8_t state) {
     this->position_trusted_for_redundancy_ = false;
   }
 
-  // Stop verification: if we sent a stop and are waiting for confirmation,
-  // check whether the motor actually stopped or is still moving.
-  // Guard on stop_verify_at_ (not retries) so a "stopped" response always
-  // cancels verification — even after retries have been exhausted.
-  if (this->stop_verify_at_ > 0) {
-    if (state == ELERO_STATE_MOVING_UP || state == ELERO_STATE_MOVING_DOWN ||
-        state == ELERO_STATE_START_MOVING_UP || state == ELERO_STATE_START_MOVING_DOWN) {
-      // Motor is still moving — retry a bounded STOP burst via priority path.
-      const uint32_t now = millis();
-      if (!this->retry_stop_verification_(now, "still moving status"))
-        this->fail_stop_verification_(now);
-      op = COVER_OPERATION_IDLE;  // keep our side idle while retrying
-    } else {
-      // Motor confirmed stopped — correct position for actual stop delay
-      if (this->stop_trigger_ms_ > 0 && this->open_duration_ > 0 && this->close_duration_ > 0) {
-        uint32_t actual_delay = millis() - this->stop_trigger_ms_;
-        float correction_dur = (this->last_operation_ == COVER_OPERATION_OPENING)
-                                ? static_cast<float>(this->open_duration_)
-                                : static_cast<float>(this->close_duration_);
-        float overshoot = static_cast<float>(actual_delay) / correction_dur;
-        if (this->last_operation_ == COVER_OPERATION_OPENING)
-          pos = clamp(this->stop_trigger_position_ + overshoot, 0.0f, 1.0f);
-        else
-          pos = clamp(this->stop_trigger_position_ - overshoot, 0.0f, 1.0f);
-        ESP_LOGD(TAG, "Blind 0x%06lx stop verified: corrected pos %.2f -> %.2f (delay %lums)",
-                 static_cast<unsigned long>(this->command_.blind_addr), this->stop_trigger_position_, pos,
-                 static_cast<unsigned long>(actual_delay));
-      }
-      this->stop_trigger_ms_ = 0;
-      this->stop_verify_retries_ = ELERO_STOP_VERIFY_MAX_RETRIES;
-      this->stop_verify_at_ = 0;
-      // Decrement stop_urgent so other covers can resume once all stops confirmed.
-      this->finish_stop_verification_();
+  if (this->stop_verification_active_.load()) {
+    const auto feedback = fresh_stop_feedback(state, meta, this->stop_rx_cutoff_, this->command_.blind_addr);
+    switch (feedback) {
+      case StopFeedback::MOVING:
+        // Finish the guaranteed initial burst before spending the one extra
+        // burst. A fast response must not coalesce that retry into packet two.
+        if (!this->stop_burst_pending_ && !this->retry_stop_verification_(millis(), "fresh moving status"))
+          this->fail_stop_verification_(millis());
+        op = COVER_OPERATION_IDLE;
+        break;
+      case StopFeedback::STOPPED:
+        // RF/dispatch latency is not measured mechanical overshoot. Preserve
+        // explicit endpoints and the last estimate instead of inventing travel.
+        this->stop_trigger_ms_ = 0;
+        this->finish_stop_verification_();
+        this->publish_stop_result_("stop_confirmed");
+        break;
+      case StopFeedback::BLOCKING:
+      case StopFeedback::OVERHEATED:
+        this->finish_stop_verification_();
+        this->publish_stop_result_(feedback == StopFeedback::BLOCKING ? "stop_motor_blocking" : "stop_motor_overheated");
+        break;
+      case StopFeedback::INAPPLICABLE:
+        // UNKNOWN/TIMEOUT never turn a locally transmitted STOP into success.
+        this->publish_stop_result_("stop_verifying");
+        break;
     }
   }
 
@@ -420,6 +479,7 @@ void EleroCover::set_rx_state(uint8_t state) {
 }
 
 void EleroCover::control(const cover::CoverCall &call) {
+  std::lock_guard<std::recursive_mutex> lock(this->cover_mutex_);
   if (call.get_stop()) {
     this->start_movement(COVER_OPERATION_IDLE);
   }
@@ -472,6 +532,7 @@ void EleroCover::control(const cover::CoverCall &call) {
 }
 
 void EleroCover::start_movement(CoverOperation dir) {
+  std::lock_guard<std::recursive_mutex> lock(this->cover_mutex_);
   switch(dir) {
     case COVER_OPERATION_OPENING:
       ESP_LOGV(TAG, "Sending OPEN command");
@@ -494,22 +555,14 @@ void EleroCover::start_movement(CoverOperation dir) {
     case COVER_OPERATION_IDLE:
       ESP_LOGI(TAG, "Blind 0x%06lx manual stop at position %.2f",
                static_cast<unsigned long>(this->command_.blind_addr), this->position);
-      this->stop_trigger_position_ = this->position;
-      this->stop_trigger_ms_ = millis();
-      this->stop_verify_stop_retries_ = 0;
-      this->stop_verification_active_.store(true);
-      if (!intent_was_accepted(this->submit_intent({CommandIntentKind::STOP, 0}))) {
-        this->stop_trigger_ms_ = 0;
-        this->stop_verification_active_.store(false);
-        return;
-      }
-      this->pending_movement_start_ = false;
-      this->pending_stop_transition_ = true;
-      // The operation and verification state are committed by
-      // handle_delivery_outcome_ after the first priority packet is accepted.
+      this->request_stop();
       return;
   }
 
+  if (this->stop_verification_active_.load()) {
+    this->pending_movement_start_ = true;
+    return;  // admitted deferred work is not movement yet
+  }
   this->apply_movement_state_(dir);
 }
 
@@ -555,11 +608,13 @@ bool EleroCover::retry_stop_verification_(uint32_t now, const char *reason) {
            this->stop_verify_stop_retries_);
   this->stop_verify_at_ = 0;
   this->stop_verify_retries_ = 0;
-  if (!intent_was_accepted(this->submit_intent({CommandIntentKind::STOP, 0}))) {
+  if (!intent_was_accepted(this->delivery_.submit({CommandIntentKind::STOP, 0}, now))) {
     this->stop_verify_at_ = now + ELERO_STOP_VERIFY_DELAY_MS;
     return true;
   }
   this->pending_stop_transition_ = true;
+  this->stop_burst_pending_ = true;
+  this->stop_rx_cutoff_ = {};
   return true;
 }
 
@@ -569,9 +624,7 @@ void EleroCover::fail_stop_verification_(uint32_t now) {
   this->stop_verify_at_ = 0;
   this->stop_trigger_ms_ = 0;
   this->finish_stop_verification_();
-#ifdef USE_TEXT_SENSOR
-  this->parent_->publish_text_sensor_state(this->command_.blind_addr, "stop_failed");
-#endif
+  this->publish_stop_result_("stop_failed");
   // Position is uncertain after failed stop verification. Keep last estimate
   // but mark it untrusted so future commands are never suppressed as redundant.
   this->position_trusted_for_redundancy_ = false;
@@ -591,10 +644,14 @@ void EleroCover::finish_stop_verification_() {
   this->stop_verify_retries_ = ELERO_STOP_VERIFY_MAX_RETRIES;
   this->stop_verify_stop_retries_ = 0;
   this->pending_stop_transition_ = false;
+  this->stop_burst_pending_ = false;
   this->stop_verification_active_.store(false);
+  this->delivery_.set_stop_verifying(false);
+  this->stop_rx_cutoff_ = {};
 }
 
 void EleroCover::prepare_group_intent(const CommandIntent &intent, float target_position) {
+  std::lock_guard<std::recursive_mutex> lock(this->cover_mutex_);
   switch (intent.kind) {
     case CommandIntentKind::OPEN:
     case CommandIntentKind::CLOSE: {
@@ -607,20 +664,14 @@ void EleroCover::prepare_group_intent(const CommandIntent &intent, float target_
       this->tilt = 0.0f;
       this->last_operation_ = operation;
       this->pending_movement_kind_ = intent.kind;
-      this->apply_movement_state_(operation);
+      if (this->stop_verification_active_.load())
+        this->pending_movement_start_ = true;
+      else
+        this->apply_movement_state_(operation);
       break;
     }
     case CommandIntentKind::STOP:
-      if (this->current_operation != COVER_OPERATION_IDLE &&
-          this->open_duration_ > 0 && this->close_duration_ > 0)
-        this->recompute_position();
-      this->target_position_ = this->position;
-      this->stop_trigger_position_ = this->position;
-      this->stop_trigger_ms_ = millis();
-      this->stop_verify_stop_retries_ = 0;
-      this->stop_verification_active_.store(true);
-      this->pending_movement_start_ = false;
-      this->pending_stop_transition_ = true;
+      this->request_stop(true);  // group admission already succeeded atomically
       break;
     case CommandIntentKind::TILT:
       this->tilt = 1.0f;
@@ -632,6 +683,7 @@ void EleroCover::prepare_group_intent(const CommandIntent &intent, float target_
 }
 
 void EleroCover::handle_group_delivery_outcome(const DeliveryOutcome &outcome) {
+  std::lock_guard<std::recursive_mutex> lock(this->cover_mutex_);
   if (delivery_packet_was_accepted(outcome.event)) {
     this->handle_delivery_outcome_(outcome);
     return;
@@ -642,10 +694,11 @@ void EleroCover::handle_group_delivery_outcome(const DeliveryOutcome &outcome) {
        (outcome.fallback_member || outcome.queue_size == 0));
   if (!terminal_failure)
     return;
-  if (outcome.intent.kind == CommandIntentKind::STOP && this->pending_stop_transition_) {
+  if (outcome.intent.kind == CommandIntentKind::STOP && this->stop_verification_active_.load()) {
     this->pending_stop_transition_ = false;
     this->stop_trigger_ms_ = 0;
-    this->finish_stop_verification_();
+    this->stop_burst_pending_ = false;
+    this->fail_stop_verification_(millis());
   }
   if (this->pending_movement_start_ && outcome.intent.kind == this->pending_movement_kind_) {
     this->pending_movement_start_ = false;

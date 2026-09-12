@@ -283,6 +283,9 @@ void Elero::radio_task_func_(void *param) {
 }
 
 void Elero::radio_task_loop_() {
+  // Completed feedback is drained before selecting more TX. A following active
+  // frame gets a bounded 20ms receive opportunity, even with STOP pending.
+  const bool rx_drained = !this->is_tx_idle() || this->process_rx();
   // 1. Process TX commands from Core 1 — priority queue first for time-critical stop commands
   //    Only dequeue TX_COMMAND when radio is idle — otherwise the message is
   //    removed from the FreeRTOS queue but send_command_internal_ rejects it,
@@ -290,7 +293,7 @@ void Elero::radio_task_loop_() {
   //    are always dequeued since they don't require radio idle.
   RadioMessage msg{};
   bool got_msg = false;
-  bool tx_idle = this->is_tx_idle();
+  bool tx_idle = this->is_tx_idle() && rx_drained;
   if (this->tx_priority_queue_ && xQueuePeek(this->tx_priority_queue_, &msg, 0) == pdTRUE) {
     if (msg.type != RadioControlType::TX_COMMAND || tx_idle) {
       xQueueReceive(this->tx_priority_queue_, &msg, 0);
@@ -529,6 +532,9 @@ void Elero::advance_delivery_coordinators_() {
     urgent_waiting = urgent_waiting || entry.second->has_urgent(now);
   }
 
+  if (!urgent_waiting && !this->radio_spacing_.ready(now, std::max<uint32_t>(this->send_delay_, 2u)))
+    return;  // real completion-based RX opportunity across all profiles
+
   const size_t profile_count = profiles.size();
   const size_t start = profile_count == 0 ? 0 : this->next_delivery_profile_index_ % profile_count;
   for (size_t offset = 0; offset < profile_count; offset++) {
@@ -593,7 +599,18 @@ SendResult Elero::enqueue_tx_(t_elero_command *cmd, bool priority, uint32_t tran
 void Elero::publish_tx_completion_(uint32_t transaction_id, bool success) {
   if (transaction_id == 0 || !this->tx_completion_queue_)
     return;
-  TxCompletion completion{transaction_id, millis(), success};
+  const uint32_t completed_at = millis();
+  RxCutoff cutoff{};
+  if (success) {
+    // Drain/anchor everything already buffered BEFORE advancing the receive
+    // epoch. A queued pre-STOP status can never become a post-STOP response just
+    // because Core 1 dispatches completions ahead of RX results.
+    this->radio_mode_.store(static_cast<uint8_t>(RadioMode::RX), std::memory_order_relaxed);
+    this->rx_ready_.store(true, std::memory_order_release);
+    this->process_rx();
+    cutoff = this->rx_timeline_.fence(completed_at);
+  }
+  TxCompletion completion{transaction_id, completed_at, success, cutoff};
   if (xQueueSend(this->tx_completion_queue_, &completion, pdMS_TO_TICKS(10)) != pdTRUE) {
     ESP_LOGE(TAG, "TX completion queue full for transaction %lu",
              static_cast<unsigned long>(transaction_id));
@@ -607,7 +624,7 @@ void Elero::dispatch_tx_completion_(const TxCompletion &completion) {
     std::lock_guard<std::mutex> lock(this->delivery_coordinators_mutex_);
     for (auto &entry : this->delivery_coordinators_) {
       const DeliveryOutcome outcome = entry.second->complete(
-          completion.transaction_id, completion.success, completion.completed_at_ms);
+          completion.transaction_id, completion.success, completion.completed_at_ms, completion.rx_cutoff);
       if (outcome.event != DeliveryEvent::IDLE) {
         handled = true;
         break;
@@ -615,6 +632,8 @@ void Elero::dispatch_tx_completion_(const TxCompletion &completion) {
     }
   }
   const bool admitted = this->tx_admission_.release(completion.transaction_id);
+  if (admitted && completion.success)
+    this->radio_spacing_.completed(completion.completed_at_ms);
   if (!handled || !admitted) {
     ESP_LOGV(TAG, "Ignoring stale TX completion for transaction %lu",
              static_cast<unsigned long>(completion.transaction_id));

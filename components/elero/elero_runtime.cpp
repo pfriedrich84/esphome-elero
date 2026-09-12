@@ -111,6 +111,9 @@ bool Elero::adopt_blind(const DiscoveredBlind &discovered, const std::string &na
   delivery_config.profile.payload_2 = discovered.payload_2;
   rb.delivery = std::make_shared<CommandIntentDelivery>(delivery_config);
   rb.delivery->set_outcome_callback([this, address = discovered.blind_address](const DeliveryOutcome &outcome) {
+    if (const char *result = ordinary_delivery_result(outcome))
+      ESP_LOGI(TAG, "Runtime device 0x%06lx: %s (no protocol ACK)",
+               static_cast<unsigned long>(address), result);
     if (outcome.event == DeliveryEvent::DROPPED) {
       ESP_LOGE(TAG, "Delivery retries exhausted for runtime blind 0x%06lx",
                static_cast<unsigned long>(address));

@@ -10,6 +10,10 @@
 #include "cc1101.h"
 #include "elero_profile_delivery_coordinator.h"
 #include "elero_tx_admission.h"
+#include "elero_rx_fifo.h"
+#include "elero_counter_logic.h"
+#include "elero_status_read.h"
+#include "elero_radio_timing.h"
 #include <RadioLib.h>
 #include <string>
 #include <vector>
@@ -35,10 +39,10 @@ namespace elero {
 
 /// Non-blocking TX state machine states.
 /// The radio is always in RX when IDLE; TX progresses one step per loop().
-/// RadioLib's standby() handles the IDLE transition synchronously in
-/// send_command_internal_(), so only 3 states remain.
+/// CCA/backoff remains in RX; STX is issued only from verified RX.
 enum class TxState : uint8_t {
   IDLE,           ///< Radio in RX, ready for TX
+  CCA,            ///< FIFO loaded; bounded RX listen/backoff before STX
   TRANSMITTING,   ///< Packet loaded and STX sent, waiting for TX to complete
   COOLDOWN,       ///< Brief pause before resuming RX
 };
@@ -201,6 +205,7 @@ struct RuntimeBlind {
 
 /// Result of a decoded RX packet, sent from radio task (Core 0) → main loop (Core 1).
 struct RxResult {
+  RxMetadata meta{};
   uint32_t blind_address;         // src address (3 bytes)
   uint32_t remote_address;        // fwd/bwd address
   uint8_t  channel;
@@ -236,6 +241,7 @@ struct TxCompletion {
   uint32_t transaction_id{0};
   uint32_t completed_at_ms{0};
   bool success{false};
+  RxCutoff rx_cutoff{};
 };
 
 /// Control message types for the radio task.
@@ -298,6 +304,8 @@ class EleroLightBase {
 class EleroBlindBase {
  public:
   virtual ~EleroBlindBase() = default;
+  virtual void set_rx_status(uint8_t state, const RxMetadata &meta) { this->set_rx_state(state); }
+  virtual IntentSubmitResult request_stop(bool already_admitted = false) = 0;
   virtual void set_rx_state(uint8_t state) = 0;
   virtual uint32_t get_blind_address() = 0;
   virtual void set_poll_offset(uint32_t offset) = 0;
@@ -617,7 +625,11 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   bool send_command_internal_(t_elero_command *cmd, uint32_t enqueued_at_ms = 0);  // actual SPI TX, Core 0 only
 
   // Non-blocking TX state machine (runs on Core 0 radio task)
-  void process_rx();
+  bool enter_idle_();
+  uint8_t read_status_once_(uint8_t addr);
+  bool read_status_stable(uint8_t addr, uint8_t &value);
+  struct RxFifoIO;
+  bool process_rx(bool keep_idle = false);
   void advance_tx();
   void dispatch_rx_result_(const RxResult &rx);  // runs on Core 1 main loop
   void advance_delivery_coordinators_();
@@ -650,6 +662,12 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   // Interrupt flags: separate atomics for RX and TX events.
   // ISR routes based on radio_mode_ to avoid losing an RX interrupt
   // that arrives just as we clear flags for TX preparation.
+  RxTimeline rx_timeline_;  // Core 0 only; no 64-bit atomics in the GPIO ISR
+  RxMetadata current_rx_meta_{};
+  RxFifoReader rx_fifo_;
+  CcaBackoff cca_backoff_;
+  CompletionSpacing radio_spacing_;  // Core 1 only; all profiles share the RX window
+  bool tx_started_seen_{false};
   std::atomic<bool> rx_ready_{false};   // set by ISR when GDO0 fires in RX mode
   std::atomic<bool> tx_done_{false};    // set by ISR when GDO0 fires in TX mode
 
@@ -718,8 +736,7 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   /// Per-source counter tracking: reject old/replayed counters within the active
   /// receive window, but allow resync after long gaps so lossy links or sender
   /// restarts do not leave entities stale until the 8-bit counter wraps.
-  std::map<uint32_t, uint8_t> last_seen_counter_;
-  std::map<uint32_t, uint32_t> last_seen_counter_ms_;
+  std::map<uint32_t, counter_logic::CounterState> status_counters_;
   bool is_duplicate_packet_(uint32_t src, uint8_t cnt);
   void prune_dedup_map_();
 

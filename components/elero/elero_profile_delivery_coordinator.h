@@ -8,6 +8,7 @@
 // semantic lanes only.
 
 #include "elero_command_delivery.h"
+#include "elero_radio_timing.h"
 
 #include <algorithm>
 #include <array>
@@ -105,6 +106,9 @@ class ProfileDeliveryCoordinator {
 
       auto &entry = this->active_lane_->queue_.entries[this->active_index_];
       const CommandIntent intent = entry.intent;
+      if (this->movement_blocked_locked_(this->active_lane_, intent.kind) &&
+          this->pending_transaction_id_ == 0)
+        return this->outcome_locked_(DeliveryEvent::WAITING, intent);
       if (this->pending_transaction_id_ != 0)
         return this->outcome_locked_(DeliveryEvent::WAITING, intent);
 
@@ -120,8 +124,9 @@ class ProfileDeliveryCoordinator {
       } else {
         const bool urgent = intent.kind == CommandIntentKind::STOP;
         const uint8_t shift = std::min(this->failure_count_, static_cast<uint8_t>(3));
-        const uint32_t delay = (urgent ? 0u : base_delay_ms) +
-                               (this->failure_count_ == 0 ? 0u : (10u << shift));
+        const uint32_t delay = this->failure_count_ == 0 ? 0u : (10u << shift);
+        if (!urgent && !this->spacing_.ready(now, base_delay_ms))
+          return this->outcome_locked_(DeliveryEvent::WAITING, intent);
         if (this->attempt_started_ && (now - this->last_attempt_ms_) <= delay)
           return this->outcome_locked_(DeliveryEvent::WAITING, intent);
 
@@ -152,7 +157,8 @@ class ProfileDeliveryCoordinator {
 
   // Complete an asynchronous packet submission after Core 0 has observed the
   // real RF outcome. Unknown/stale transaction IDs are deliberately ignored.
-  DeliveryOutcome complete(uint32_t transaction_id, bool success, uint32_t completed_at_ms) {
+  DeliveryOutcome complete(uint32_t transaction_id, bool success, uint32_t completed_at_ms,
+                           const RxCutoff &cutoff = {}) {
     AttemptDispatch dispatch{};
     {
       std::lock_guard<std::mutex> lock(this->mutex_);
@@ -160,6 +166,7 @@ class ProfileDeliveryCoordinator {
           this->active_lane_ == nullptr)
         return {};
       this->pending_transaction_id_ = 0;
+      this->completion_cutoff_ = cutoff;
       dispatch = this->finish_attempt_locked_(success, completed_at_ms,
                                               this->pending_required_repeats_);
     }
@@ -171,8 +178,6 @@ class ProfileDeliveryCoordinator {
   bool has_urgent(uint32_t now) const {
     std::lock_guard<std::mutex> lock(this->mutex_);
     for (const auto *lane : this->lanes_) {
-      if (lane->not_before_ms_ != 0 && static_cast<int32_t>(now - lane->not_before_ms_) < 0)
-        continue;
       for (size_t i = 0; i < lane->queue_.size; i++) {
         const auto &entry = lane->queue_.entries[i];
         if (entry.intent.kind == CommandIntentKind::STOP)
@@ -267,6 +272,7 @@ class ProfileDeliveryCoordinator {
       return dispatch;
     }
 
+    this->spacing_.completed(completed_at_ms);
     this->failure_count_ = 0;
     const bool first_transmission = this->accepted_repeats_ == 0;
     this->accepted_repeats_++;
@@ -310,18 +316,32 @@ class ProfileDeliveryCoordinator {
     return dispatch;
   }
 
+  bool movement_blocked_locked_(const CommandIntentDelivery *lane, CommandIntentKind kind) const {
+    if (kind == CommandIntentKind::STOP || kind == CommandIntentKind::CHECK)
+      return false;
+    if (lane->stop_verifying_)
+      return true;
+    for (uint8_t i = 0; i < lane->fallback_member_count_; i++) {
+      if (lane->fallback_members_[i] != nullptr && lane->fallback_members_[i]->stop_verifying_)
+        return true;
+    }
+    return false;
+  }
+
   bool select_next_locked_(uint32_t now) {
     CommandIntentDelivery *best = nullptr;
     size_t best_index = 0;
     uint64_t best_sequence = std::numeric_limits<uint64_t>::max();
     bool found_urgent = false;
     for (auto *lane : this->lanes_) {
-      if (lane->not_before_ms_ != 0 && static_cast<int32_t>(now - lane->not_before_ms_) < 0)
-        continue;
       for (size_t i = 0; i < lane->queue_.size; i++) {
         const auto &entry = lane->queue_.entries[i];
         const bool urgent = entry.intent.kind == CommandIntentKind::STOP;
-        const bool eligible = !entry.deferred || urgent || entry.intent.kind == CommandIntentKind::CHECK;
+        const bool cooling_down = lane->not_before_ms_ != 0 &&
+                                  static_cast<int32_t>(now - lane->not_before_ms_) < 0;
+        const bool eligible = urgent || (!cooling_down &&
+            !this->movement_blocked_locked_(lane, entry.intent.kind) &&
+            (!entry.deferred || entry.intent.kind == CommandIntentKind::CHECK));
         if (!eligible)
           continue;
         if ((urgent && !found_urgent) || (urgent == found_urgent && entry.sequence < best_sequence)) {
@@ -338,7 +358,9 @@ class ProfileDeliveryCoordinator {
     if (best == nullptr)
       return false;
     this->active_lane_ = best;
-    this->active_lane_->not_before_ms_ = 0;
+    // A STOP bypasses but does not cancel the normal lane cooldown.
+    if (static_cast<int32_t>(now - best->not_before_ms_) >= 0)
+      best->not_before_ms_ = 0;
     this->active_index_ = best_index;
     this->reset_attempt_state_();
     return true;
@@ -352,6 +374,10 @@ class ProfileDeliveryCoordinator {
 
   void preempt_for_stop_locked_(CommandIntentDelivery *stop_lane) {
     if (this->active_lane_ == nullptr)
+      return;
+    // Never truncate an already selected STOP burst for another STOP. Its
+    // remaining repetitions keep the same counter and finish (or fail visibly).
+    if (this->active_lane_->queue_.entries[this->active_index_].intent.kind == CommandIntentKind::STOP)
       return;
     if (this->pending_transaction_id_ != 0) {
       this->stop_after_pending_ = true;
@@ -418,6 +444,10 @@ class ProfileDeliveryCoordinator {
     outcome.queue_size = this->active_lane_ == nullptr ? 0 : this->active_lane_->queue_.size;
     outcome.transmitted_at_ms = transmitted_at_ms;
     outcome.first_transmission = first_transmission;
+    if (delivery_packet_was_accepted(event)) {
+      outcome.rx_cutoff = this->completion_cutoff_;
+      outcome.motor_evidence = MotorDeliveryEvidence::LOCAL_TX_UNCONFIRMED;
+    }
     outcome.fallback_member = fallback_member;
     outcome.fallback_member_index = fallback_member_index;
     return outcome;
@@ -437,6 +467,8 @@ class ProfileDeliveryCoordinator {
   uint32_t pending_transaction_id_{0};
   uint8_t pending_required_repeats_{1};
   bool stop_after_pending_{false};
+  RxCutoff completion_cutoff_{};
+  CompletionSpacing spacing_;  // intentionally not reset between semantic intents
 };
 
 // ---------------------------------------------------------------------------
@@ -470,6 +502,15 @@ inline IntentSubmitResult CommandIntentDelivery::submit_to_state_(QueueState &st
                                                                    uint32_t submitted_at_ms,
                                                                    uint64_t protected_sequence) const {
   if (intent.kind == CommandIntentKind::STOP) {
+    // Keep a selected same-lane STOP intact even when CHECK/movement was queued
+    // behind it. Coalescing must not reset repeat progress or overwrite its age.
+    for (size_t i = 0; i < state.size; i++) {
+      if (state.entries[i].sequence == protected_sequence && state.entries[i].intent == intent) {
+        state.entries[0] = state.entries[i];
+        state.size = 1;
+        return IntentSubmitResult::COALESCED;
+      }
+    }
     if (state.size == 1 && state.entries[0].intent == intent)
       return IntentSubmitResult::COALESCED;
     state.size = 1;
@@ -599,6 +640,9 @@ inline IntentSubmitResult CommandIntentDelivery::submit_batch(const CommandInten
   if (accepted_stop)
     coordinator->preempt_for_stop_locked_(this);
   this->queue_ = candidate;
+  if (coordinator->active_lane_ == this && candidate.size == 1 &&
+      candidate.entries[0].sequence == protected_sequence)
+    coordinator->active_index_ = 0;
   coordinator->next_sequence_ = next_sequence;
   return combined;
 }
@@ -676,9 +720,19 @@ inline IntentSubmitResult CommandIntentDelivery::submit_atomic(const AtomicInten
       coordinator->preempt_for_stop_locked_(lane);
     }
     lane->queue_ = candidates[i];
+    if (coordinator->active_lane_ == lane && candidates[i].size == 1 &&
+        candidates[i].entries[0].intent.kind == CommandIntentKind::STOP)
+      coordinator->active_index_ = 0;
     any_accepted = any_accepted || results[i] == IntentSubmitResult::ACCEPTED;
   }
   return any_accepted ? IntentSubmitResult::ACCEPTED : IntentSubmitResult::COALESCED;
+}
+
+inline void CommandIntentDelivery::set_stop_verifying(bool active) {
+  if (this->coordinator_ == nullptr)
+    return;
+  std::lock_guard<std::mutex> lock(this->coordinator_->mutex_);
+  this->stop_verifying_ = active;
 }
 
 inline void CommandIntentDelivery::release_deferred() {
@@ -762,8 +816,10 @@ inline bool CommandIntentDelivery::set_native_fallback(CommandIntentDelivery *co
       return false;
   }
   this->fallback_member_count_ = static_cast<uint8_t>(count);
-  for (size_t i = 0; i < count; i++)
+  for (size_t i = 0; i < count; i++) {
     this->fallback_configs_[i] = members[i]->config_;
+    this->fallback_members_[i] = members[i];
+  }
   return true;
 }
 

@@ -13,6 +13,12 @@ This document tracks the intended deep Modules and seams for the ESPHome Elero i
 - **Concurrency**: submission and atomic multi-member admission are mutex-protected. Submitters can run in the ESPHome loop or AsyncWebServer context. Outcome callbacks run after the coordinator lock is released.
 - **Depth**: high — every configured Blind/light, runtime adopted Blind, and compatible native Group lane joins the coordinator for its RF profile. Incompatible Group commands use all-or-none atomic admission into member lanes.
 
+### STOP verification and receive causality
+
+- `EleroCover::request_stop()` unifies entity, web/button, automatic and group STOP preparation. Only causally fresh motor status can confirm standstill; local TX completion is a separate outcome.
+- Radio-owned `RxMetadata` and the completion's receive cutoff travel through the existing queues and coordinator. Native lanes respect member STOP verification, and another STOP cannot truncate a selected STOP burst.
+- See [RF delivery and STOP reliability](rf-reliability.md) for state meanings and validation boundaries.
+
 ### Packet parser
 
 - **Files**: `components/elero/elero_packet_parser.h`, `components/elero/elero_protocol.cpp`, `tests/unit/test_packet_parser.cpp`

@@ -141,6 +141,13 @@ void EleroLight::loop() {
 }
 
 void EleroLight::handle_delivery_outcome_(const DeliveryOutcome &outcome) {
+  if (const char *result = ordinary_delivery_result(outcome)) {
+    ESP_LOGI(TAG, "Light 0x%06lx: %s (no protocol ACK)",
+             static_cast<unsigned long>(this->command_.blind_addr), result);
+#ifdef USE_TEXT_SENSOR
+    this->parent_->publish_text_sensor_state(this->command_.blind_addr, result);
+#endif
+  }
   const bool transmitted_dimming = outcome.first_transmission &&
       (outcome.intent.kind == CommandIntentKind::DIM_UP ||
        outcome.intent.kind == CommandIntentKind::DIM_DOWN);

@@ -32,4 +32,5 @@ Lightweight decision memory for future agents. For major architecture decisions,
 ### Use a separate counter resync threshold
 
 - Short `dedup_window` remains for immediate duplicate suppression.
-- Stale status counter resync uses a separate longer quiet-gap threshold so lossy links/restarts can recover without accepting repeated stale traffic.
+- Status-counter resync uses accepted-frontier age (30 seconds), not a quiet gap refreshed by rejected traffic. At least three advancing stale candidates over at least one second are required; candidate gaps and sequence steps are bounded. A lone old/repeated packet never authorizes resync. See [RF reliability](../developer/rf-reliability.md).
+- Local TX completion is never a motor ACK. Ordinary delivery explicitly remains unconfirmed; STOP requires a causally fresh, correctly classified motor-state observation.

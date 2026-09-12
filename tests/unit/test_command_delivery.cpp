@@ -2,6 +2,31 @@
 #include "elero/elero_timed_action.h"
 #include "elero/elero_tx_admission.h"
 #include <gtest/gtest.h>
+
+TEST(CompletionSpacingRegression, DistinctNormalIntentsWaitFromCompletionButStopBypasses) {
+  using namespace esphome::elero;
+  CommandDeliveryConfig config{};
+  config.profile.remote_address = 0x123456;
+  config.profile.blind_address = 0x111111;
+  CommandIntentDelivery lane(config);
+  ProfileDeliveryCoordinator coordinator(DeliveryProfileKey::from(config.profile));
+  ASSERT_TRUE(coordinator.attach(&lane));
+  unsigned submissions = 0;
+  auto submit = [&](const t_elero_command &, bool) { return PacketSubmission::queued(++submissions); };
+  lane.submit({CommandIntentKind::OPEN, 0}, 100);
+  coordinator.advance(100, 1000, 1, 2, submit);
+  coordinator.complete(1, true, 110);
+  lane.submit({CommandIntentKind::CLOSE, 0}, 120);
+  coordinator.advance(1109, 1000, 1, 2, submit);
+  EXPECT_EQ(submissions, 1u);
+  coordinator.advance(1110, 1000, 1, 2, submit);
+  ASSERT_EQ(submissions, 2u);
+  coordinator.complete(2, true, 1111);
+  lane.submit({CommandIntentKind::STOP, 0}, 1112);
+  coordinator.advance(1112, 1000, 1, 2, submit);
+  EXPECT_EQ(submissions, 3u);
+}
+
 #include <atomic>
 #include <thread>
 #include <vector>

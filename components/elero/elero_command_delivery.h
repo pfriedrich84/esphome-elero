@@ -7,6 +7,7 @@
 // exclusively to ProfileDeliveryCoordinator.
 
 #include "elero_command_profile.h"
+#include "elero_rx_metadata.h"
 
 #include <array>
 #include <cstddef>
@@ -155,13 +156,15 @@ enum class DeliveryEvent : uint8_t {
   WAITING,
   QUEUE_FULL,
   PACKET_ACCEPTED,
-  COMPLETED,
+  COMPLETED,  // local packet plan complete, NEVER a motor acknowledgement
   RETRY_SCHEDULED,
   DROPPED,
   STALE_CLEARED,
   FALLBACK_STARTED,
   FALLBACK_MEMBER_DROPPED,
 };
+
+enum class MotorDeliveryEvidence : uint8_t { NONE, LOCAL_TX_UNCONFIRMED };
 
 struct DeliveryOutcome {
   DeliveryEvent event{DeliveryEvent::IDLE};
@@ -173,9 +176,21 @@ struct DeliveryOutcome {
   // completed. Zero for queueing, waiting, and failure outcomes.
   uint32_t transmitted_at_ms{0};
   bool first_transmission{false};
+  MotorDeliveryEvidence motor_evidence{MotorDeliveryEvidence::NONE};
   bool fallback_member{false};
   uint8_t fallback_member_index{0};
+  RxCutoff rx_cutoff{};  // causal radio fence, not a motor acknowledgement
 };
+
+inline const char *ordinary_delivery_result(const DeliveryOutcome &outcome) {
+  if (outcome.intent.kind == CommandIntentKind::STOP || outcome.intent.kind == CommandIntentKind::CHECK)
+    return nullptr;
+  if (outcome.first_transmission && outcome.motor_evidence == MotorDeliveryEvidence::LOCAL_TX_UNCONFIRMED)
+    return "delivery_unconfirmed";
+  if (outcome.event == DeliveryEvent::DROPPED || outcome.event == DeliveryEvent::STALE_CLEARED)
+    return "delivery_failed";
+  return nullptr;
+}
 
 class ProfileDeliveryCoordinator;
 
@@ -211,6 +226,7 @@ class CommandIntentDelivery {
                                           uint32_t submitted_at_ms);
 
   void release_deferred();
+  void set_stop_verifying(bool active);
   void postpone_until(uint32_t not_before_ms);
   void discard_pending();
   void discard_checks();
@@ -256,6 +272,8 @@ class CommandIntentDelivery {
   ProfileDeliveryCoordinator *coordinator_{nullptr};
   OutcomeCallback outcome_callback_{};
   std::array<CommandDeliveryConfig, ELERO_MAX_DESTS> fallback_configs_{};
+  std::array<CommandIntentDelivery *, ELERO_MAX_DESTS> fallback_members_{};
+  bool stop_verifying_{false};
   uint8_t fallback_member_count_{0};
   uint32_t not_before_ms_{0};
 };

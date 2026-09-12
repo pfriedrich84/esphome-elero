@@ -21,6 +21,23 @@ inline bool is_tx_progress_state(uint8_t marc) {
          marc == CC1101_MARCSTATE_RXTX_SWITCH;
 }
 
+enum class TxObservation { WAIT, SUCCESS, FAILURE };
+inline TxObservation observe_tx(uint8_t marc, uint8_t txbytes, bool saw_tx,
+                                uint32_t elapsed, uint32_t timeout) {
+  if ((txbytes & 0x80) != 0 || marc == CC1101_MARCSTATE_TXFIFO_UFLOW ||
+      marc == CC1101_MARCSTATE_RXFIFO_OFLOW)
+    return TxObservation::FAILURE;
+  // With the unchanged TXOFF_MODE=RX, neither IDLE nor an arbitrary non-TX
+  // state establishes completion. GDO falling alone is not proof either.
+  if (marc == CC1101_MARCSTATE_RX)
+    return saw_tx && txbytes == 0 ? TxObservation::SUCCESS : TxObservation::FAILURE;
+  if (elapsed >= timeout) return TxObservation::FAILURE;
+  if (is_tx_progress_state(marc) || marc == CC1101_MARCSTATE_TX_END ||
+      marc == CC1101_MARCSTATE_TXRX_SWITCH)
+    return TxObservation::WAIT;
+  return TxObservation::FAILURE;
+}
+
 inline bool is_watchdog_healthy_rx(uint8_t marc) {
   return marc == CC1101_MARCSTATE_RX;
 }
