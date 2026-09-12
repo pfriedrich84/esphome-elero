@@ -233,9 +233,7 @@ Wenn die Kommunikation funktioniert, kannst du die Adressen deiner Rollladen erm
 Fuege folgendes zu deiner Konfiguration hinzu:
 
 ```yaml
-web_server_base:
-  port: 80
-
+# Lädt den HTTP-Server auf Port 80 automatisch.
 elero_web:
 ```
 
