@@ -2,6 +2,10 @@
 
 This changelog tracks changes to repository governance and agent instructions. It is not the user-facing release changelog.
 
+## 2026-07-23
+
+- Removed the inactive Alpine.js legacy frontend and updated frontend and supply-chain guidance to describe only the maintained Svelte UI.
+
 ## 2026-05-17
 
 - Refreshed stale developer documentation references for user docs, active Svelte frontend source, CI triggers/jobs, and branch conventions.

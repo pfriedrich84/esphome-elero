@@ -21,7 +21,6 @@ components/elero/                  Elero hub, RF protocol, CC1101, cover/light/b
 components/elero_group/            Group cover platform and command policy integration
 components/elero_web/              Optional web UI component and REST API
 components/elero_web/frontend/     Active Svelte/Vite source for generated elero_web_ui.h
-components/elero_web/frontend-legacy/ Legacy Alpine.js source retained for reference/rollback
 tests/unit/                        C++ unit tests
 tests/python/                      Python schema/codegen tests
 tests/configs/                     ESPHome compile matrix fixtures
