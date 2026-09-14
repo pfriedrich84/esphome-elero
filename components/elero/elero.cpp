@@ -401,7 +401,14 @@ void Elero::setup() {
   this->radio_module_ = new Module(&this->radio_hal_, RADIOLIB_NC, RADIOLIB_NC, RADIOLIB_NC);
   this->radio_ = new CC1101(this->radio_module_);
 
-  int16_t rc = this->radio_->begin(868.35, 47.607, 38.383, 101.5625, 10, 32);
+  ConfigFSK_t radio_config;
+  radio_config.frequency = 868.35;
+  radio_config.bitRate = 47.607;
+  radio_config.frequencyDeviation = 38.383;
+  radio_config.receiverBandwidth = 101.5625;
+  radio_config.power = 10;
+  radio_config.preambleLength = 32;
+  int16_t rc = this->radio_->begin(radio_config);
   if (rc == RADIOLIB_ERR_NONE) {
     ESP_LOGI(TAG, "RadioLib CC1101 initialized (chip version verified)");
   } else if (rc == RADIOLIB_ERR_CHIP_NOT_FOUND) {

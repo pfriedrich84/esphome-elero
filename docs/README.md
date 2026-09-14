@@ -17,6 +17,7 @@
 - [`developer/adr/`](developer/adr/) — architecture decision records for significant long-term decisions.
 - [`developer/rf-reliability.md`](developer/rf-reliability.md) — STOP causality, packet ownership, CCA, delivery semantics and hardware boundaries.
 - [RF reliability implementation report, 08.09.2026](developer/reviews/2026-09-08-rf-reliability-implementation.md) — finding/test matrix, reproducible validation and A/B/A plan.
+- [RF-Reliability- und Regressionsreview — Astra GPT 6, 08.09.2026](developer/reviews/2026-09-08-rf-reliability-astra-gpt-6.md) — read-only review of STOP delivery, RF reliability, and historical regression candidates.
 
 ## Agent docs
 
