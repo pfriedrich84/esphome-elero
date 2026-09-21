@@ -33,6 +33,7 @@ CONF_COMMAND_DOWN = "command_down"
 CONF_COMMAND_STOP = "command_stop"
 CONF_COMMAND_CHECK = "command_check"
 CONF_COMMAND_TILT = "command_tilt"
+CONF_TILT_CLOSE_PULSE_DURATION = "tilt_close_pulse_duration"
 CONF_POLL_INTERVAL = "poll_interval"
 CONF_SUPPORTS_TILT = "supports_tilt"
 CONF_AUTO_SENSORS = "auto_sensors"
@@ -133,6 +134,12 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_COMMAND_STOP, default=0x10): cv.hex_int_range(min=0x0, max=0xFF),
             cv.Optional(CONF_COMMAND_CHECK, default=0x00): cv.hex_int_range(min=0x0, max=0xFF),
             cv.Optional(CONF_COMMAND_TILT, default=0x24): cv.hex_int_range(min=0x0, max=0xFF),
+            # For hardware with no distinct RF byte for the close direction (e.g.
+            # Schlotterer Jalousien where a short DOWN press closes the slats before
+            # the blind itself starts moving): send the normal CLOSE command and
+            # auto-stop it after this duration. Default 0 disables it (tilt=0 only
+            # updates local state, no RF command is sent).
+            cv.Optional(CONF_TILT_CLOSE_PULSE_DURATION, default="0ms"): cv.positive_time_period_milliseconds,
             cv.Optional(CONF_SUPPORTS_TILT, default=False): cv.boolean,
             cv.Optional(CONF_ASSUMED_STATE, default=True): cv.boolean,
             cv.Optional(CONF_AUTO_SENSORS, default=True): cv.boolean,
@@ -197,6 +204,8 @@ async def to_code(config):
     cg.add(var.set_command_check(config[CONF_COMMAND_CHECK]))
     cg.add(var.set_command_stop(config[CONF_COMMAND_STOP]))
     cg.add(var.set_command_tilt(config[CONF_COMMAND_TILT]))
+    if config[CONF_TILT_CLOSE_PULSE_DURATION].total_milliseconds > 0:
+        cg.add(var.set_tilt_close_pulse_duration(config[CONF_TILT_CLOSE_PULSE_DURATION]))
     cg.add(var.set_poll_interval(config[CONF_POLL_INTERVAL]))
     cg.add(var.set_supports_tilt(config[CONF_SUPPORTS_TILT]))
     cg.add(var.set_assumed_state(config[CONF_ASSUMED_STATE]))

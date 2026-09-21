@@ -244,6 +244,99 @@ TEST_F(CoverDeliveryTest, GroupPartialStopThenTerminalFailureCannotLeaveVerifica
   EXPECT_STREQ(cover.result(), "stop_failed"); EXPECT_STREQ(other.result(), "stop_failed");
 }
 
+TEST_F(CoverDeliveryTest, TiltClosePulseSendsCloseThenAutoStopsWithoutEarlyStop) {
+  // For hardware with no distinct RF byte for the close direction: tilt=0
+  // sends the normal CLOSE command and loop() auto-stops it after
+  // tilt_close_pulse_duration_ elapses.
+  TestCover pulse_cover;
+  pulse_cover.set_elero_parent(&hub);
+  pulse_cover.set_blind_address(0x111111);
+  pulse_cover.set_remote_address(0x123456);
+  pulse_cover.set_poll_interval(300000);
+  pulse_cover.set_supports_tilt(true);
+  pulse_cover.set_command_down(0x41);
+  pulse_cover.set_tilt_close_pulse_duration(500);
+  pulse_cover.setup();
+  // A cover with poll_offset_=0 has its first periodic poll due immediately
+  // (last_poll_ is seeded in the past by poll_intvl_ - poll_offset_). Run
+  // loop() once now so should_poll() resets its baseline against `now`,
+  // instead of firing unpredictably during the pulse timing checks below.
+  test_now = 1005;
+  pulse_cover.loop();
+
+  for (uint32_t now = 1006; now <= 1009; now++) {
+    auto id = hub.advance(now);
+    if (id == 0) break;
+    EXPECT_EQ(hub.packets.back().payload[4], 0);
+    hub.complete(id, true, now + 1, timeline.fence(now + 1));
+  }
+
+  test_now = 1010;
+  CoverCall tilt_close;
+  tilt_close.tilt = 0.0f;
+  pulse_cover.control(tilt_close);
+  EXPECT_FLOAT_EQ(pulse_cover.tilt, 0.0f);
+
+  transmit(1010);
+  EXPECT_EQ(hub.packets.back().payload[4], 0x41);  // normal CLOSE, not a distinct byte
+
+  // Before the configured duration elapses, loop() must not queue a STOP yet.
+  test_now = 1010 + 400;
+  pulse_cover.loop();
+  EXPECT_EQ(hub.advance(test_now), 0u);
+
+  // Once the duration elapses, loop() auto-stops the pulse.
+  test_now = 1010 + 600;
+  pulse_cover.loop();
+  const auto id = hub.advance(test_now);
+  ASSERT_NE(id, 0u);
+  EXPECT_EQ(hub.packets.back().payload[4], 0x10);  // default command_stop
+  hub.complete(id, true, test_now + 1, timeline.fence(test_now + 1));
+}
+
+TEST_F(CoverDeliveryTest, TiltClosePulseIsCancelledByARealMovement) {
+  // A real movement started while a pulse's auto-stop timer is still pending
+  // must not later be cut short by that timer (see start_movement()).
+  TestCover pulse_cover;
+  pulse_cover.set_elero_parent(&hub);
+  pulse_cover.set_blind_address(0x111111);
+  pulse_cover.set_remote_address(0x123456);
+  pulse_cover.set_poll_interval(300000);
+  pulse_cover.set_supports_tilt(true);
+  pulse_cover.set_command_down(0x41);
+  pulse_cover.set_command_up(0x21);
+  pulse_cover.set_open_duration(25000);
+  pulse_cover.set_close_duration(25000);
+  pulse_cover.set_tilt_close_pulse_duration(500);
+  pulse_cover.setup();
+
+  for (uint32_t now = 1001; now <= 1004; now++) {
+    auto id = hub.advance(now);
+    if (id == 0) break;
+    hub.complete(id, true, now + 1, timeline.fence(now + 1));
+  }
+
+  test_now = 1010;
+  CoverCall tilt_close;
+  tilt_close.tilt = 0.0f;
+  pulse_cover.control(tilt_close);
+  transmit(1010);  // the pulse's own CLOSE
+
+  // A real OPEN starts before the pulse's auto-stop fires.
+  test_now = 1010 + 100;
+  CoverCall open;
+  open.position = cover::COVER_OPEN;
+  pulse_cover.control(open);
+  transmit(test_now);
+  EXPECT_EQ(hub.packets.back().payload[4], 0x21);
+  EXPECT_EQ(pulse_cover.current_operation, cover::COVER_OPERATION_OPENING);
+
+  // Past the pulse's original deadline, loop() must not stop this real OPEN.
+  test_now = 1010 + 600;
+  pulse_cover.loop();
+  EXPECT_EQ(pulse_cover.current_operation, cover::COVER_OPERATION_OPENING);
+}
+
 TEST_F(CoverDeliveryTest, ConcurrentSameProfileStopPreservesBothTwoPacketBursts) {
   TestCover other;
   other.set_elero_parent(&hub); other.set_blind_address(0x222222);

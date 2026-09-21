@@ -1,4 +1,4 @@
-# Multi-cover config: 3 covers with different settings
+# Multi-cover config: 4 covers with different settings
 # Tests: multiple cover registration, poll stagger, position tracking variations
 
 esphome:
@@ -54,4 +54,17 @@ cover:
     supports_tilt: true
     open_duration: 30s
     close_duration: 28s
+    poll_interval: never
+
+  # Cover with tilt and the second wend direction via a timed
+  # CLOSE-then-auto-STOP pulse (hardware with no dedicated tilt-close command)
+  - platform: elero
+    blind_address: 0xd52b3d
+    channel: 8
+    remote_address: 0xf0d008
+    name: "Cover With Tilt Pulse"
+    supports_tilt: true
+    tilt_close_pulse_duration: 1200ms
+    open_duration: 27s
+    close_duration: 27s
     poll_interval: never

@@ -129,6 +129,7 @@ Diese Werte werden aus dem Log der echten Fernbedienung ausgelesen. Bei Überein
 | `command_stop` | Hex (0x00-0xFF) | `0x10` | Befehlscode: Rollladen stopp |
 | `command_check` | Hex (0x00-0xFF) | `0x00` | Befehlscode: Status abfragen |
 | `command_tilt` | Hex (0x00-0xFF) | `0x24` | Befehlscode: Tilt/Kipp |
+| `tilt_close_pulse_duration` | Zeitdauer | `0ms` | Für Hardware **ohne** eigenen Zu-Befehl (z.B. viele Schlotterer/elero-Raffstore, bei denen "Lamellen zu" schlicht ein kurzes Runterfahren ist, bevor der Motor wirklich losfährt): `tilt: 0` sendet den normalen `command_down`-Befehl und stoppt automatisch nach der eingestellten Zeit wieder. `0ms` (Standard) deaktiviert die Funktion — `tilt: 0` ändert dann nur lokal den Status, ohne Funkbefehl. Die richtige Dauer muss am eigenen Rollladen ausgetestet werden (zu kurz: keine sichtbare Wirkung; zu lang: der Rollladen fährt spürbar runter statt nur die Lamellen zu schließen). |
 
 ---
 

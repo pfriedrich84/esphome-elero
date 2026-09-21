@@ -24,6 +24,10 @@ void EleroCover::dump_config() {
     ESP_LOGCONFIG(TAG, "  Close Duration: %lums", static_cast<unsigned long>(this->close_duration_));
   ESP_LOGCONFIG(TAG, "  Poll Interval: %lums", static_cast<unsigned long>(this->poll_intvl_));
   ESP_LOGCONFIG(TAG, "  Supports Tilt: %s", YESNO(this->supports_tilt_));
+  if (this->tilt_close_pulse_duration_ > 0) {
+    ESP_LOGCONFIG(TAG, "  Tilt Close: CLOSE pulse, %lums auto-stop",
+                  static_cast<unsigned long>(this->tilt_close_pulse_duration_));
+  }
   ESP_LOGCONFIG(TAG, "  Assumed State: %s", YESNO(this->assumed_state_));
 }
 
@@ -88,6 +92,14 @@ void EleroCover::loop() {
                static_cast<unsigned long>(this->command_.blind_addr));
       this->last_poll_ = now;
     }
+  }
+
+  // Auto-stop a tilt_close_pulse_duration_ CLOSE pulse (see control()). This
+  // never engages start_movement()/position tracking — it is a short,
+  // untracked side pulse, always followed by an explicit STOP.
+  if (this->tilt_close_pulse_at_ != 0 && static_cast<int32_t>(now - this->tilt_close_pulse_at_) >= 0) {
+    this->tilt_close_pulse_at_ = 0;
+    this->submit_intent({CommandIntentKind::STOP, 0});
   }
 
   // Stop verification: poll motor to confirm it actually stopped. If no
@@ -534,6 +546,14 @@ void EleroCover::control(const cover::CoverCall &call) {
     if(tilt > 0) {
       if (intent_was_accepted(this->submit_intent({CommandIntentKind::TILT, 0})))
         this->tilt = 1.0;
+    } else if (this->tilt_close_pulse_duration_ > 0) {
+      // No distinct RF byte for the close direction on this hardware: send the
+      // normal CLOSE command and auto-stop it after tilt_close_pulse_duration_
+      // (see loop()), instead of a real full-travel close.
+      if (intent_was_accepted(this->submit_intent({CommandIntentKind::CLOSE, 0}))) {
+        this->tilt_close_pulse_at_ = millis() + this->tilt_close_pulse_duration_;
+        this->tilt = 0.0;
+      }
     } else {
       this->tilt = 0.0;
     }
@@ -555,6 +575,10 @@ void EleroCover::control(const cover::CoverCall &call) {
 
 IntentSubmitResult EleroCover::start_movement(CoverOperation dir) {
   std::lock_guard<std::recursive_mutex> lock(this->cover_mutex_);
+  // A real tracked movement (including an explicit STOP) supersedes any
+  // pending tilt_close_pulse_duration_ auto-stop — that timer must never
+  // fire mid-way through a real, separately-started movement.
+  this->tilt_close_pulse_at_ = 0;
   IntentSubmitResult result = IntentSubmitResult::REJECTED;
   switch(dir) {
     case COVER_OPERATION_OPENING:
