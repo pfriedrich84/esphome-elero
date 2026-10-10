@@ -35,6 +35,7 @@ light:
     channel: 6
     remote_address: 0xf0d008
     name: "On Off Light"
+    assumed_state: true
 
   # Dimmable light
   - platform: elero

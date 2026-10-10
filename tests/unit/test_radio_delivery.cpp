@@ -9,7 +9,7 @@ class RadioDeliveryTest : public ::testing::Test {
   t_elero_command command{};
   void SetUp() override {
     test_now = 100;
-    command.remote_addr = 0x123456; command.num_dests = 1; command.dest_addrs[0] = 0x111111;
+    command.pck_inf[0] = 0x6a; command.remote_addr = 0x123456; command.num_dests = 1; command.dest_addrs[0] = 0x111111;
   }
   void queue() {
     ASSERT_TRUE(hub.send_command_internal_(&command, test_now));
@@ -158,4 +158,24 @@ TEST_F(RadioDeliveryTest, UnstableCcaStatusCannotAuthorizeStx) {
   hub.advance_tx();
   EXPECT_EQ(std::count(hub.strobes.begin(), hub.strobes.end(), CC1101_STX), 0);
   EXPECT_TRUE(hub.completions.empty());
+}
+
+TEST_F(RadioDeliveryTest, ShortChannelTypeCannotUseDirectAddressSerializer) {
+  command.pck_inf[0] = 0x44;
+  EXPECT_FALSE(hub.send_command_internal_(&command, test_now));
+  EXPECT_TRUE(hub.tx_fifo.empty());
+  EXPECT_TRUE(hub.completions.empty());
+}
+
+TEST_F(RadioDeliveryTest, CapturedCoverCheckSerializesToIndependentLoggedWireBytes) {
+  // Full raw TX from capture line 224, not constructed with production crypto.
+  command.counter = 2; command.pck_inf[0] = 0x6a; command.pck_inf[1] = 0;
+  command.hop = 0x0a; command.channel = 2; command.remote_addr = 0x458130;
+  command.dest_addrs[0] = 0x273d2e; command.payload[1] = 4;
+  queue();
+  const std::vector<uint8_t> observed = {
+    0x1d,0x02,0x6a,0x00,0x0a,0x01,0x02,0x45,0x81,0x30,
+    0x45,0x81,0x30,0x45,0x81,0x30,0x01,0x27,0x3d,0x2e,
+    0x00,0x04,0x83,0xab,0x0f,0x50,0x79,0xa7,0xd3,0x6d};
+  EXPECT_EQ(hub.tx_fifo, observed);
 }

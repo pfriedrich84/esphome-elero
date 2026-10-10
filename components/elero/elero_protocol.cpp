@@ -188,8 +188,9 @@ void Elero::dispatch_rx_result_(const RxResult &rx) {
 #ifdef USE_TEXT_SENSOR
     // During verification the cover owns the diagnostic result. Do not publish
     // stale STOPPED/UNKNOWN over stop_verifying before freshness is checked.
-    if (search == this->address_to_cover_mapping_.end() ||
-        !search->second->should_defer_intent({CommandIntentKind::OPEN, 0})) {
+    if (this->address_to_light_mapping_.count(rx.blind_address) == 0 &&
+        (search == this->address_to_cover_mapping_.end() ||
+         !search->second->should_defer_intent({CommandIntentKind::OPEN, 0}))) {
       auto text_it = this->address_to_text_sensor_.find(rx.blind_address);
       if (text_it != this->address_to_text_sensor_.end()) {
         text_it->second->publish_state(elero_state_to_string(rx.state));

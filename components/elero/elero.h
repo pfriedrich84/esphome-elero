@@ -293,6 +293,7 @@ class EleroLightBase {
   virtual uint32_t get_last_seen_ms() const = 0;
   virtual float get_last_rssi() const = 0;
   virtual uint8_t get_last_state_raw() const = 0;
+  virtual bool get_assumed_state() const { return false; }
   // Web API helpers — configuration
   virtual uint8_t get_channel() const = 0;
   virtual uint32_t get_remote_address() const = 0;

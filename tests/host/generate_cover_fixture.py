@@ -23,7 +23,7 @@ for name in ("EleroBlindBase", "EleroLightBase"):
     '#pragma once\n#include "elero/elero_profile_delivery_coordinator.h"\n'
     "#include <string>\nnamespace esphome { namespace elero {\n" + constants + "\n" + "\n".join(interfaces) + "\n}}\n"
 )
-paths = ["components/elero/cover/EleroCover", "components/elero_group/EleroGroupCover"]
+paths = ["components/elero/cover/EleroCover", "components/elero_group/EleroGroupCover", "components/elero/light/EleroLight"]
 for stem in paths:
     for ext in (".h", ".cpp"):
         path = root / (stem + ext)
@@ -32,7 +32,7 @@ for stem in paths:
             target = match.group(1)
             if target.endswith("elero.h"):
                 return '#include "hub.h"'
-            if target in ("EleroCover.h", "EleroGroupCover.h"):
+            if target in ("EleroCover.h", "EleroGroupCover.h", "EleroLight.h"):
                 return match.group(0)
             if target.startswith("esphome/"):
                 return '#include "framework.h"'
