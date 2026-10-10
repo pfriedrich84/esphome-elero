@@ -1,0 +1,741 @@
+INFO ESPHome 2026.9.1
+INFO Loaded validated config cache for lilygo-elero.yaml, skipping validation.
+INFO Starting log output from 192.168.22.196 using esphome API
+INFO Successfully resolved lilygo-elero @ 192.168.22.196 in 0.000s
+INFO Successfully connected to lilygo-elero @ 192.168.22.196 in 3.197s
+INFO Successful handshake with lilygo-elero @ 192.168.22.196 in 0.090s
+[09:19:54.175][I][app:151]: ESPHome version 2026.9.1 compiled on 2026-10-10 09:15:38 +0200
+[09:19:54.176][I][app:158]: ESP32 Chip: ESP32-S3 rev0.2, 2 core(s)
+[09:19:54.176][C][logger:216]: Logger:
+[09:19:54.176][C][logger:216]:   Max Level: VERBOSE
+[09:19:54.176][C][logger:216]:   Initial Level: VERBOSE
+[09:19:54.176][C][logger:223]:   Log Baud Rate: 115200
+[09:19:54.176][C][logger:223]:   Hardware UART: USB_SERIAL_JTAG
+[09:19:54.180][C][logger:232]:   Task Log Buffer Size: 768 bytes
+[09:19:54.180][I][logger:254]: VERBOSE logging is active — performance impact, short-term debugging only
+[09:19:54.180][I][logger:254]:   Set log level to DEBUG or lower for long-term use.
+[09:19:54.184][C][spi:066]: SPI bus:
+[09:19:54.184][C][spi:131]:   CLK Pin: GPIO11
+[09:19:54.190][C][spi:131]:   SDI Pin: GPIO10
+[09:19:54.190][C][spi:131]:   SDO Pin: GPIO9
+[09:19:54.200][C][spi:074]:   Using HW SPI: SPI2_HOST
+[09:19:54.212][C][switch.gpio:086]: GPIO Switch 'power_rail'
+[09:19:54.212][C][switch.gpio:086]:   Restore Mode: always ON
+[09:19:54.212][C][switch.gpio:131]:   Pin: GPIO15
+[09:19:54.219][C][switch.gpio:086]: GPIO Switch 'power_board'
+[09:19:54.219][C][switch.gpio:086]:   Restore Mode: always ON
+[09:19:54.219][C][switch.gpio:131]:   Pin: GPIO46
+[09:19:54.219][C][switch.gpio:086]: GPIO Switch 'ant_sw1'
+[09:19:54.219][C][switch.gpio:086]:   Restore Mode: always OFF
+[09:19:54.221][C][switch.gpio:131]:   Pin: GPIO47
+[09:19:54.232][C][switch.gpio:086]: GPIO Switch 'ant_sw0'
+[09:19:54.232][C][switch.gpio:086]:   Restore Mode: always ON
+[09:19:54.236][C][switch.gpio:131]:   Pin: GPIO48
+[09:19:54.236][C][ledc.output:217]: Output:
+[09:19:54.236][C][ledc.output:217]:   Channel: 0
+[09:19:54.236][C][ledc.output:217]:   PWM Frequency: 1000.0 Hz
+[09:19:54.236][C][ledc.output:217]:   Phase angle: 0.0°
+[09:19:54.236][C][ledc.output:217]:   Bit depth: 14
+[09:19:54.236][C][ledc.output:131]:   Pin GPIO21
+[09:19:54.241][V][ledc.output:225]:   Max frequency for bit depth: 4882.812500
+[09:19:54.241][V][ledc.output:225]:   Min frequency for bit depth: 76.298599
+[09:19:54.241][V][ledc.output:225]:   Max frequency for bit depth-1: 9765.625000
+[09:19:54.241][V][ledc.output:225]:   Min frequency for bit depth-1: 152.597198
+[09:19:54.241][V][ledc.output:225]:   Max frequency for bit depth+1: 2441.406250
+[09:19:54.241][V][ledc.output:225]:   Min frequency for bit depth+1: 38.149300
+[09:19:54.241][V][ledc.output:225]:   Max res bits: 14
+[09:19:54.241][V][ledc.output:225]:   Clock frequency: 80000000.000000
+[09:19:54.248][C][gpio.binary_sensor:016]: GPIO Binary Sensor 'Encoder Button'
+[09:19:54.249][C][gpio.binary_sensor:131]:   Pin: GPIO0
+[09:19:54.249][C][gpio.binary_sensor:068]:   Mode: interrupt
+[09:19:54.257][C][gpio.binary_sensor:070]:   Interrupt Type: ANY_EDGE
+[09:19:54.257][C][gpio.binary_sensor:016]: GPIO Binary Sensor 'Side Button'
+[09:19:54.257][C][gpio.binary_sensor:131]:   Pin: GPIO6
+[09:19:54.257][C][gpio.binary_sensor:068]:   Mode: interrupt
+[09:19:54.263][C][gpio.binary_sensor:070]:   Interrupt Type: ANY_EDGE
+[09:19:54.268][C][light:101]: Light 'Display Backlight'
+[09:19:54.278][C][light:104]:   Default Transition Length: 1.0s
+[09:19:54.278][C][light:104]:   Gamma Correct: 2.80
+[09:19:54.278][C][elero:377]: Elero CC1101:
+[09:19:54.278][C][elero:131]:   GDO0 Pin: GPIO3
+[09:19:54.282][C][elero:379]:   freq2: 0x21, freq1: 0x71, freq0: 0x7a
+[09:19:54.283][C][elero:380]:   Send repeats: 1, send delay: 0 ms, dedup window: 0 ms
+[09:19:54.286][C][elero:383]:   RadioLib: begin() + standby() + setFrequency(); direct SPI for register access
+[09:19:54.286][C][elero:388]:   Registered covers: 6
+[09:19:54.292][C][elero.cover:015]: Elero Cover 'pergola1-horizontal'
+[09:19:54.302][C][elero.cover:015]:   Assumed State: YES
+[09:19:54.303][C][elero.cover:016]:   Blind Address: 0x653d2e
+[09:19:54.417][C][elero.cover:017]:   Remote Address: 0x458130
+[09:19:54.417][C][elero.cover:018]:   Channel: 1
+[09:19:54.417][C][elero.cover:019]:   Hop: 0x0a
+[09:19:54.417][C][elero.cover:020]:   pck_inf1: 0x6a, pck_inf2: 0x00
+[09:19:54.417][C][elero.cover:022]:   Open Duration: 31000ms
+[09:19:54.417][C][elero.cover:024]:   Close Duration: 31000ms
+[09:19:54.417][C][elero.cover:025]:   Poll Interval: 600000ms
+[09:19:54.417][C][elero.cover:026]:   Supports Tilt: NO
+[09:19:54.417][C][elero.cover:027]:   Assumed State: YES
+[09:19:54.417][C][elero:014]: Elero Refresh Button 'pergola1-horizontal Refresh'
+[09:19:54.417][C][elero:156]:   Icon: 'mdi:refresh'
+[09:19:54.417][C][elero:706]:   Target: cover 0x653d2e
+[09:19:54.418][C][elero.cover:015]: Elero Cover 'pergola2-horizontal'
+[09:19:54.418][C][elero.cover:015]:   Assumed State: YES
+[09:19:54.418][C][elero.cover:016]:   Blind Address: 0x273d2e
+[09:19:54.418][C][elero.cover:017]:   Remote Address: 0x458130
+[09:19:54.418][C][elero.cover:018]:   Channel: 2
+[09:19:54.418][C][elero.cover:019]:   Hop: 0x0a
+[09:19:54.418][C][elero.cover:020]:   pck_inf1: 0x6a, pck_inf2: 0x00
+[09:19:54.418][C][elero.cover:022]:   Open Duration: 31000ms
+[09:19:54.418][C][elero.cover:024]:   Close Duration: 31000ms
+[09:19:54.418][C][elero.cover:025]:   Poll Interval: 600000ms
+[09:19:54.418][C][elero.cover:026]:   Supports Tilt: NO
+[09:19:54.418][C][elero.cover:027]:   Assumed State: YES
+[09:19:54.418][C][elero:014]: Elero Refresh Button 'pergola2-horizontal Refresh'
+[09:19:54.418][C][elero:156]:   Icon: 'mdi:refresh'
+[09:19:54.418][C][elero:706]:   Target: cover 0x273d2e
+[09:19:54.418][C][elero.cover:015]: Elero Cover 'pergola3-vertikal-ost'
+[09:19:54.419][C][elero.cover:015]:   Assumed State: YES
+[09:19:54.419][C][elero.cover:016]:   Blind Address: 0xde5e2f
+[09:19:54.419][C][elero.cover:017]:   Remote Address: 0x458130
+[09:19:54.419][C][elero.cover:018]:   Channel: 4
+[09:19:54.419][C][elero.cover:019]:   Hop: 0x0a
+[09:19:54.419][C][elero.cover:020]:   pck_inf1: 0x6a, pck_inf2: 0x00
+[09:19:54.419][C][elero.cover:022]:   Open Duration: 26000ms
+[09:19:54.419][C][elero.cover:024]:   Close Duration: 26000ms
+[09:19:54.419][C][elero.cover:025]:   Poll Interval: 600000ms
+[09:19:54.419][C][elero.cover:026]:   Supports Tilt: NO
+[09:19:54.419][C][elero.cover:027]:   Assumed State: YES
+[09:19:54.419][C][elero:014]: Elero Refresh Button 'pergola3-vertikal-ost Refresh'
+[09:19:54.419][C][elero:156]:   Icon: 'mdi:refresh'
+[09:19:54.420][C][elero:706]:   Target: cover 0xde5e2f
+[09:19:54.420][C][elero.cover:015]: Elero Cover 'pergola4-vertikal-sued'
+[09:19:54.420][C][elero.cover:015]:   Assumed State: YES
+[09:19:54.420][C][elero.cover:016]:   Blind Address: 0xe3be2f
+[09:19:54.420][C][elero.cover:017]:   Remote Address: 0x458130
+[09:19:54.420][C][elero.cover:018]:   Channel: 5
+[09:19:54.420][C][elero.cover:019]:   Hop: 0x0a
+[09:19:54.420][C][elero.cover:020]:   pck_inf1: 0x6a, pck_inf2: 0x00
+[09:19:54.420][C][elero.cover:022]:   Open Duration: 26000ms
+[09:19:54.420][C][elero.cover:024]:   Close Duration: 26000ms
+[09:19:54.420][C][elero.cover:025]:   Poll Interval: 600000ms
+[09:19:54.420][C][elero.cover:026]:   Supports Tilt: NO
+[09:19:54.421][C][elero.cover:027]:   Assumed State: YES
+[09:19:54.421][C][elero:014]: Elero Refresh Button 'pergola4-vertikal-sued Refresh'
+[09:19:54.421][C][elero:156]:   Icon: 'mdi:refresh'
+[09:19:54.421][C][elero:706]:   Target: cover 0xe3be2f
+[09:19:54.421][C][elero.cover:015]: Elero Cover 'pergola5-vertikal-sued'
+[09:19:54.422][C][elero.cover:015]:   Assumed State: YES
+[09:19:54.422][C][elero.cover:016]:   Blind Address: 0xa9be2f
+[09:19:54.422][C][elero.cover:017]:   Remote Address: 0x458130
+[09:19:54.430][C][elero.cover:018]:   Channel: 6
+[09:19:54.431][C][elero.cover:019]:   Hop: 0x00
+[09:19:54.431][C][elero.cover:020]:   pck_inf1: 0x6a, pck_inf2: 0x10
+[09:19:54.431][C][elero.cover:022]:   Open Duration: 26000ms
+[09:19:54.438][C][elero.cover:024]:   Close Duration: 26000ms
+[09:19:54.438][C][elero.cover:025]:   Poll Interval: 600000ms
+[09:19:54.438][C][elero.cover:026]:   Supports Tilt: NO
+[09:19:54.438][C][elero.cover:027]:   Assumed State: YES
+[09:19:54.448][C][elero:014]: Elero Refresh Button 'pergola5-vertikal-sued Refresh'
+[09:19:54.448][C][elero:156]:   Icon: 'mdi:refresh'
+[09:19:54.448][C][elero:706]:   Target: cover 0xa9be2f
+[09:19:54.448][C][elero.cover:015]: Elero Cover 'pergola6-vertikal-west'
+[09:19:54.455][C][elero.cover:015]:   Assumed State: YES
+[09:19:54.455][C][elero.cover:016]:   Blind Address: 0xf6be2f
+[09:19:54.455][C][elero.cover:017]:   Remote Address: 0x458130
+[09:19:54.455][C][elero.cover:018]:   Channel: 7
+[09:19:54.463][C][elero.cover:019]:   Hop: 0x0a
+[09:19:54.464][C][elero.cover:020]:   pck_inf1: 0x6a, pck_inf2: 0x00
+[09:19:54.464][C][elero.cover:022]:   Open Duration: 26000ms
+[09:19:54.464][C][elero.cover:024]:   Close Duration: 26000ms
+[09:19:54.489][C][elero.cover:025]:   Poll Interval: 600000ms
+[09:19:54.489][C][elero.cover:026]:   Supports Tilt: NO
+[09:19:54.489][C][elero.cover:027]:   Assumed State: YES
+[09:19:54.489][C][elero:014]: Elero Refresh Button 'pergola6-vertikal-west Refresh'
+[09:19:54.490][C][elero:156]:   Icon: 'mdi:refresh'
+[09:19:54.490][C][elero:706]:   Target: cover 0xf6be2f
+[09:19:54.490][C][elero.group:044]: Elero Group Cover 'Markisen':
+[09:19:54.490][C][elero.group:045]:   Members: 2
+[09:19:54.490][C][elero.group:046]:   Native multi-dest: no (incompatible profiles)
+[09:19:54.490][C][elero.group:047]:   Hide members: NO
+[09:19:54.490][C][elero.group:049]:     - 0x653d2e (ch=1, remote=0x458130)
+[09:19:54.490][C][elero.group:049]:     - 0x273d2e (ch=2, remote=0x458130)
+[09:19:54.506][C][wifi_info:016]: IP Address 'wifi_ip'
+[09:19:54.507][C][rotary_encoder:017]: Rotary Encoder 'main_dial'
+[09:19:54.507][C][rotary_encoder:017]:   State Class: 'measurement'
+[09:19:54.507][C][rotary_encoder:017]:   Unit of Measurement: 'steps'
+[09:19:54.507][C][rotary_encoder:017]:   Accuracy Decimals: 0
+[09:19:54.507][C][rotary_encoder:156]:   Icon: 'mdi:rotate-right'
+[09:19:54.507][C][rotary_encoder:131]:   Pin A: GPIO4
+[09:19:54.520][C][rotary_encoder:131]:   Pin B: GPIO5
+[09:19:54.520][C][rotary_encoder:177]:   Restore Mode: Restore (Defaults to zero)
+[09:19:54.520][C][rotary_encoder:184]:   Resolution: 2 Pulses Per Cycle
+[09:19:54.520][C][restart.button:014]: Restart Button 'System Restart'
+[09:19:54.520][C][restart.button:156]:   Icon: 'mdi:restart'
+[09:19:54.520][C][network:050]: Network:
+[09:19:54.520][C][network:050]:   TCP send buffer: 5760 bytes
+[09:19:54.520][C][wifi:1582]: WiFi:
+[09:19:54.520][C][wifi:1582]:   Local MAC: 98:A3:16:E2:50:E0
+[09:19:54.520][C][wifi:1582]:   Connected: YES
+[09:19:54.520][C][wifi:1286]:   IP Address: 192.168.22.196
+[09:19:54.527][C][wifi:1297]:   SSID: 'smarttools'
+[09:19:54.527][C][wifi:1297]:   BSSID: 8C:30:66:76:B3:D0
+[09:19:54.527][C][wifi:1297]:   Hostname: 'lilygo-elero'
+[09:19:54.527][C][wifi:1297]:   Signal strength: -66 dB ▂▄▆█
+[09:19:54.527][C][wifi:1297]:   Channel: 11
+[09:19:54.527][C][wifi:1297]:   Subnet: 255.255.255.0
+[09:19:54.527][C][wifi:1297]:   Gateway: 192.168.22.1
+[09:19:54.527][C][wifi:1297]:   DNS1: 192.168.22.1
+[09:19:54.527][C][wifi:1297]:   DNS2: 0.0.0.0
+[09:19:54.527][C][elero.web_server:200]: Elero Web Server:
+[09:19:54.527][C][elero.web_server:201]:   URL: /elero
+[09:19:54.527][C][elero.web_server:202]:   API: /elero/api/*
+[09:19:54.530][C][elero.web_server:203]:   Enabled: yes
+[09:19:54.539][C][esphome.ota:125]: Over-The-Air updates:
+[09:19:54.539][C][esphome.ota:125]:   Address: 192.168.22.196:3232
+[09:19:54.539][C][esphome.ota:125]:   Version: 2
+[09:19:54.539][C][esphome.ota:125]:   Encryption: offered, plaintext accepted
+[09:19:54.539][C][esphome.ota:149]:   Password configured
+[09:19:54.539][C][safe_mode:058]: Safe Mode:
+[09:19:54.539][C][safe_mode:058]:   Successful after: 60s
+[09:19:54.539][C][safe_mode:058]:   Invoke after: 10 attempts
+[09:19:54.539][C][safe_mode:058]:   Duration: 300s
+[09:19:54.546][C][safe_mode:079]:   Bootloader rollback: supported
+[09:19:54.554][C][api:293]: Server:
+[09:19:54.554][C][api:293]:   Address: 192.168.22.196:6053
+[09:19:54.554][C][api:293]:   Listen backlog: 4
+[09:19:54.554][C][api:293]:   Max connections: 5
+[09:19:54.555][C][api:300]:   Noise encryption: YES
+[09:19:54.555][C][mdns:259]: mDNS:
+[09:19:54.555][C][mdns:259]:   Hostname: lilygo-elero
+[09:19:54.558][V][mdns:264]:   Services:
+[09:19:54.558][V][mdns:266]:   - _esphomelib, _tcp, 6053
+[09:19:54.563][V][mdns:269]:     TXT: friendly_name = Lilygo-Elero Steuerung
+[09:19:54.563][V][mdns:269]:     TXT: version = 2026.9.1
+[09:19:54.566][V][mdns:269]:     TXT: config_hash = bb3ed316
+[09:19:54.572][V][mdns:269]:     TXT: mac = 98a316e250e0
+[09:19:54.572][V][mdns:269]:     TXT: platform = ESP32
+[09:19:54.573][V][mdns:269]:     TXT: board = esp32-s3-devkitc-1
+[09:19:54.576][V][mdns:269]:     TXT: network = wifi
+[09:19:54.641][V][mdns:269]:     TXT: api_encryption = Noise_NNpsk0_25519_ChaChaPoly_SHA256
+[09:19:54.862][D][api:277]: Accept 10.10.0.10
+[09:19:54.910][V][api.proto:238]: Cannot decode VarInt field 4 with value 1!
+[09:19:54.919][V][api.connection:1800]: Hello from client: 'Home Assistant 2026.10.0' | 10.10.0.10 | API Version 1.18
+[09:19:54.932][D][api.connection:2669]: Home Assistant 2026.10.0 (10.10.0.10): connected
+[09:19:55.513][D][elero:757][elero_radio]: send to 0x273d2e: cmd=0x00 ch=02 cnt=02
+[09:19:55.514][V][elero:764][elero_radio]:   TX raw [30 bytes]: 1D.02.6A.00.0A.01.02.45.81.30.45.81.30.45.81.30.01.27.3D.2E.00.04.83.AB.0F.50.79.A7.D3.6D (30)
+[09:19:55.530][D][elero:201][elero_radio]: Local TX complete; motor delivery unconfirmed (6ms)
+[09:19:55.647][D][elero:099][elero_radio]: rcv'd from 0x273d2e: state=0x01 rssi=-58.5
+[09:19:55.653][V][elero:101][elero_radio]: rcv'd: len=29, cnt=225, typ=0xca, typ2=0x10, hop=0x00, syst=0x01, chl=02, src=0x273d2e, bwd=0x273d2e, fwd=0x458130, #dst=01, dst=0x458130, rssi=-58.5, lqi=47, crc= 1, payload=[0x01 0x78 0x00 0x00 0x00 0x00 0x00 0x00 0x01 0x10]
+[09:19:55.654][V][sensor:077]: 'pergola2-horizontal RSSI': Received new state -58.500000
+[09:19:55.665][V][sensor:125]: 'pergola2-horizontal RSSI' >> -58.5 dBm
+[09:19:55.665][V][text_sensor:033]: 'pergola2-horizontal Status': Received new state top
+[09:19:55.666][V][text_sensor:100]: 'pergola2-horizontal Status' >> 'top'
+[09:19:55.666][V][elero.cover:376]: Got state: 0x01 (top) for blind 0x273d2e
+[09:20:00.529][D][elero:757][elero_radio]: send to 0xde5e2f: cmd=0x00 ch=04 cnt=02
+[09:20:00.565][V][elero:764][elero_radio]:   TX raw [30 bytes]: 1D.02.6A.00.0A.01.04.45.81.30.45.81.30.45.81.30.01.DE.5E.2F.00.04.83.AB.0F.50.79.A7.D3.6D (30)
+[09:20:00.565][D][elero:201][elero_radio]: Local TX complete; motor delivery unconfirmed (6ms)
+[09:20:05.520][D][elero:757][elero_radio]: send to 0xe3be2f: cmd=0x00 ch=05 cnt=02
+[09:20:05.524][V][elero:764][elero_radio]:   TX raw [30 bytes]: 1D.02.6A.00.0A.01.05.45.81.30.45.81.30.45.81.30.01.E3.BE.2F.00.04.83.AB.0F.50.79.A7.D3.6D (30)
+[09:20:05.542][D][elero:201][elero_radio]: Local TX complete; motor delivery unconfirmed (6ms)
+[09:20:10.524][D][elero:757][elero_radio]: send to 0xa9be2f: cmd=0x00 ch=06 cnt=02
+[09:20:10.526][V][elero:764][elero_radio]:   TX raw [30 bytes]: 1D.02.6A.10.00.01.06.45.81.30.45.81.30.45.81.30.01.A9.BE.2F.00.03.83.AB.0F.50.79.A7.D3.6D (30)
+[09:20:10.540][D][elero:201][elero_radio]: Local TX complete; motor delivery unconfirmed (6ms)
+[09:20:15.528][D][elero:757][elero_radio]: send to 0xf6be2f: cmd=0x00 ch=07 cnt=02
+[09:20:15.536][V][elero:764][elero_radio]:   TX raw [30 bytes]: 1D.02.6A.00.0A.01.07.45.81.30.45.81.30.45.81.30.01.F6.BE.2F.00.04.83.AB.0F.50.79.A7.D3.6D (30)
+[09:20:15.543][D][elero:201][elero_radio]: Local TX complete; motor delivery unconfirmed (6ms)
+[09:20:15.655][D][elero:099][elero_radio]: rcv'd from 0xf6be2f: state=0x01 rssi=-85.5
+[09:20:15.659][V][elero:101][elero_radio]: rcv'd: len=29, cnt=15, typ=0xca, typ2=0x10, hop=0x00, syst=0x01, chl=02, src=0xf6be2f, bwd=0xf6be2f, fwd=0x458130, #dst=01, dst=0x458130, rssi=-85.5, lqi=48, crc= 1, payload=[0x01 0x60 0x00 0x00 0x00 0x00 0x00 0x00 0x01 0x90]
+[09:20:15.664][V][sensor:077]: 'pergola6-vertikal-west RSSI': Received new state -85.500000
+[09:20:15.668][V][sensor:125]: 'pergola6-vertikal-west RSSI' >> -85.5 dBm
+[09:20:15.672][V][text_sensor:033]: 'pergola6-vertikal-west Status': Received new state top
+[09:20:15.688][V][text_sensor:100]: 'pergola6-vertikal-west Status' >> 'top'
+[09:20:15.688][V][elero.cover:376]: Got state: 0x01 (top) for blind 0xf6be2f
+[09:20:20.505][V][sensor:077]: 'Elero Frequency': Received new state 869.524963
+[09:20:20.509][V][sensor:125]: 'Elero Frequency' >> 869.52 MHz
+[09:20:20.516][V][sensor:077]: 'Elero RX Count': Received new state 7.000000
+[09:20:20.516][V][sensor:125]: 'Elero RX Count' >> 7 
+[09:20:20.531][V][sensor:077]: 'Elero TX Count': Received new state 11.000000
+[09:20:20.532][V][sensor:125]: 'Elero TX Count' >> 11 
+[09:20:20.532][V][sensor:077]: 'Elero Watchdog Recovery Count': Received new state 0.000000
+[09:20:20.532][V][sensor:125]: 'Elero Watchdog Recovery Count' >> 0 
+[09:20:20.534][V][sensor:077]: 'Elero Drop CRC Fail': Received new state 0.000000
+[09:20:20.534][V][sensor:125]: 'Elero Drop CRC Fail' >> 0 
+[09:20:20.534][V][sensor:077]: 'Elero Drop Too Many Destinations': Received new state 0.000000
+[09:20:20.534][V][sensor:125]: 'Elero Drop Too Many Destinations' >> 0 
+[09:20:20.539][V][sensor:077]: 'Elero Drop Bounds': Received new state 0.000000
+[09:20:20.548][V][sensor:125]: 'Elero Drop Bounds' >> 0 
+[09:20:20.549][V][sensor:077]: 'Elero TX Queue Latency': Received new state 9.000000
+[09:20:20.550][V][sensor:125]: 'Elero TX Queue Latency' >> 9 ms
+[09:20:20.553][V][sensor:077]: 'Elero Dispatch Latency': Received new state 35.000000
+[09:20:20.558][V][sensor:125]: 'Elero Dispatch Latency' >> 35 ms
+[09:20:20.562][W][component:419]: elero took a long time for an operation (58 ms), max is 50 ms
+[09:20:50.188][I][safe_mode:154]: Boot seems successful; resetting boot loop counter
+[09:20:50.552][V][sensor:077]: 'Elero Frequency': Received new state 869.524963
+[09:20:50.552][V][sensor:125]: 'Elero Frequency' >> 869.52 MHz
+[09:20:50.552][V][sensor:077]: 'Elero RX Count': Received new state 7.000000
+[09:20:50.553][V][sensor:125]: 'Elero RX Count' >> 7 
+[09:20:50.553][V][sensor:077]: 'Elero TX Count': Received new state 11.000000
+[09:20:50.553][V][sensor:125]: 'Elero TX Count' >> 11 
+[09:20:50.553][V][sensor:077]: 'Elero Watchdog Recovery Count': Received new state 0.000000
+[09:20:50.553][V][sensor:125]: 'Elero Watchdog Recovery Count' >> 0 
+[09:20:50.553][V][sensor:077]: 'Elero Drop CRC Fail': Received new state 0.000000
+[09:20:50.553][V][sensor:125]: 'Elero Drop CRC Fail' >> 0 
+[09:20:50.553][V][sensor:077]: 'Elero Drop Too Many Destinations': Received new state 0.000000
+[09:20:50.553][V][sensor:125]: 'Elero Drop Too Many Destinations' >> 0 
+[09:20:50.553][V][sensor:077]: 'Elero Drop Bounds': Received new state 0.000000
+[09:20:50.553][V][sensor:125]: 'Elero Drop Bounds' >> 0 
+[09:20:50.553][V][sensor:077]: 'Elero TX Queue Latency': Received new state 9.000000
+[09:20:50.557][V][sensor:125]: 'Elero TX Queue Latency' >> 9 ms
+[09:20:50.558][V][sensor:077]: 'Elero Dispatch Latency': Received new state 35.000000
+[09:20:50.558][V][sensor:125]: 'Elero Dispatch Latency' >> 35 ms
+[09:20:53.912][V][preferences:223]: Saving 1 items...
+[09:20:53.916][V][preferences:234]: sync: key: 233825507, len: 4
+[09:20:53.916][D][preferences:254]: Writing 1 items: 0 cached, 1 written, 0 failed
+[09:21:20.513][V][sensor:077]: 'Elero Frequency': Received new state 869.524963
+[09:21:20.513][V][sensor:125]: 'Elero Frequency' >> 869.52 MHz
+[09:21:20.513][V][sensor:077]: 'Elero RX Count': Received new state 7.000000
+[09:21:20.513][V][sensor:125]: 'Elero RX Count' >> 7 
+[09:21:20.526][V][sensor:077]: 'Elero TX Count': Received new state 11.000000
+[09:21:20.526][V][sensor:125]: 'Elero TX Count' >> 11 
+[09:21:20.526][V][sensor:077]: 'Elero Watchdog Recovery Count': Received new state 0.000000
+[09:21:20.526][V][sensor:125]: 'Elero Watchdog Recovery Count' >> 0 
+[09:21:20.536][V][sensor:077]: 'Elero Drop CRC Fail': Received new state 0.000000
+[09:21:20.536][V][sensor:125]: 'Elero Drop CRC Fail' >> 0 
+[09:21:20.536][V][sensor:077]: 'Elero Drop Too Many Destinations': Received new state 0.000000
+[09:21:20.536][V][sensor:125]: 'Elero Drop Too Many Destinations' >> 0 
+[09:21:20.552][V][sensor:077]: 'Elero Drop Bounds': Received new state 0.000000
+[09:21:20.552][V][sensor:125]: 'Elero Drop Bounds' >> 0 
+[09:21:20.552][V][sensor:077]: 'Elero TX Queue Latency': Received new state 9.000000
+[09:21:20.565][V][sensor:125]: 'Elero TX Queue Latency' >> 9 ms
+[09:21:20.584][V][sensor:077]: 'Elero Dispatch Latency': Received new state 35.000000
+[09:21:20.584][V][sensor:125]: 'Elero Dispatch Latency' >> 35 ms
+[09:21:50.506][V][sensor:077]: 'Elero Frequency': Received new state 869.524963
+[09:21:50.512][V][sensor:125]: 'Elero Frequency' >> 869.52 MHz
+[09:21:50.512][V][sensor:077]: 'Elero RX Count': Received new state 7.000000
+[09:21:50.512][V][sensor:125]: 'Elero RX Count' >> 7 
+[09:21:50.516][V][sensor:077]: 'Elero TX Count': Received new state 11.000000
+[09:21:50.523][V][sensor:125]: 'Elero TX Count' >> 11 
+[09:21:50.523][V][sensor:077]: 'Elero Watchdog Recovery Count': Received new state 0.000000
+[09:21:50.523][V][sensor:125]: 'Elero Watchdog Recovery Count' >> 0 
+[09:21:50.540][V][sensor:077]: 'Elero Drop CRC Fail': Received new state 0.000000
+[09:21:50.540][V][sensor:125]: 'Elero Drop CRC Fail' >> 0 
+[09:21:50.541][V][sensor:077]: 'Elero Drop Too Many Destinations': Received new state 0.000000
+[09:21:50.541][V][sensor:125]: 'Elero Drop Too Many Destinations' >> 0 
+[09:21:50.545][V][sensor:077]: 'Elero Drop Bounds': Received new state 0.000000
+[09:21:50.545][V][sensor:125]: 'Elero Drop Bounds' >> 0 
+[09:21:50.545][V][sensor:077]: 'Elero TX Queue Latency': Received new state 9.000000
+[09:21:50.545][V][sensor:125]: 'Elero TX Queue Latency' >> 9 ms
+[09:21:50.604][V][sensor:077]: 'Elero Dispatch Latency': Received new state 35.000000
+[09:21:50.604][V][sensor:125]: 'Elero Dispatch Latency' >> 35 ms
+[09:21:52.975][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-67.5
+[09:21:52.979][V][elero:101][elero_radio]: rcv'd: len=29, cnt=02, typ=0x6a, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0xe99b2b, rssi=-67.5, lqi=48, crc= 1, payload=[0x02 0x03 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00]
+[09:21:53.408][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-68.5
+[09:21:53.408][V][elero:101][elero_radio]: rcv'd: len=27, cnt=04, typ=0x44, typ2=0x12, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-68.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x00 0x00 0xc0]
+[09:21:53.421][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-68.5
+[09:21:53.433][V][elero:101][elero_radio]: rcv'd: len=27, cnt=04, typ=0x44, typ2=0x12, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-68.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x00 0x00 0xc0]
+[09:21:53.623][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-69.0
+[09:21:53.623][V][elero:101][elero_radio]: rcv'd: len=27, cnt=05, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-69.0, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00]
+[09:21:53.997][D][elero:099][elero_radio]: rcv'd from 0xe99b2b: state=0x10 rssi=-59.5
+[09:21:54.001][V][elero:101][elero_radio]: rcv'd: len=29, cnt=06, typ=0xca, typ2=0x10, hop=0x2a, syst=0x01, chl=03, src=0xe99b2b, bwd=0x273d2e, fwd=0x458130, #dst=01, dst=0x458130, rssi=-59.5, lqi=45, crc= 1, payload=[0x01 0x7f 0x00 0x00 0x00 0x00 0x00 0x00 0x10 0x10]
+[09:21:54.495][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-71.5
+[09:21:54.660][V][elero:101][elero_radio]: rcv'd: len=27, cnt=06, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-71.5, lqi=49, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x00 0x00 0xc0]
+[09:21:54.989][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-72.0
+[09:21:54.995][V][elero:101][elero_radio]: rcv'd: len=27, cnt=07, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-72.0, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00]
+[09:21:55.512][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-72.5
+[09:21:55.522][V][elero:101][elero_radio]: rcv'd: len=29, cnt=08, typ=0x6a, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0xe99b2b, rssi=-72.5, lqi=45, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x00 0x00 0xc0]
+[09:21:55.866][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-72.5
+[09:21:55.866][V][elero:101][elero_radio]: rcv'd: len=29, cnt=09, typ=0x6a, typ2=0x10, hop=0x05, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0xe99b2b, rssi=-72.5, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x00 0x00 0xc0]
+[09:21:55.957][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-85.5
+[09:21:55.969][V][elero:101][elero_radio]: rcv'd: len=29, cnt=09, typ=0x6a, typ2=0x10, hop=0x25, syst=0x01, chl=03, src=0x458130, bwd=0xde5e2f, fwd=0xe99b2b, #dst=01, dst=0xe99b2b, rssi=-85.5, lqi=46, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x00 0x00 0xc0]
+[09:21:56.133][D][elero:099][elero_radio]: rcv'd from 0xe99b2b: state=0x10 rssi=-86.0
+[09:21:56.133][V][elero:101][elero_radio]: rcv'd: len=29, cnt=07, typ=0xca, typ2=0x10, hop=0x1a, syst=0x01, chl=09, src=0xe99b2b, bwd=0xde5e2f, fwd=0x273d2e, #dst=01, dst=0x458130, rssi=-86.0, lqi=47, crc= 1, payload=[0x01 0x7f 0x00 0x00 0x00 0x00 0x00 0x00 0x10 0x90]
+[09:21:56.215][V][elero:079][elero_radio]: Stale/candidate status from 0xe99b2b cnt=7 accepted=7, dropping
+[09:21:56.330][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-72.5
+[09:21:56.338][V][elero:101][elero_radio]: rcv'd: len=27, cnt=10, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-72.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x00 0x00 0x40]
+[09:21:58.283][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-72.0
+[09:21:58.287][V][elero:101][elero_radio]: rcv'd: len=27, cnt=11, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-72.0, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x21 0x00 0x00 0x00 0x00 0x00]
+[09:21:59.049][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-71.5
+[09:21:59.053][V][elero:101][elero_radio]: rcv'd: len=27, cnt=13, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-71.5, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x00 0x00 0xc0]
+[09:21:59.069][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-71.5
+[09:21:59.073][V][elero:101][elero_radio]: rcv'd: len=27, cnt=13, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-71.5, lqi=49, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x00 0x00 0xc0]
+[09:21:59.226][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-71.5
+[09:21:59.231][V][elero:101][elero_radio]: rcv'd: len=27, cnt=14, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-71.5, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00]
+[09:21:59.263][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-71.5
+[09:21:59.272][V][elero:101][elero_radio]: rcv'd: len=27, cnt=14, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-71.5, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00]
+[09:21:59.503][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-71.5
+[09:21:59.531][V][elero:101][elero_radio]: rcv'd: len=29, cnt=15, typ=0x6a, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0xe99b2b, rssi=-71.5, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x24 0x00 0x00 0x00 0x00 0x00]
+[09:21:59.726][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-71.5
+[09:21:59.730][V][elero:101][elero_radio]: rcv'd: len=27, cnt=17, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-71.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x80]
+[09:21:59.746][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-72.0
+[09:21:59.761][V][elero:101][elero_radio]: rcv'd: len=27, cnt=17, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-72.0, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x80]
+[09:22:00.010][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-71.5
+[09:22:00.014][V][elero:101][elero_radio]: rcv'd: len=29, cnt=18, typ=0x6a, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0xe99b2b, rssi=-71.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x24 0x00 0x00 0x00 0x00 0x00]
+[09:22:00.024][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-71.5
+[09:22:00.028][V][elero:101][elero_radio]: rcv'd: len=27, cnt=19, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-71.5, lqi=49, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x00 0x00 0xc0]
+[09:22:00.053][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-71.5
+[09:22:00.078][V][elero:101][elero_radio]: rcv'd: len=27, cnt=19, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-71.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x00 0x00 0xc0]
+[09:22:00.192][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-71.5
+[09:22:00.209][V][elero:101][elero_radio]: rcv'd: len=27, cnt=20, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-71.5, lqi=46, crc= 1, payload=[0x00 0x03 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00]
+[09:22:01.445][D][elero:099][elero_radio]: rcv'd from 0xde5e2f: state=0x01 rssi=-85.5
+[09:22:01.449][V][elero:101][elero_radio]: rcv'd: len=29, cnt=46, typ=0xca, typ2=0x10, hop=0x0a, syst=0x01, chl=21, src=0xde5e2f, bwd=0xde5e2f, fwd=0x458130, #dst=01, dst=0x458130, rssi=-85.5, lqi=47, crc= 1, payload=[0x01 0x60 0x00 0x00 0x00 0x00 0x00 0x00 0x01 0x10]
+[09:22:01.458][V][sensor:077]: 'pergola3-vertikal-ost RSSI': Received new state -85.500000
+[09:22:01.458][V][sensor:125]: 'pergola3-vertikal-ost RSSI' >> -85.5 dBm
+[09:22:01.458][V][text_sensor:033]: 'pergola3-vertikal-ost Status': Received new state top
+[09:22:01.462][V][text_sensor:100]: 'pergola3-vertikal-ost Status' >> 'top'
+[09:22:01.479][V][elero.cover:376]: Got state: 0x01 (top) for blind 0xde5e2f
+[09:22:02.045][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-71.5
+[09:22:02.049][V][elero:101][elero_radio]: rcv'd: len=29, cnt=22, typ=0x6a, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0xe99b2b, rssi=-71.5, lqi=47, crc= 1, payload=[0x02 0x03 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x80]
+[09:22:02.437][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-71.5
+[09:22:02.439][V][elero:101][elero_radio]: rcv'd: len=29, cnt=23, typ=0x6a, typ2=0x10, hop=0x05, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0xe99b2b, rssi=-71.5, lqi=49, crc= 1, payload=[0x02 0x03 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x80]
+[09:22:02.491][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-71.5
+[09:22:02.495][V][elero:101][elero_radio]: rcv'd: len=27, cnt=24, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-71.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x00 0x00 0x40]
+[09:22:02.603][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-58.5
+[09:22:02.606][V][elero:101][elero_radio]: rcv'd: len=29, cnt=23, typ=0x6a, typ2=0x10, hop=0x15, syst=0x01, chl=03, src=0x458130, bwd=0x273d2e, fwd=0xde5e2f, #dst=01, dst=0xe99b2b, rssi=-58.5, lqi=49, crc= 1, payload=[0x02 0x03 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x80]
+[09:22:02.672][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-71.5
+[09:22:02.691][V][elero:101][elero_radio]: rcv'd: len=27, cnt=25, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-71.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x80]
+[09:22:02.696][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-71.5
+[09:22:02.696][V][elero:101][elero_radio]: rcv'd: len=27, cnt=25, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-71.5, lqi=49, crc= 1, payload=[0x00 0x03 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x80]
+[09:22:03.209][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-72.0
+[09:22:03.215][V][elero:101][elero_radio]: rcv'd: len=27, cnt=27, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-72.0, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x00 0x00 0xc0]
+[09:22:03.242][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-71.5
+[09:22:03.245][V][elero:101][elero_radio]: rcv'd: len=27, cnt=27, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-71.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x00 0x00 0xc0]
+[09:22:03.424][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-72.0
+[09:22:03.448][V][elero:101][elero_radio]: rcv'd: len=27, cnt=28, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-72.0, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x80]
+[09:22:03.686][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-71.5
+[09:22:03.732][V][elero:101][elero_radio]: rcv'd: len=29, cnt=29, typ=0x6a, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0xe99b2b, rssi=-71.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x24 0x00 0x00 0x00 0x00 0x00]
+[09:22:03.732][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-71.5
+[09:22:03.732][V][elero:101][elero_radio]: rcv'd: len=27, cnt=30, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-71.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x00 0x00 0xc0]
+[09:22:03.732][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-71.5
+[09:22:03.732][V][elero:101][elero_radio]: rcv'd: len=27, cnt=30, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-71.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x00 0x00 0xc0]
+[09:22:03.764][D][elero:099][elero_radio]: rcv'd from 0xe99b2b: state=0x03 rssi=-74.5
+[09:22:03.785][V][elero:101][elero_radio]: rcv'd: len=29, cnt=09, typ=0xca, typ2=0x10, hop=0x0a, syst=0x01, chl=29, src=0xe99b2b, bwd=0xe99b2b, fwd=0x458130, #dst=01, dst=0x458130, rssi=-74.5, lqi=47, crc= 1, payload=[0x01 0x7f 0x00 0x00 0x00 0x00 0x64 0x00 0x03 0x20]
+[09:22:04.070][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-67.5
+[09:22:04.071][V][elero:101][elero_radio]: rcv'd: len=27, cnt=33, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-67.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x00 0x00 0xc0]
+[09:22:04.092][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-67.5
+[09:22:04.096][V][elero:101][elero_radio]: rcv'd: len=27, cnt=33, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-67.5, lqi=49, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x00 0x00 0xc0]
+[09:22:04.188][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-67.0
+[09:22:04.190][V][elero:101][elero_radio]: rcv'd: len=27, cnt=34, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-67.0, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x80]
+[09:22:04.725][D][elero:099][elero_radio]: rcv'd from 0xe99b2b: state=0x10 rssi=-74.5
+[09:22:04.735][V][elero:101][elero_radio]: rcv'd: len=29, cnt=10, typ=0xca, typ2=0x10, hop=0x0a, syst=0x01, chl=35, src=0xe99b2b, bwd=0xe99b2b, fwd=0x458130, #dst=01, dst=0x458130, rssi=-74.5, lqi=49, crc= 1, payload=[0x01 0x7f 0x00 0x00 0x00 0x00 0x00 0x00 0x10 0x10]
+[09:22:05.742][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.0
+[09:22:05.742][V][elero:101][elero_radio]: rcv'd: len=29, cnt=36, typ=0x6a, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0xe99b2b, rssi=-63.0, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x00 0x00 0xc0]
+[09:22:06.138][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-60.0
+[09:22:06.142][V][elero:101][elero_radio]: rcv'd: len=29, cnt=37, typ=0x6a, typ2=0x10, hop=0x05, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0xe99b2b, rssi=-60.0, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x00 0x00 0xc0]
+[09:22:06.271][D][elero:099][elero_radio]: rcv'd from 0xe99b2b: state=0x10 rssi=-74.0
+[09:22:06.273][V][elero:101][elero_radio]: rcv'd: len=29, cnt=11, typ=0xca, typ2=0x10, hop=0x0a, syst=0x01, chl=37, src=0xe99b2b, bwd=0xe99b2b, fwd=0xde5e2f, #dst=01, dst=0x458130, rssi=-74.0, lqi=48, crc= 1, payload=[0x01 0x7f 0x00 0x00 0x00 0x00 0x00 0x00 0x10 0x90]
+[09:22:06.322][V][elero:079][elero_radio]: Stale/candidate status from 0xe99b2b cnt=11 accepted=11, dropping
+[09:22:06.392][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-60.5
+[09:22:06.396][V][elero:101][elero_radio]: rcv'd: len=29, cnt=37, typ=0x6a, typ2=0x10, hop=0x15, syst=0x01, chl=03, src=0x458130, bwd=0x273d2e, fwd=0xde5e2f, #dst=01, dst=0xe99b2b, rssi=-60.5, lqi=49, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x00 0x00 0xc0]
+[09:22:06.478][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-88.5
+[09:22:06.492][V][elero:101][elero_radio]: rcv'd: len=29, cnt=37, typ=0x6a, typ2=0x10, hop=0x25, syst=0x01, chl=03, src=0x458130, bwd=0xde5e2f, fwd=0xe99b2b, #dst=01, dst=0xe99b2b, rssi=-88.5, lqi=46, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x00 0x00 0xc0]
+[09:22:06.644][V][elero:079][elero_radio]: Stale/candidate status from 0xe99b2b cnt=11 accepted=11, dropping
+[09:22:07.404][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-61.5
+[09:22:07.406][V][elero:101][elero_radio]: rcv'd: len=27, cnt=38, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-61.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x00 0x00 0x40]
+[09:22:07.591][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.0
+[09:22:07.595][V][elero:101][elero_radio]: rcv'd: len=27, cnt=39, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.0, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x80]
+[09:22:07.619][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.0
+[09:22:07.619][V][elero:101][elero_radio]: rcv'd: len=27, cnt=39, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.0, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x80]
+[09:22:09.154][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:09.166][V][elero:101][elero_radio]: rcv'd: len=29, cnt=40, typ=0x6a, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0xe99b2b, rssi=-63.5, lqi=47, crc= 1, payload=[0x02 0x03 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00]
+[09:22:09.793][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:09.793][V][elero:101][elero_radio]: rcv'd: len=27, cnt=41, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x40 0x00 0x60]
+[09:22:09.810][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:09.816][V][elero:101][elero_radio]: rcv'd: len=27, cnt=41, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=49, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x40 0x00 0x60]
+[09:22:09.940][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:09.942][V][elero:101][elero_radio]: rcv'd: len=27, cnt=42, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x40 0x00 0xe0]
+[09:22:09.961][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:09.975][V][elero:101][elero_radio]: rcv'd: len=27, cnt=42, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x40 0x00 0xe0]
+[09:22:10.249][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:10.251][V][elero:101][elero_radio]: rcv'd: len=27, cnt=43, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=49, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x40 0x00 0x60]
+[09:22:10.269][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:10.273][V][elero:101][elero_radio]: rcv'd: len=27, cnt=43, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x40 0x00 0x60]
+[09:22:10.335][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:10.338][V][elero:101][elero_radio]: rcv'd: len=27, cnt=44, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x40 0x00 0xe0]
+[09:22:10.378][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:10.381][V][elero:101][elero_radio]: rcv'd: len=27, cnt=44, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x40 0x00 0xe0]
+[09:22:10.591][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-64.0
+[09:22:10.593][V][elero:101][elero_radio]: rcv'd: len=27, cnt=45, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-64.0, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x40 0x00 0xe0]
+[09:22:10.613][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-64.5
+[09:22:10.618][V][elero:101][elero_radio]: rcv'd: len=27, cnt=45, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-64.5, lqi=49, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x40 0x00 0xe0]
+[09:22:12.179][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:12.181][V][elero:101][elero_radio]: rcv'd: len=27, cnt=47, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x40 0x00 0xe0]
+[09:22:12.223][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-64.0
+[09:22:12.234][V][elero:101][elero_radio]: rcv'd: len=27, cnt=47, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-64.0, lqi=49, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x40 0x00 0xe0]
+[09:22:12.316][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:12.319][V][elero:101][elero_radio]: rcv'd: len=27, cnt=48, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x40 0x00 0xe0]
+[09:22:12.330][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:12.334][V][elero:101][elero_radio]: rcv'd: len=27, cnt=48, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=45, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x40 0x00 0xe0]
+[09:22:12.829][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:12.833][V][elero:101][elero_radio]: rcv'd: len=27, cnt=49, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x40 0x00 0x60]
+[09:22:12.862][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:12.866][V][elero:101][elero_radio]: rcv'd: len=27, cnt=49, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x40 0x00 0x60]
+[09:22:12.926][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:12.928][V][elero:101][elero_radio]: rcv'd: len=27, cnt=50, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x40 0x00 0x60]
+[09:22:12.954][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:12.965][V][elero:101][elero_radio]: rcv'd: len=27, cnt=50, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x40 0x00 0x60]
+[09:22:13.245][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-64.0
+[09:22:13.247][V][elero:101][elero_radio]: rcv'd: len=27, cnt=51, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-64.0, lqi=46, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x40 0x00 0xe0]
+[09:22:13.293][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:13.305][V][elero:101][elero_radio]: rcv'd: len=27, cnt=52, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=45, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x40 0x00 0xe0]
+[09:22:13.875][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-64.0
+[09:22:13.877][V][elero:101][elero_radio]: rcv'd: len=27, cnt=53, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-64.0, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x40 0x00 0xe0]
+[09:22:13.963][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:13.966][V][elero:101][elero_radio]: rcv'd: len=27, cnt=54, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=49, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x40 0x00 0xe0]
+[09:22:14.226][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-64.0
+[09:22:14.229][V][elero:101][elero_radio]: rcv'd: len=27, cnt=55, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-64.0, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x40 0x00 0xe0]
+[09:22:14.258][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:14.262][V][elero:101][elero_radio]: rcv'd: len=27, cnt=55, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x40 0x00 0xe0]
+[09:22:14.310][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:14.318][V][elero:101][elero_radio]: rcv'd: len=27, cnt=56, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x40 0x00 0xe0]
+[09:22:14.901][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-64.0
+[09:22:14.913][V][elero:101][elero_radio]: rcv'd: len=27, cnt=57, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-64.0, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x40 0x00 0x60]
+[09:22:15.330][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:15.342][V][elero:101][elero_radio]: rcv'd: len=27, cnt=59, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x40 0x00 0x60]
+[09:22:15.423][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:15.428][V][elero:101][elero_radio]: rcv'd: len=27, cnt=60, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x40 0x00 0x60]
+[09:22:15.443][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-64.0
+[09:22:15.446][V][elero:101][elero_radio]: rcv'd: len=27, cnt=60, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-64.0, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x40 0x00 0x60]
+[09:22:15.642][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-64.5
+[09:22:15.652][V][elero:101][elero_radio]: rcv'd: len=27, cnt=61, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-64.5, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x40 0x00 0xe0]
+[09:22:15.662][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-64.5
+[09:22:15.665][V][elero:101][elero_radio]: rcv'd: len=27, cnt=61, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-64.5, lqi=49, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x40 0x00 0xe0]
+[09:22:15.784][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-64.0
+[09:22:15.794][V][elero:101][elero_radio]: rcv'd: len=27, cnt=62, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-64.0, lqi=49, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x40 0x00 0xe0]
+[09:22:15.841][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:15.841][V][elero:101][elero_radio]: rcv'd: len=27, cnt=62, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x40 0x00 0xe0]
+[09:22:16.081][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:16.087][V][elero:101][elero_radio]: rcv'd: len=27, cnt=63, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x40 0x00 0xe0]
+[09:22:16.103][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:16.106][V][elero:101][elero_radio]: rcv'd: len=27, cnt=63, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x40 0x00 0xe0]
+[09:22:16.469][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-64.0
+[09:22:16.473][V][elero:101][elero_radio]: rcv'd: len=27, cnt=65, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-64.0, lqi=49, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x40 0x00 0x60]
+[09:22:16.534][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:16.537][V][elero:101][elero_radio]: rcv'd: len=27, cnt=66, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x40 0x00 0xe0]
+[09:22:16.559][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:16.564][V][elero:101][elero_radio]: rcv'd: len=27, cnt=66, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x40 0x00 0xe0]
+[09:22:17.461][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:17.471][V][elero:101][elero_radio]: rcv'd: len=27, cnt=68, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x40 0x00 0x60]
+[09:22:17.527][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:17.534][V][elero:101][elero_radio]: rcv'd: len=27, cnt=68, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=46, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x40 0x00 0x60]
+[09:22:17.846][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:17.848][V][elero:101][elero_radio]: rcv'd: len=27, cnt=69, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x40 0x00 0xe0]
+[09:22:17.958][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:17.962][V][elero:101][elero_radio]: rcv'd: len=27, cnt=70, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=46, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x40 0x00 0xe0]
+[09:22:17.990][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:17.993][V][elero:101][elero_radio]: rcv'd: len=27, cnt=70, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x40 0x00 0xe0]
+[09:22:18.838][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-64.0
+[09:22:18.841][V][elero:101][elero_radio]: rcv'd: len=27, cnt=71, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-64.0, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x40 0x00 0x00 0x40 0x00 0xe0]
+[09:22:18.968][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-64.0
+[09:22:18.968][V][elero:101][elero_radio]: rcv'd: len=27, cnt=72, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-64.0, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x40 0x00 0x60]
+[09:22:19.018][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:19.021][V][elero:101][elero_radio]: rcv'd: len=27, cnt=72, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=46, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x40 0x00 0x60]
+[09:22:19.266][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:19.275][V][elero:101][elero_radio]: rcv'd: len=27, cnt=73, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x40 0x00 0x00 0x40 0x00 0xe0]
+[09:22:19.380][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:19.387][V][elero:101][elero_radio]: rcv'd: len=27, cnt=74, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x40 0x00 0x60]
+[09:22:19.420][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:19.420][V][elero:101][elero_radio]: rcv'd: len=27, cnt=74, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x40 0x00 0x60]
+[09:22:19.627][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-64.0
+[09:22:19.631][V][elero:101][elero_radio]: rcv'd: len=27, cnt=75, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-64.0, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x40 0x00 0x00 0x40 0x00 0x60]
+[09:22:19.702][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:19.703][V][elero:101][elero_radio]: rcv'd: len=27, cnt=76, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=46, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x40 0x00 0x60]
+[09:22:19.728][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:19.728][V][elero:101][elero_radio]: rcv'd: len=27, cnt=76, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=46, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x40 0x00 0x60]
+[09:22:19.899][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:19.899][V][elero:101][elero_radio]: rcv'd: len=27, cnt=77, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x40 0x00 0x00 0x40 0x00 0x60]
+[09:22:19.940][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-64.0
+[09:22:19.945][V][elero:101][elero_radio]: rcv'd: len=27, cnt=77, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-64.0, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x40 0x00 0x00 0x40 0x00 0x60]
+[09:22:20.220][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-64.0
+[09:22:20.226][V][elero:101][elero_radio]: rcv'd: len=27, cnt=79, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-64.0, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x40 0x00 0x00 0x40 0x00 0x60]
+[09:22:20.246][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:20.250][V][elero:101][elero_radio]: rcv'd: len=27, cnt=79, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x40 0x00 0x00 0x40 0x00 0x60]
+[09:22:20.327][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:20.337][V][elero:101][elero_radio]: rcv'd: len=27, cnt=80, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x40 0x00 0xe0]
+[09:22:20.357][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:20.361][V][elero:101][elero_radio]: rcv'd: len=27, cnt=80, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x40 0x00 0xe0]
+[09:22:20.505][V][sensor:077]: 'Elero Frequency': Received new state 869.524963
+[09:22:20.508][V][sensor:125]: 'Elero Frequency' >> 869.52 MHz
+[09:22:20.517][V][sensor:077]: 'Elero RX Count': Received new state 117.000000
+[09:22:20.518][V][sensor:125]: 'Elero RX Count' >> 117 
+[09:22:20.518][V][sensor:077]: 'Elero TX Count': Received new state 11.000000
+[09:22:20.518][V][sensor:125]: 'Elero TX Count' >> 11 
+[09:22:20.523][V][sensor:077]: 'Elero Watchdog Recovery Count': Received new state 0.000000
+[09:22:20.527][V][sensor:125]: 'Elero Watchdog Recovery Count' >> 0 
+[09:22:20.532][V][sensor:077]: 'Elero Drop CRC Fail': Received new state 0.000000
+[09:22:20.532][V][sensor:125]: 'Elero Drop CRC Fail' >> 0 
+[09:22:20.542][V][sensor:077]: 'Elero Drop Too Many Destinations': Received new state 0.000000
+[09:22:20.544][V][sensor:125]: 'Elero Drop Too Many Destinations' >> 0 
+[09:22:20.544][V][sensor:077]: 'Elero Drop Bounds': Received new state 0.000000
+[09:22:20.544][V][sensor:125]: 'Elero Drop Bounds' >> 0 
+[09:22:20.549][V][sensor:077]: 'Elero TX Queue Latency': Received new state 9.000000
+[09:22:20.553][V][sensor:125]: 'Elero TX Queue Latency' >> 9 ms
+[09:22:20.558][V][sensor:077]: 'Elero Dispatch Latency': Received new state 17.000000
+[09:22:20.562][V][sensor:125]: 'Elero Dispatch Latency' >> 17 ms
+[09:22:20.566][W][component:419]: elero took a long time for an operation (61 ms), max is 60 ms
+[09:22:20.573][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-64.0
+[09:22:20.573][V][elero:101][elero_radio]: rcv'd: len=27, cnt=81, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-64.0, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x40 0x00 0x00 0x40 0x00 0xe0]
+[09:22:20.577][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:20.581][V][elero:101][elero_radio]: rcv'd: len=27, cnt=81, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x40 0x00 0x00 0x40 0x00 0xe0]
+[09:22:20.630][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:20.634][V][elero:101][elero_radio]: rcv'd: len=27, cnt=82, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=49, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x40 0x00 0xe0]
+[09:22:20.647][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:20.650][V][elero:101][elero_radio]: rcv'd: len=27, cnt=82, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x40 0x00 0xe0]
+[09:22:20.812][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:20.822][V][elero:101][elero_radio]: rcv'd: len=27, cnt=83, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x40 0x00 0x00 0x40 0x00 0x60]
+[09:22:20.840][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:20.840][V][elero:101][elero_radio]: rcv'd: len=27, cnt=83, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x40 0x00 0x00 0x40 0x00 0x60]
+[09:22:20.969][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-64.0
+[09:22:20.973][V][elero:101][elero_radio]: rcv'd: len=27, cnt=84, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-64.0, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x40 0x00 0xe0]
+[09:22:21.124][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:21.126][V][elero:101][elero_radio]: rcv'd: len=27, cnt=85, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x40 0x00 0x00 0x40 0x00 0x60]
+[09:22:21.160][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:21.166][V][elero:101][elero_radio]: rcv'd: len=27, cnt=85, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x40 0x00 0x00 0x40 0x00 0x60]
+[09:22:21.289][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:21.291][V][elero:101][elero_radio]: rcv'd: len=27, cnt=86, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x40 0x00 0x60]
+[09:22:21.448][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-64.0
+[09:22:21.453][V][elero:101][elero_radio]: rcv'd: len=27, cnt=87, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-64.0, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x40 0x00 0x00 0x40 0x00 0x60]
+[09:22:21.472][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-64.0
+[09:22:21.473][V][elero:101][elero_radio]: rcv'd: len=27, cnt=87, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-64.0, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x40 0x00 0x00 0x40 0x00 0x60]
+[09:22:21.671][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:21.726][V][elero:101][elero_radio]: rcv'd: len=27, cnt=88, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x40 0x00 0x60]
+[09:22:21.782][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:21.785][V][elero:101][elero_radio]: rcv'd: len=27, cnt=89, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=46, crc= 1, payload=[0x00 0x03 0x00 0x00 0x40 0x00 0x00 0x40 0x00 0xe0]
+[09:22:21.943][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:21.947][V][elero:101][elero_radio]: rcv'd: len=27, cnt=90, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x40 0x00 0xe0]
+[09:22:21.977][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:21.978][V][elero:101][elero_radio]: rcv'd: len=27, cnt=90, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x40 0x00 0xe0]
+[09:22:22.081][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-64.0
+[09:22:22.085][V][elero:101][elero_radio]: rcv'd: len=27, cnt=91, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-64.0, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x40 0x00 0x00 0x40 0x00 0x60]
+[09:22:22.095][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:22.096][V][elero:101][elero_radio]: rcv'd: len=27, cnt=91, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x40 0x00 0x00 0x40 0x00 0x60]
+[09:22:22.262][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:22.267][V][elero:101][elero_radio]: rcv'd: len=27, cnt=92, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x40 0x00 0x60]
+[09:22:22.284][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:22.284][V][elero:101][elero_radio]: rcv'd: len=27, cnt=92, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x40 0x00 0x60]
+[09:22:22.400][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-64.0
+[09:22:22.405][V][elero:101][elero_radio]: rcv'd: len=27, cnt=93, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-64.0, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x40 0x00 0x00 0x40 0x00 0xe0]
+[09:22:22.405][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:22.405][V][elero:101][elero_radio]: rcv'd: len=27, cnt=93, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=49, crc= 1, payload=[0x00 0x03 0x00 0x00 0x40 0x00 0x00 0x40 0x00 0xe0]
+[09:22:22.510][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:22.526][V][elero:101][elero_radio]: rcv'd: len=27, cnt=94, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x40 0x00 0x60]
+[09:22:22.535][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:22.537][V][elero:101][elero_radio]: rcv'd: len=27, cnt=94, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x40 0x00 0x60]
+[09:22:22.665][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:22.669][V][elero:101][elero_radio]: rcv'd: len=27, cnt=95, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x40 0x00 0x00 0x40 0x00 0xe0]
+[09:22:22.700][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-64.0
+[09:22:22.703][V][elero:101][elero_radio]: rcv'd: len=27, cnt=95, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-64.0, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x40 0x00 0x00 0x40 0x00 0xe0]
+[09:22:22.827][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-64.0
+[09:22:22.831][V][elero:101][elero_radio]: rcv'd: len=27, cnt=96, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-64.0, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x40 0x00 0xe0]
+[09:22:22.847][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-64.0
+[09:22:22.850][V][elero:101][elero_radio]: rcv'd: len=27, cnt=96, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-64.0, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x40 0x00 0xe0]
+[09:22:23.234][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:23.238][V][elero:101][elero_radio]: rcv'd: len=27, cnt=97, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=49, crc= 1, payload=[0x00 0x03 0x00 0x00 0x40 0x00 0x00 0x40 0x00 0x60]
+[09:22:23.255][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:23.257][V][elero:101][elero_radio]: rcv'd: len=27, cnt=97, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x40 0x00 0x00 0x40 0x00 0x60]
+[09:22:23.412][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-64.0
+[09:22:23.429][V][elero:101][elero_radio]: rcv'd: len=27, cnt=98, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-64.0, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x40 0x00 0xe0]
+[09:22:24.014][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:24.026][V][elero:101][elero_radio]: rcv'd: len=27, cnt=99, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x40 0x00 0x00 0x40 0x00 0xe0]
+[09:22:24.040][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-64.0
+[09:22:24.048][V][elero:101][elero_radio]: rcv'd: len=27, cnt=99, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-64.0, lqi=49, crc= 1, payload=[0x00 0x03 0x00 0x00 0x40 0x00 0x00 0x40 0x00 0xe0]
+[09:22:24.200][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:24.203][V][elero:101][elero_radio]: rcv'd: len=27, cnt=100, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x40 0x00 0x60]
+[09:22:24.241][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-64.0
+[09:22:24.246][V][elero:101][elero_radio]: rcv'd: len=27, cnt=100, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-64.0, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x40 0x00 0x60]
+[09:22:24.561][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:24.564][V][elero:101][elero_radio]: rcv'd: len=27, cnt=102, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x40 0x00 0xe0]
+[09:22:24.582][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:24.586][V][elero:101][elero_radio]: rcv'd: len=27, cnt=102, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x40 0x00 0xe0]
+[09:22:25.868][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:25.868][V][elero:101][elero_radio]: rcv'd: len=27, cnt=103, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=49, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x00 0x00 0xc0]
+[09:22:25.872][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-63.5
+[09:22:25.872][V][elero:101][elero_radio]: rcv'd: len=27, cnt=103, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-63.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x00 0x00 0xc0]
+[09:22:26.695][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-64.5
+[09:22:26.698][V][elero:101][elero_radio]: rcv'd: len=27, cnt=104, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-64.5, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x80]
+[09:22:26.723][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-64.0
+[09:22:26.737][V][elero:101][elero_radio]: rcv'd: len=27, cnt=104, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-64.0, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x80]
+[09:22:28.974][D][elero:099][elero_radio]: rcv'd from 0xe99b2b: state=0x10 rssi=-74.0
+[09:22:28.977][V][elero:101][elero_radio]: rcv'd: len=29, cnt=14, typ=0xca, typ2=0x10, hop=0x0a, syst=0x01, chl=106, src=0xe99b2b, bwd=0xe99b2b, fwd=0x458130, #dst=01, dst=0x458130, rssi=-74.0, lqi=47, crc= 1, payload=[0x01 0x7f 0x00 0x00 0x00 0x00 0x00 0x00 0x10 0x10]
+[09:22:29.925][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-64.5
+[09:22:29.929][V][elero:101][elero_radio]: rcv'd: len=27, cnt=107, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-64.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x00 0x00 0xc0]
+[09:22:29.946][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-64.5
+[09:22:29.948][V][elero:101][elero_radio]: rcv'd: len=27, cnt=107, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-64.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x00 0x00 0xc0]
+[09:22:30.091][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-65.0
+[09:22:30.095][V][elero:101][elero_radio]: rcv'd: len=27, cnt=108, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-65.0, lqi=45, crc= 1, payload=[0x00 0x03 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x80]
+[09:22:30.789][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-64.5
+[09:22:30.790][V][elero:101][elero_radio]: rcv'd: len=29, cnt=109, typ=0x6a, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0xe99b2b, rssi=-64.5, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x00 0x00 0xc0]
+[09:22:30.847][D][elero:099][elero_radio]: rcv'd from 0xe99b2b: state=0x10 rssi=-74.5
+[09:22:30.852][V][elero:101][elero_radio]: rcv'd: len=29, cnt=15, typ=0xca, typ2=0x10, hop=0x0a, syst=0x01, chl=109, src=0xe99b2b, bwd=0xe99b2b, fwd=0x458130, #dst=01, dst=0x458130, rssi=-74.5, lqi=47, crc= 1, payload=[0x01 0x7f 0x00 0x00 0x00 0x00 0x00 0x00 0x10 0x90]
+[09:22:31.511][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-65.0
+[09:22:31.511][V][elero:101][elero_radio]: rcv'd: len=27, cnt=110, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-65.0, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x00 0x00 0xc0]
+[09:22:31.646][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-65.5
+[09:22:31.651][V][elero:101][elero_radio]: rcv'd: len=27, cnt=111, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-65.5, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00]
+[09:22:31.666][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-65.5
+[09:22:31.668][V][elero:101][elero_radio]: rcv'd: len=27, cnt=111, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-65.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00]
+[09:22:32.261][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-65.5
+[09:22:32.264][V][elero:101][elero_radio]: rcv'd: len=29, cnt=112, typ=0x6a, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0xe99b2b, rssi=-65.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x00 0x00 0xc0]
+[09:22:32.945][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-65.5
+[09:22:32.947][V][elero:101][elero_radio]: rcv'd: len=27, cnt=113, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-65.5, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x00 0x00 0xc0]
+[09:22:32.981][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-64.5
+[09:22:32.985][V][elero:101][elero_radio]: rcv'd: len=27, cnt=113, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-64.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x00 0x00 0xc0]
+[09:22:33.102][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-65.5
+[09:22:33.104][V][elero:101][elero_radio]: rcv'd: len=27, cnt=114, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-65.5, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x80]
+[09:22:33.686][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-65.5
+[09:22:33.690][V][elero:101][elero_radio]: rcv'd: len=29, cnt=115, typ=0x6a, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0xe99b2b, rssi=-65.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x00 0x00 0xc0]
+[09:22:33.808][D][elero:099][elero_radio]: rcv'd from 0xe99b2b: state=0x10 rssi=-74.5
+[09:22:33.818][V][elero:101][elero_radio]: rcv'd: len=29, cnt=17, typ=0xca, typ2=0x10, hop=0x0a, syst=0x01, chl=115, src=0xe99b2b, bwd=0xe99b2b, fwd=0x458130, #dst=01, dst=0x458130, rssi=-74.5, lqi=48, crc= 1, payload=[0x01 0x7f 0x00 0x00 0x00 0x00 0x00 0x00 0x10 0x90]
+[09:22:34.394][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-65.5
+[09:22:34.398][V][elero:101][elero_radio]: rcv'd: len=27, cnt=116, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-65.5, lqi=46, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x00 0x00 0x40]
+[09:22:34.516][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-65.5
+[09:22:34.516][V][elero:101][elero_radio]: rcv'd: len=27, cnt=117, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-65.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00]
+[09:22:34.541][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-65.5
+[09:22:34.585][V][elero:101][elero_radio]: rcv'd: len=27, cnt=117, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-65.5, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00]
+[09:22:35.159][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-65.0
+[09:22:35.159][V][elero:101][elero_radio]: rcv'd: len=29, cnt=118, typ=0x6a, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0xe99b2b, rssi=-65.0, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x00 0x00 0x40]
+[09:22:35.270][D][elero:099][elero_radio]: rcv'd from 0xe99b2b: state=0x10 rssi=-74.0
+[09:22:35.290][V][elero:101][elero_radio]: rcv'd: len=29, cnt=18, typ=0xca, typ2=0x10, hop=0x0a, syst=0x01, chl=118, src=0xe99b2b, bwd=0xe99b2b, fwd=0x458130, #dst=01, dst=0x458130, rssi=-74.0, lqi=47, crc= 1, payload=[0x01 0x7f 0x00 0x00 0x00 0x00 0x00 0x00 0x10 0x10]
+[09:22:35.913][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-65.0
+[09:22:35.916][V][elero:101][elero_radio]: rcv'd: len=27, cnt=119, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-65.0, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x00 0x00 0x40]
+[09:22:35.948][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-65.0
+[09:22:35.968][V][elero:101][elero_radio]: rcv'd: len=27, cnt=119, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-65.0, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x00 0x00 0x40]
+[09:22:36.111][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-65.5
+[09:22:36.111][V][elero:101][elero_radio]: rcv'd: len=27, cnt=120, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-65.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x80]
+[09:22:36.594][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-64.5
+[09:22:36.598][V][elero:101][elero_radio]: rcv'd: len=29, cnt=121, typ=0x6a, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0xe99b2b, rssi=-64.5, lqi=47, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x00 0x00 0x40]
+[09:22:37.243][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-65.0
+[09:22:37.244][V][elero:101][elero_radio]: rcv'd: len=27, cnt=122, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-65.0, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x00 0x00 0xc0]
+[09:22:37.264][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-65.0
+[09:22:37.264][V][elero:101][elero_radio]: rcv'd: len=27, cnt=122, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-65.0, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x00 0x00 0xc0]
+[09:22:37.418][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-65.0
+[09:22:37.421][V][elero:101][elero_radio]: rcv'd: len=27, cnt=123, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-65.0, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x80]
+[09:22:37.439][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-65.5
+[09:22:37.444][V][elero:101][elero_radio]: rcv'd: len=27, cnt=123, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-65.5, lqi=48, crc= 1, payload=[0x00 0x03 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x80]
+[09:22:38.137][D][elero:099][elero_radio]: rcv'd from 0xe99b2b: state=0x10 rssi=-74.5
+[09:22:38.139][V][elero:101][elero_radio]: rcv'd: len=29, cnt=20, typ=0xca, typ2=0x10, hop=0x0a, syst=0x01, chl=124, src=0xe99b2b, bwd=0xe99b2b, fwd=0x458130, #dst=01, dst=0x458130, rssi=-74.5, lqi=48, crc= 1, payload=[0x01 0x7f 0x00 0x00 0x00 0x00 0x00 0x00 0x10 0x90]
+[09:22:38.739][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-65.5
+[09:22:38.745][V][elero:101][elero_radio]: rcv'd: len=27, cnt=125, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-65.5, lqi=49, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x00 0x00 0x40]
+[09:22:39.556][D][elero:099][elero_radio]: rcv'd from 0xe99b2b: state=0x10 rssi=-74.5
+[09:22:39.560][V][elero:101][elero_radio]: rcv'd: len=29, cnt=21, typ=0xca, typ2=0x10, hop=0x0a, syst=0x01, chl=127, src=0xe99b2b, bwd=0xe99b2b, fwd=0x458130, #dst=01, dst=0x458130, rssi=-74.5, lqi=46, crc= 1, payload=[0x01 0x7f 0x00 0x00 0x00 0x00 0x00 0x00 0x10 0x10]
+[09:22:40.101][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-65.0
+[09:22:40.109][V][elero:101][elero_radio]: rcv'd: len=27, cnt=128, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-65.0, lqi=49, crc= 1, payload=[0x00 0x03 0x00 0x00 0x20 0x00 0x00 0x00 0x00 0x40]
+[09:22:41.587][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-65.5
+[09:22:41.589][V][elero:101][elero_radio]: rcv'd: len=27, cnt=132, typ=0x44, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0x000003, rssi=-65.5, lqi=49, crc= 1, payload=[0x00 0x03 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x80]
+[09:22:42.476][D][elero:099][elero_radio]: rcv'd from 0x458130: state=0x00 rssi=-65.0
+[09:22:42.480][V][elero:101][elero_radio]: rcv'd: len=29, cnt=133, typ=0x6a, typ2=0x10, hop=0x00, syst=0x01, chl=03, src=0x458130, bwd=0x458130, fwd=0x458130, #dst=01, dst=0xe99b2b, rssi=-65.0, lqi=49, crc= 1, payload=[0x00 0x03 0x00 0x00 0x10 0x00 0x00 0x00 0x00 0xc0]
+[09:22:50.508][V][sensor:077]: 'Elero Frequency': Received new state 869.524963
+[09:22:50.509][V][sensor:125]: 'Elero Frequency' >> 869.52 MHz
+[09:22:50.513][V][sensor:077]: 'Elero RX Count': Received new state 191.000000
+[09:22:50.519][V][sensor:125]: 'Elero RX Count' >> 191 
+[09:22:50.527][V][sensor:077]: 'Elero TX Count': Received new state 11.000000
+[09:22:50.528][V][sensor:125]: 'Elero TX Count' >> 11 
+[09:22:50.535][V][sensor:077]: 'Elero Watchdog Recovery Count': Received new state 0.000000
+[09:22:50.535][V][sensor:125]: 'Elero Watchdog Recovery Count' >> 0 
+[09:22:50.549][V][sensor:077]: 'Elero Drop CRC Fail': Received new state 0.000000
+[09:22:50.549][V][sensor:125]: 'Elero Drop CRC Fail' >> 0 
+[09:22:50.549][V][sensor:077]: 'Elero Drop Too Many Destinations': Received new state 0.000000
+[09:22:50.549][V][sensor:125]: 'Elero Drop Too Many Destinations' >> 0 
+[09:22:50.549][V][sensor:077]: 'Elero Drop Bounds': Received new state 0.000000
+[09:22:50.549][V][sensor:125]: 'Elero Drop Bounds' >> 0 
+[09:22:50.555][V][sensor:077]: 'Elero TX Queue Latency': Received new state 9.000000
+[09:22:50.555][V][sensor:125]: 'Elero TX Queue Latency' >> 9 ms
+[09:22:50.560][V][sensor:077]: 'Elero Dispatch Latency': Received new state 17.000000
+[09:22:50.560][V][sensor:125]: 'Elero Dispatch Latency' >> 17 ms
