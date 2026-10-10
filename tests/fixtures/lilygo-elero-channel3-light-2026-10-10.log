@@ -176,7 +176,7 @@ INFO Successful handshake with lilygo-elero @ 192.168.22.196 in 0.090s
 [09:19:54.520][C][wifi:1582]:   Local MAC: 98:A3:16:E2:50:E0
 [09:19:54.520][C][wifi:1582]:   Connected: YES
 [09:19:54.520][C][wifi:1286]:   IP Address: 192.168.22.196
-[09:19:54.527][C][wifi:1297]:   SSID: 'smarttools'
+[09:19:54.527][C][wifi:1297]:   SSID: '[REDACTED]'
 [09:19:54.527][C][wifi:1297]:   BSSID: 8C:30:66:76:B3:D0
 [09:19:54.527][C][wifi:1297]:   Hostname: 'lilygo-elero'
 [09:19:54.527][C][wifi:1297]:   Signal strength: -66 dB ▂▄▆█
