@@ -7,16 +7,18 @@
 #include <regex>
 #include <set>
 #include <sstream>
+#include <tuple>
 using namespace esphome::elero;
 
-TEST(LightCapture, EveryDecodedFramePreservesCapturedFieldsAndAddressDomains) {
-  std::ifstream file(LIGHT_CAPTURE_PATH);
+static void replay_capture(const char *path, bool primary) {
+  std::ifstream file(path);
   ASSERT_TRUE(file.good());
   std::string line;
   unsigned frames = 0, short_frames = 0, direct_frames = 0, receiver_frames = 0;
   std::set<unsigned> states, hops, receiver_channels;
-  std::map<std::pair<unsigned, unsigned>, unsigned> repeated;
-  unsigned duplicates = 0;
+  std::map<std::tuple<unsigned, unsigned, unsigned, std::array<uint8_t, 10>>, unsigned> repeated;
+  unsigned duplicates = 0, short_extra_payload = 0;
+  std::set<unsigned> short_candidates, direct_candidates;
   while (std::getline(file, line)) {
     if (line.find("rcv'd: len=") == std::string::npos) continue;
     std::map<std::string, unsigned> fields;
@@ -57,20 +59,47 @@ TEST(LightCapture, EveryDecodedFramePreservesCapturedFieldsAndAddressDomains) {
     for (unsigned i = 0; i < 8; ++i) EXPECT_EQ(p.payload[i], observed[i+2]) << line;
     EXPECT_EQ(p.is_status, p.typ == 0xca);
     if (p.typ == 0x44) {
+      short_candidates.insert(observed[4]);
+      if (observed[7] == 0x40) ++short_extra_payload;
       ++short_frames; EXPECT_TRUE(p.is_channel_command); EXPECT_FALSE(p.is_command);
       EXPECT_EQ(p.first_dst, 3u); EXPECT_EQ(p.channel, 3);
       // A channel selector must never become device 0x000003 in cover dispatch.
       EXPECT_EQ(p.dest_addrs[0], 0u);
     } else if (p.typ == 0x6a) {
+      direct_candidates.insert(observed[4]);
       ++direct_frames; EXPECT_TRUE(p.is_command); EXPECT_FALSE(p.is_channel_command);
       EXPECT_EQ(p.dest_addrs[0], 0xe99b2bu); EXPECT_EQ(p.channel, 3);
     }
     if (p.src == 0xe99b2b) { ++receiver_frames; EXPECT_TRUE(p.is_status); states.insert(p.payload[6]); receiver_channels.insert(p.channel); }
-    if (++repeated[{p.src, p.cnt}] > 1) ++duplicates;
+    if (++repeated[{p.src, p.cnt, p.typ, observed}] > 1) ++duplicates;
     hops.insert(p.hop); ++frames;
+  }
+  if (!primary) {
+    EXPECT_EQ(frames, 15u); EXPECT_EQ(short_frames, 6u); EXPECT_EQ(direct_frames, 5u);
+    EXPECT_EQ(receiver_frames, 4u); EXPECT_EQ(states, (std::set<unsigned>{0x11}));
+    EXPECT_EQ(short_candidates, (std::set<unsigned>{0x00, 0x10, 0x20}));
+    EXPECT_EQ(direct_candidates, (std::set<unsigned>{0x00, 0x10}));
+    EXPECT_EQ(short_extra_payload, 2u); EXPECT_EQ(duplicates, 3u);
+    EXPECT_EQ(receiver_channels, (std::set<unsigned>{2, 3, 6, 8}));
+    EXPECT_EQ(hops, (std::set<unsigned>{0, 5, 10, 21}));
+    return;
   }
   EXPECT_EQ(frames, 186u); EXPECT_EQ(short_frames, 151u); EXPECT_EQ(direct_frames, 21u);
   EXPECT_EQ(receiver_frames, 11u);
   EXPECT_EQ(states, (std::set<unsigned>{0x03, 0x10}));
+  // Independently pin observed command-position values, without naming ON/OFF.
+  EXPECT_EQ(short_candidates, (std::set<unsigned>{0x00, 0x10, 0x20, 0x21, 0x40}));
+  EXPECT_EQ(direct_candidates, (std::set<unsigned>{0x00, 0x10, 0x24}));
+  EXPECT_EQ(short_extra_payload, 95u);
+  // 0x11 was reported in the later hardware test; the primary fixture predates that capture.
+  EXPECT_EQ(states.count(0x11), 0u);
   EXPECT_GT(duplicates, 0u); EXPECT_GT(hops.size(), 1u); EXPECT_GT(receiver_channels.size(), 1u);
+}
+
+TEST(LightCapture, EveryDecodedFramePreservesCapturedFieldsAndAddressDomains) {
+  replay_capture(LIGHT_CAPTURE_PATH, true);
+}
+
+TEST(LightCapture, HardwareExcerptsPreserveUnknownElevenAndShortPhases) {
+  replay_capture(LIGHT_HARDWARE_CAPTURE_PATH, false);
 }

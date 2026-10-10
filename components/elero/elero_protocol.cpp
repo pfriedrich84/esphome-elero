@@ -62,6 +62,14 @@ void Elero::interpret_msg() {
     return;
   }
 
+#if ESPHOME_LOG_LEVEL >= ESPHOME_LOG_LEVEL_VERBOSE
+  // Keep valid wire bytes before status deduplication. Decoded logs lose the
+  // crypto key and cannot serve as an independent TX/RX golden-wire reference.
+  // Exclude CC1101-appended RSSI/LQI bytes; length byte is included.
+  ESP_LOGV(TAG, "  RX raw [%d bytes]: %s", static_cast<int>(packet.length + 1),
+           format_hex_pretty(this->msg_rx_, static_cast<uint8_t>(packet.length + 1)).c_str());
+#endif
+
   if (packet.is_status && this->is_duplicate_packet_(packet.src, packet.cnt)) {
     if (this->packet_dump_pending_update_) {
       this->mark_last_raw_packet_(true, nullptr);

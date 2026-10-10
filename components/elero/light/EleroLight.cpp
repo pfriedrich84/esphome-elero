@@ -12,6 +12,7 @@ static const char *const TAG = "elero.light";
 
 void EleroLight::dump_config() {
   ESP_LOGCONFIG(TAG, "Elero Light:");
+  ESP_LOGCONFIG(TAG, "  TX profile: legacy direct address, one intent (no channel/phase sequence)");
   ESP_LOGCONFIG(TAG, "  Assumed state: %s", this->assumed_state_ ? "YES (RX has no state semantics)" : "NO (legacy RX mapping)");
   ESP_LOGCONFIG(TAG, "  Blind Address: 0x%06lx", static_cast<unsigned long>(this->command_.blind_addr));
   ESP_LOGCONFIG(TAG, "  Remote Address: 0x%06lx", static_cast<unsigned long>(this->command_.remote_addr));

@@ -123,5 +123,6 @@ gtest_discover_tests(test_light_delivery)
 
 add_executable(test_light_capture test_light_capture.cpp)
 target_compile_definitions(test_light_capture PRIVATE LIGHT_CAPTURE_PATH=\"${CMAKE_CURRENT_SOURCE_DIR}/../fixtures/lilygo-elero-channel3-light-2026-10-10.log\")
+target_compile_definitions(test_light_capture PRIVATE LIGHT_HARDWARE_CAPTURE_PATH=\"${CMAKE_CURRENT_SOURCE_DIR}/../fixtures/lilygo-elero-channel3-hardware-rf-excerpts.log\")
 target_link_libraries(test_light_capture GTest::gtest_main)
 gtest_discover_tests(test_light_capture)

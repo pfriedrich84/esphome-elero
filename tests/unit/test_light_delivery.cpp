@@ -47,7 +47,7 @@ TEST_F(LightDeliveryTest, CapturedContradictoryAndLateStatesCannotOverrideAssume
   request(false);
   auto id = hub.advance(1000); ASSERT_NE(id, 0u);
   hub.complete(id, true, 1010);
-  for (uint8_t raw : {0x10, 0x03, 0x10, 0x03}) {
+  for (uint8_t raw : {0x10, 0x03, 0x11, 0x10, 0x03}) {
     test_now += 10000;
     light.set_rx_state(raw);
     EXPECT_EQ(light.get_last_state_raw(), raw);

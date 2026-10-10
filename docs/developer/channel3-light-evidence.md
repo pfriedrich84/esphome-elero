@@ -22,7 +22,7 @@ die verwendete Version enthält die SSID-Redaktion aus `5d1c6fa`.
 | Lichtantwort `0xCA`, Rohzustand `0x10` | Zeile 338 | Antwort vorhanden; ON-Bedeutung nicht nachgewiesen. |
 | Lichtantwort `0xCA`, Rohzustand `0x03` | Suche nach `src=0xe99b2b` und `chl=29` | Andere Antwort vorhanden; OFF-Bedeutung nicht nachgewiesen. |
 | Antwortkanäle 3, 9, 29, 35, 37, 106, 109, 115, 118, 124, 127 | Alle 11 Lichtantworten | Antwortkanal darf nicht pauschal mit konfiguriertem Bedienkanal gleichgesetzt werden. |
-| Frequenzregister `21 71 7A` | Zeile 61 | Mit 26-MHz-Quarz ca. 868,350 MHz; widerspricht den vorgegebenen ca. 869,525 MHz. Hardware/Frequenzmessung nötig. |
+| Frequenzregister `21 71 7A` | Zeile 61 | Mit 26-MHz-Quarz rechnerisch 869,524963 MHz; passt zu den vorgegebenen ca. 869,525 MHz. Keine physikalische Frequenzmessung. |
 
 Keine Zeitmarken kennzeichnen reale Tastenfunktionen oder den tatsächlich sichtbaren
 Lichtzustand. Die Muster mit `20`, `40`, `10`, `00` sowie wechselnden letzten Bytes
@@ -128,8 +128,10 @@ ON/OFF-Intent-/Counter-Plumbing. Test-Kommandobytes sind keine Protokollbehauptu
 
 Die tatsächlichen Raw-TX-Bytes eines Cover-CHECK aus Logzeile 224 dienen als
 unabhängiger Golden-Vektor für den unveränderten gemeinsamen TX-Serializer.
-Es gibt **keinen** unabhängigen ON/OFF-Wire-Vektor; ein solcher Test wäre derzeit
-nur eine Wiederholung unbewiesener Implementierungsannahmen. Bestehende Cover-,
+Das spätere Hardwaretest-Log liefert zusätzlich unabhängige vollständige
+HA-TX-Vektoren für die Kandidaten `20`/`40`. Sie sichern die tatsächlich erzeugten
+Bytes ab, beweisen jedoch keine funktionierende ON/OFF-Steuerung. Unabhängige
+Raw-RX-Vektoren einer erfolgreich schaltenden Originalfernbedienung fehlen. Bestehende Cover-,
 Counter-, Dedup-, Radio- und Deliverytests ergänzen diese Tests.
 
 ## Fehlende Hardware-Evidenz und Abnahme
@@ -163,3 +165,62 @@ Wire-Bytes, Antwortquelle/-counter/-kanal/-hop/-rohstatus, Antwortlatenz,
 tatsächlicher Endzustand, unbeabsichtigte Zustandswechsel und Ergebnis.
 Abnahme: **20/20 erfolgreiche ON/OFF-Zyklen ohne unbeabsichtigten Gegenzustand**.
 Das ist ein initialer Hardwaretest, kein statistischer Zuverlässigkeitsnachweis.
+
+## Ergänzung: Hardwaretest 11:39–11:41
+
+Der Nutzer hat das vollständige neue Log im Gespräch bereitgestellt. Die
+[RF-Auszüge](../../tests/fixtures/lilygo-elero-channel3-hardware-rf-excerpts.log)
+enthalten ausgewählte Telegramme daraus, ohne Netzwerk-/Gerätestartdaten; sie
+sind ausdrücklich kein vollständiger Mitschnitt. Laut Nutzer funktionierten
+weder HA-Einschalten noch das anschließende Einschalten mit der Originalremote.
+Die Fehlerursache bleibt offen.
+
+| Feld | HA-TX | Originalremote RX |
+|---|---|---|
+| Typ/Länge inklusive Längenbyte | `6A`, 30 Bytes | `44`, 28 Bytes; daneben `6A`, 30 Bytes |
+| typ2 | `10` | `10` oder `12` bei `44`; `10` bei `6A` |
+| Ziel | 24-Bit `E99B2B` | Einbyte-Kanal `03` bei `44`, `E99B2B` bei `6A` |
+| Hop | `00` | `00`, später `05`; Relays mit `15` |
+| Prefix | `00 03` | `00 03`, bei direkten Nullbefehlen auch `02 03` |
+| Kandidatenposition | Ganzes Payloadbyte 4, absoluter TX-Offset 24 | Ganzes Payloadbyte 4; absolut 22 bei `44`, 24 bei `6A` |
+| Ganzes Payloadbyte 7 | `00` | Bei einigen kurzen Frames `40` |
+| Versand | Ein direkter Intent, keine Phasensequenz | Doppelte kurze Frames und verschiedene aufeinanderfolgende Payloads |
+
+Die bestehenden Light-Intents verwenden denselben Direct-Serializer wie Covers.
+Damit wird keine besondere Lichtsequenz erzeugt. Das ist eine belegte Formatlücke,
+aber kein Beweis, dass `44` für ON/OFF erforderlich ist. Ein bloßer YAML-Wechsel
+auf `pck_inf1: 0x44` kann den fehlenden Einbyte-Encoder nicht ersetzen und wird
+absichtlich zurückgewiesen. Kein neues Profil wird als funktionierend freigegeben,
+solange die benötigte Sequenz unbekannt ist.
+
+Um 11:40:13 folgen auf kurze `20`-Frames mit Counter 3 zwei Nullframes mit
+Counter 4: erster Abstand 145 ms, Duplikate nach 18 bzw. 17 ms. Um 11:41:00
+folgen `20`/Payloadbyte7=`40` und `10`/Payloadbyte7=`40` nach 160 ms. Weitere
+`20`/Null-Paare liegen 127 ms und 1075 ms auseinander. Das passt als Hypothese
+zu Bedienphasen; ohne Tastenannotation sind Drücken/Halten/Loslassen und deren
+Notwendigkeit nicht identifiziert. Direkte Frames erscheinen mit neuem Counter
+und Hop `05` nach etwa 407 ms; weitergeleitete Frames verändern bwd/fwd und Hop,
+behalten Counter/Payload. Diese Beobachtungen rechtfertigen keine feste
+ON/OFF-Sequenz und kein blindes Retry.
+
+Nach HA-TX erscheinen `CA`-Antworten mit Rohwert `11` (11:39:32.705 und
+11:39:55.074), ebenso nach Originalremote-Telegrammen. Das gesamte Payloadbyte 6
+ist dabei `14`; bei den früheren `03`/`10`-Antworten unterscheiden sich weitere
+Bytes. Weder Fehler-, Helligkeits- noch ON/OFF-Semantik ist belegt. Antwort-`chl`
+ist nach HA-TX `02`/`03`, passend zu TX-Countern 2/3; nach direkten Remote-Countern
+6/8 sind es `06`/`08`. Ein Counter-Echo ist eine plausible, noch nicht bestätigte
+Hypothese und keine Zielzustandsbestätigung.
+
+Das letzte decodierte Payloadbyte ist dynamisch: beispielsweise `40` gegenüber
+`C0` auch bei sonst gleichen Nutzbytes. Der Decoder entfernt die ursprünglichen
+Crypto-Key-Bytes; deshalb lässt sich aus decodierten Logs kein eindeutiger
+Original-Wire-Frame rekonstruieren. Der zusätzliche Vergleichstest bewahrt diese
+Abweichung ausdrücklich, statt ein konstantes letztes Byte zu erfinden.
+VERBOSE protokolliert jetzt auch gültige RX-Wire-Bytes inklusive Längenbyte vor
+der Statusentdoppelung und ohne CC1101-RSSI/LQI-Anhang. Damit kann der nächste
+annotierte Mitschnitt eine unabhängige Encoderreferenz liefern.
+
+Die frühere Aussage, `21 71 7A` entspreche 868,350 MHz, war ein Rechenfehler.
+Die Softwareanzeige berechnet 869,524963 MHz aus denselben konfigurierten
+Registern; sie ist keine unabhängige RF-Messung. Ein Regressionstest sichert den
+korrekten Registerwert ab. P1 bleibt **BLOCKED_BY_EVIDENCE**.
