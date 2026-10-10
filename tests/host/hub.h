@@ -23,6 +23,7 @@ class Elero {
     for (auto &item : profiles) item.second->detach(lane);
   }
   void register_cover(EleroBlindBase *) {}
+  void register_light(EleroLightBase *) {}
   uint32_t get_tx_queue_depth() const { return admission.busy() ? 1 : 0; }
   void increment_tx_drop_count() { ++drops; }
   void decrement_stop_urgent() {}

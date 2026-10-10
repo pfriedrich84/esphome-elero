@@ -12,6 +12,8 @@ static const char *const TAG = "elero.light";
 
 void EleroLight::dump_config() {
   ESP_LOGCONFIG(TAG, "Elero Light:");
+  ESP_LOGCONFIG(TAG, "  TX profile: legacy direct address, one intent (no channel/phase sequence)");
+  ESP_LOGCONFIG(TAG, "  Assumed state: %s", this->assumed_state_ ? "YES (RX has no state semantics)" : "NO (legacy RX mapping)");
   ESP_LOGCONFIG(TAG, "  Blind Address: 0x%06lx", static_cast<unsigned long>(this->command_.blind_addr));
   ESP_LOGCONFIG(TAG, "  Remote Address: 0x%06lx", static_cast<unsigned long>(this->command_.remote_addr));
   ESP_LOGCONFIG(TAG, "  Channel: %d", this->command_.channel);
@@ -32,6 +34,8 @@ void EleroLight::setup() {
     this->mark_failed();
     return;
   }
+  if (this->assumed_state_)
+    ESP_LOGW(TAG, "Assumed state: commands and local TX never confirm the physical light state");
   this->delivery_.configure(this->get_command_delivery_config());
   this->delivery_.set_outcome_callback(
       [this](const DeliveryOutcome &outcome) { this->handle_delivery_outcome_(outcome); });
@@ -43,7 +47,7 @@ void EleroLight::setup() {
   this->parent_->register_light(this);
   // Queue an initial status CHECK so the text sensor populates shortly after
   // boot instead of waiting for the first external event.
-  if (this->command_check_ != 0x00) {
+  if (!this->assumed_state_ && this->command_check_ != 0x00) {
     this->submit_intent({CommandIntentKind::CHECK, 0});
   }
 }
@@ -98,6 +102,7 @@ void EleroLight::write_state(LightState *state) {
 
   // Commit local state only after the complete RF intent transaction has queue
   // capacity. A rejected batch leaves all prior state untouched.
+  ESP_LOGD(TAG, "Light command accepted; physical state unconfirmed");
   this->is_on_ = new_on;
   this->target_brightness_ = new_brightness;
   this->brightness_ = accepted_brightness;
@@ -222,6 +227,7 @@ IntentSubmitResult EleroLight::submit_intents_(const std::vector<CommandIntent> 
 }
 
 void EleroLight::schedule_immediate_poll() {
+  if (this->assumed_state_) return;  // No evidenced status-query command.
   uint32_t now = millis();
   if ((now - this->last_immediate_poll_ms_) >= ELERO_IMMEDIATE_POLL_MIN_INTERVAL_MS &&
       intent_was_accepted(this->submit_intent({CommandIntentKind::CHECK, 0})))
@@ -249,6 +255,18 @@ void EleroLight::recompute_brightness() {
 }
 
 void EleroLight::set_rx_state(uint8_t state) {
+  this->last_state_raw_ = state;
+  if (this->assumed_state_) {
+    ESP_LOGI(TAG, "Light 0x%06lx response raw=0x%02x; physical state unknown (no correlated ACK)",
+             static_cast<unsigned long>(this->command_.blind_addr), state);
+#ifdef USE_TEXT_SENSOR
+    this->parent_->publish_text_sensor_state(this->command_.blind_addr, "response_unknown");
+#endif
+    return;
+  }
+#ifdef USE_TEXT_SENSOR
+  this->parent_->publish_text_sensor_state(this->command_.blind_addr, elero_state_to_string(state));
+#endif
   ESP_LOGV(TAG, "Got state: 0x%02x for light 0x%06lx",
            state, static_cast<unsigned long>(this->command_.blind_addr));
 

@@ -64,3 +64,8 @@ TEST(CalculateRssi, GoodSignal50) {
   // 50 (unsigned) → 50/2 + (-74) = -49.0
   EXPECT_FLOAT_EQ(calculate_rssi(50), 50.0f / 2.0f + (-74.0f));  // -49.0
 }
+
+TEST(RegistersToMhz, CapturedChannelThreeRadioFrequency) {
+  // Register dump and frequency display in both real captures agree.
+  EXPECT_NEAR(registers_to_mhz(0x21, 0x71, 0x7a), 869.524963, 0.0001);
+}

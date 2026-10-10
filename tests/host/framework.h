@@ -72,3 +72,45 @@ class Cover {
 };
 }
 }
+
+namespace esphome { namespace light {
+enum class ColorMode { ON_OFF, BRIGHTNESS };
+class LightTraits {
+ public:
+  void set_supported_color_modes(std::initializer_list<ColorMode>) {}
+};
+class LightState;
+class LightOutput {
+ public:
+  virtual ~LightOutput() = default;
+  virtual LightTraits get_traits() = 0;
+  virtual void write_state(LightState *) = 0;
+};
+struct LightValues {
+  bool on{false}; float brightness{1.0f};
+  bool is_on() const { return on; }
+  float get_brightness() const { return brightness; }
+};
+class LightState {
+ public:
+  LightValues current_values;
+  LightOutput *output{nullptr};
+  unsigned publications{0};
+  const std::string &get_name() const { static std::string name = "host light"; return name; }
+  void publish_state() { ++publications; }
+  struct Call {
+    LightState *state;
+    std::optional<bool> on;
+    std::optional<float> brightness;
+    void set_state(bool value) { on = value; }
+    void set_brightness(float value) { brightness = value; }
+    void perform() {
+      if (on) state->current_values.on = *on;
+      if (brightness) state->current_values.brightness = *brightness;
+      if (state->output) state->output->write_state(state);
+      state->publish_state();
+    }
+  };
+  Call make_call() { return {this, {}, {}}; }
+};
+}}

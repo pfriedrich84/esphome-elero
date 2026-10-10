@@ -27,6 +27,7 @@ CONF_PCKINF_1 = "pck_inf1"
 CONF_PCKINF_2 = "pck_inf2"
 CONF_HOP = "hop"
 CONF_DIM_DURATION = "dim_duration"
+CONF_ASSUMED_STATE = "assumed_state"
 CONF_COMMAND_ON = "command_on"
 CONF_COMMAND_OFF = "command_off"
 CONF_COMMAND_DIM_UP = "command_dim_up"
@@ -83,6 +84,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Required(CONF_BLIND_ADDRESS): cv.hex_int_range(min=0x0, max=0xFFFFFF),
             cv.Required(CONF_CHANNEL): cv.int_range(min=0, max=255),
             cv.Required(CONF_REMOTE_ADDRESS): cv.hex_int_range(min=0x0, max=0xFFFFFF),
+            cv.Optional(CONF_ASSUMED_STATE, default=False): cv.boolean,
             cv.Optional(CONF_DIM_DURATION, default="0s"): cv.positive_time_period_milliseconds,
             cv.Optional(CONF_PAYLOAD_1, default=0x00): cv.hex_int_range(min=0x0, max=0xFF),
             cv.Optional(CONF_PAYLOAD_2, default=0x04): cv.hex_int_range(min=0x0, max=0xFF),
@@ -165,6 +167,7 @@ async def to_code(config):
     cg.add(var.set_channel(config[CONF_CHANNEL]))
     cg.add(var.set_remote_address(config[CONF_REMOTE_ADDRESS]))
     cg.add(var.set_dim_duration(config[CONF_DIM_DURATION]))
+    cg.add(var.set_assumed_state(config[CONF_ASSUMED_STATE]))
     cg.add(var.set_payload_1(config[CONF_PAYLOAD_1]))
     cg.add(var.set_payload_2(config[CONF_PAYLOAD_2]))
     cg.add(var.set_pckinf_1(config[CONF_PCKINF_1]))

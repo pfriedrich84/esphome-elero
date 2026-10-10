@@ -62,6 +62,14 @@ void Elero::interpret_msg() {
     return;
   }
 
+#if ESPHOME_LOG_LEVEL >= ESPHOME_LOG_LEVEL_VERBOSE
+  // Keep valid wire bytes before status deduplication. Decoded logs lose the
+  // crypto key and cannot serve as an independent TX/RX golden-wire reference.
+  // Exclude CC1101-appended RSSI/LQI bytes; length byte is included.
+  ESP_LOGV(TAG, "  RX raw [%d bytes]: %s", static_cast<int>(packet.length + 1),
+           format_hex_pretty(this->msg_rx_, static_cast<uint8_t>(packet.length + 1)).c_str());
+#endif
+
   if (packet.is_status && this->is_duplicate_packet_(packet.src, packet.cnt)) {
     if (this->packet_dump_pending_update_) {
       this->mark_last_raw_packet_(true, nullptr);
@@ -188,8 +196,9 @@ void Elero::dispatch_rx_result_(const RxResult &rx) {
 #ifdef USE_TEXT_SENSOR
     // During verification the cover owns the diagnostic result. Do not publish
     // stale STOPPED/UNKNOWN over stop_verifying before freshness is checked.
-    if (search == this->address_to_cover_mapping_.end() ||
-        !search->second->should_defer_intent({CommandIntentKind::OPEN, 0})) {
+    if (this->address_to_light_mapping_.count(rx.blind_address) == 0 &&
+        (search == this->address_to_cover_mapping_.end() ||
+         !search->second->should_defer_intent({CommandIntentKind::OPEN, 0}))) {
       auto text_it = this->address_to_text_sensor_.find(rx.blind_address);
       if (text_it != this->address_to_text_sensor_.end()) {
         text_it->second->publish_state(elero_state_to_string(rx.state));
