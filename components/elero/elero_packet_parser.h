@@ -39,6 +39,8 @@ struct ParsedPacket {
   float rssi{0.0f};
   bool is_status{false};
   bool is_command{false};
+  // Short channel-addressed frames are observations, never direct device commands.
+  bool is_channel_command{false};
 };
 
 struct ParseResult {
@@ -119,6 +121,7 @@ inline ParseResult parse_fifo_packet(const uint8_t *fifo) {
 
   packet.is_status = (packet.typ == 0xca) || (packet.typ == 0xc9);
   packet.is_command = (packet.typ == 0x6a) || (packet.typ == 0x69);
+  packet.is_channel_command = packet.typ == 0x44;
 
   if (packet.is_command) {
     uint8_t safe_num = (packet.num_dests > MAX_DESTS) ? MAX_DESTS : packet.num_dests;

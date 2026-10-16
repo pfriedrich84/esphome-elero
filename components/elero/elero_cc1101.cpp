@@ -690,6 +690,13 @@ void Elero::read_buf(uint8_t addr, uint8_t *buf, uint8_t len) {
 bool Elero::send_command_internal_(t_elero_command *cmd, uint32_t enqueued_at_ms) {
   if (this->spi_failed_.load(std::memory_order_acquire))
     return false;
+  // The existing encoder writes 24-bit direct destinations. Short channel
+  // frames (including captured 0x44) need a different, unverified TX profile.
+  if (cmd->pck_inf[0] <= 0x60) {
+    ESP_LOGE(TAG, "Short-address TX is unsupported; refusing malformed packet type 0x%02x",
+             cmd->pck_inf[0]);
+    return false;
+  }
   // Note: caller (radio_task_loop_) guarantees tx_state_ == IDLE before
   // dequeuing a TX_COMMAND, so no idle check needed here.
 

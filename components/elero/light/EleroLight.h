@@ -42,8 +42,9 @@ class EleroLight : public light::LightOutput, public Component, public EleroLigh
   }
   uint32_t get_last_seen_ms() const override { return this->last_seen_ms_; }
   float get_last_rssi() const override { return this->last_rssi_; }
+  bool get_assumed_state() const override { return this->assumed_state_; }
   uint8_t get_last_state_raw() const override {
-    return this->is_on_ ? ELERO_STATE_ON : ELERO_STATE_OFF;
+    return this->last_state_raw_;
   }
   uint8_t get_channel() const override { return this->command_.channel; }
   uint32_t get_remote_address() const override { return this->command_.remote_addr; }
@@ -58,6 +59,7 @@ class EleroLight : public light::LightOutput, public Component, public EleroLigh
   void set_hop(uint8_t hop) { this->command_.hop = hop; }
   void set_pckinf_1(uint8_t pckinf) { this->command_.pck_inf[0] = pckinf; }
   void set_pckinf_2(uint8_t pckinf) { this->command_.pck_inf[1] = pckinf; }
+  void set_assumed_state(bool assumed) { this->assumed_state_ = assumed; }
   void set_dim_duration(uint32_t dur) { this->dim_duration_ = dur; }
   void set_command_on(uint8_t cmd) { this->command_on_ = cmd; }
   void set_command_off(uint8_t cmd) { this->command_off_ = cmd; }
@@ -99,6 +101,8 @@ class EleroLight : public light::LightOutput, public Component, public EleroLigh
 
   // Prevents feedback loop: set_rx_state() → call.perform() → write_state() → send command
   bool ignore_write_state_{false};
+  bool assumed_state_{false};
+  uint8_t last_state_raw_{ELERO_STATE_UNKNOWN};
   uint32_t last_immediate_poll_ms_{0};  // rate-limit schedule_immediate_poll()
   bool queue_full_published_{false};    // true when "queue_full" has been published to text sensor
 
