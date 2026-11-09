@@ -7,6 +7,7 @@
 #include "elero_tx_logic.h"
 #include "elero_dedup_logic.h"
 #include "elero_radio_state_logic.h"
+#include "elero_spi_verify_logic.h"
 #include "esphome/core/log.h"
 #include "esphome/core/helpers.h"
 #include <cstring>
@@ -462,26 +463,27 @@ void Elero::reset() {
 
 // ---------------------------------------------------------------------------
 // verify_spi_write_ — complementary pattern write-readback test (0xAA/0x55)
-// Detects stuck MOSI bits before init() writes all CC1101 registers.
+// Detects stuck MOSI bits before init() writes all CC1101 registers. Uses ADDR
+// because every bit is R/W; FSCTRL1 bits 7:6 always read 0 (see #250).
 // ---------------------------------------------------------------------------
 bool Elero::verify_spi_write_() {
   bool ok = true;
-  const uint8_t patterns[] = {0xAA, 0x55};  // complementary: every bit toggles
 
-  for (uint8_t pattern : patterns) {
-    this->write_reg(CC1101_FSCTRL1, pattern);
-    uint8_t readback = this->read_reg(CC1101_FSCTRL1);
-    if (readback != pattern) {
-      ESP_LOGD(TAG, "SPI verify: wrote 0x%02x to FSCTRL1, read back 0x%02x — MISMATCH (stuck bits: 0x%02x)",
-               pattern, readback, static_cast<uint8_t>(pattern ^ readback));
+  for (uint8_t pattern : spi_verify_logic::TEST_PATTERNS) {
+    this->write_reg(CC1101_ADDR, pattern);
+    uint8_t readback = this->read_reg(CC1101_ADDR);
+    uint8_t stuck = spi_verify_logic::mismatch_bits(pattern, readback);
+    if (stuck != 0) {
+      ESP_LOGD(TAG, "SPI verify: wrote 0x%02x to ADDR, read back 0x%02x — MISMATCH (stuck bits: 0x%02x)",
+               pattern, readback, stuck);
       ok = false;
     } else {
-      ESP_LOGD(TAG, "SPI verify: wrote 0x%02x to FSCTRL1, read back 0x%02x — OK", pattern, readback);
+      ESP_LOGD(TAG, "SPI verify: wrote 0x%02x to ADDR, read back 0x%02x — OK", pattern, readback);
     }
   }
 
-  // Restore register to clean state for subsequent init
-  this->write_reg(CC1101_FSCTRL1, 0x00);
+  // Restore reset value; init() rewrites ADDR anyway
+  this->write_reg(CC1101_ADDR, 0x00);
   return ok;
 }
 
@@ -499,8 +501,8 @@ void Elero::diagnose_spi_failure_() {
   uint8_t all_readback_and = 0xFF;
   const uint8_t test_vals[] = {0xAA, 0x55, 0x0F, 0x00};
   for (uint8_t tv : test_vals) {
-    this->write_reg(CC1101_FSCTRL1, tv);
-    uint8_t rb = this->read_reg(CC1101_FSCTRL1);
+    this->write_reg(CC1101_ADDR, tv);  // fully R/W, unlike FSCTRL1
+    uint8_t rb = this->read_reg(CC1101_ADDR);
     ESP_LOGE(TAG, "  SPI write/read test: wrote 0x%02x, read 0x%02x %s", tv, rb, (tv == rb) ? "OK" : "MISMATCH");
     all_readback_or |= rb;
     all_readback_and &= rb;
