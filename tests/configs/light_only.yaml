@@ -10,6 +10,10 @@ esp32:
   framework:
     type: arduino
 
+# Compile the raw RX diagnostics used by annotated hardware captures.
+logger:
+  level: VERBOSE
+
 wifi:
   ssid: "test"
   password: "testtest"
@@ -35,6 +39,7 @@ light:
     channel: 6
     remote_address: 0xf0d008
     name: "On Off Light"
+    assumed_state: true
 
   # Dimmable light
   - platform: elero

@@ -134,6 +134,10 @@ Diese Werte werden aus dem Log der echten Fernbedienung ausgelesen. Bei Überein
 
 ## Plattform: `light`
 
+Für den Kanal-3-Empfänger sind ON/OFF-Codes und Statussemantik noch nicht nachgewiesen.
+Siehe [Protokollevidenz und Hardware-Abnahme](../developer/channel3-light-evidence.md).
+Die folgenden Defaultcodes sind Legacy-Konventionen, keine allgemeine Protokollgarantie.
+
 Jedes Elero-Licht (z.B. Hauslicht mit Elero-Empfänger) wird als eigener Light-Eintrag konfiguriert. Das Licht erscheint in Home Assistant als vollständige Licht-Entität — mit Ein/Aus und optionaler Helligkeitssteuerung.
 
 ```yaml
@@ -170,6 +174,7 @@ light:
 
 | Parameter | Typ | Standard | Beschreibung |
 |---|---|---|---|
+| `assumed_state` | Boolean | `false` | Bei `true` bleiben RX-Rohzustände ohne ON/OFF-Interpretation; HA zeigt den geschätzten Sollzustand. Diagnose `response_unknown`, keine automatischen Status-Polls. TX bleibt unbestätigt; kein Schutz vor unbewiesenen Toggle-Codes. `false` erhält die Legacy-RX-Zuordnung. |
 | `dim_duration` | Zeitdauer | `0s` | Dimm-Fahrzeit von 0 % auf 100 %. `0s` = nur Ein/Aus (`ColorMode::ON_OFF`); Wert > 0 = Helligkeitssteuerung aktiv (`ColorMode::BRIGHTNESS`). |
 | `auto_sensors` | Boolean | `true` | Erstellt automatisch RSSI-Sensor, Status-Text-Sensor und Refresh-Button für dieses Licht. Setzen Sie auf `false`, um diese manuell zu konfigurieren. |
 | `rssi_sensor` | Sensor-Konfig | - | Explizite RSSI-Sensor-Konfiguration (überschreibt auto-generierten Sensor). |

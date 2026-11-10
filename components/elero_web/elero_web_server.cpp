@@ -565,8 +565,14 @@ void EleroWebServer::build_configured_json_(std::string &out) {
     out += ",\"operation\":\"";
     out += light->get_operation_str();
     out += "\",\"last_state\":\"";
-    out += elero_state_to_string(light->get_last_state_raw());
-    out += "\",\"last_seen_ms\":";
+    out += light->get_assumed_state() ? "unknown" : elero_state_to_string(light->get_last_state_raw());
+    out += "\",\"assumed_state\":";
+    out += light->get_assumed_state() ? "true" : "false";
+    out += ",\"last_state_raw\":";
+    char raw_buf[8];
+    snprintf(raw_buf, sizeof(raw_buf), "%u", static_cast<unsigned>(light->get_last_state_raw()));
+    out += raw_buf;
+    out += ",\"last_seen_ms\":";
     char ls_buf[32];
     snprintf(ls_buf, sizeof(ls_buf), "%lu", (unsigned long)light->get_last_seen_ms());
     out += ls_buf;
