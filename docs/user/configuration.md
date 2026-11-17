@@ -432,6 +432,10 @@ Alle Endpoints unterstuetzen CORS (Cross-Origin Resource Sharing).
 | `/elero/api/packets/download` | GET | Erfasste RF-Pakete als Datei herunterladen |
 | `/elero/api/diagnostics/reset` | POST | Diagnose-Zaehler und Latenz-Maxima zuruecksetzen (RX, TX, Watchdog, Parser-Drops, TX-Drops) |
 
+Frequenzänderungen werden erst nach Register-Readback (einschließlich RX-nach-TX, CCA und PATABLE) und erfolgreichem RX-Eintritt bestätigt. Bei belegtem Funkpfad, laufender Frequenzänderung, Timeout oder fehlgeschlagener Verifikation liefern die Set-Endpoints HTTP 409 statt einer falschen Erfolgsmeldung. Die Wartezeit beträgt maximal fünf Sekunden. Ein noch nicht gestarteter Auftrag wird beim Timeout verworfen; ein bereits laufender kann danach noch fertig werden. Deshalb vor einem erneuten Versuch `/elero/api/frequency` abfragen. Die Ausgabe bleibt bei der zuletzt erfolgreich angewendeten Frequenz; nach einem Prüfungsfehler bleiben RX/TX bis zur verifizierten Watchdog-Wiederherstellung gesperrt.
+
+Bei `VERBOSE` erscheint zusätzlich die geschätzte reine RF-Sendezeit (`Estimated RF airtime`). Sie enthält keine CCA-, Kalibrier- oder Backoff-Zeit und verändert weder Timeouts noch Wiederholungen. Für den Dauerbetrieb `DEBUG` oder niedriger verwenden.
+
 **Web-UI-Zustand (elero_web switch Sub-Plattform):**
 
 | Endpoint | Methode | Beschreibung |
@@ -445,7 +449,7 @@ Alle Endpoints unterstuetzen CORS (Cross-Origin Resource Sharing).
 |---|---|---|
 | 200 | OK | Erfolgreiche Anfrage |
 | 401 | Unauthorized | HTTP Basic Auth erforderlich aber nicht angegeben/falsch |
-| 409 | Conflict | Scan starten wenn bereits laeuft, oder Scan stoppen wenn keiner laeuft |
+| 409 | Conflict | Scan-Konflikt oder Frequenzänderung nicht bestätigt (belegt, Timeout, Verifikationsfehler) |
 | 503 | Service Unavailable | Wenn Web-UI via Switch deaktiviert ist |
 
 Fehlerantworten werden als JSON zurueckgegeben: `{"error": "Beschreibung"}`

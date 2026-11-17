@@ -28,6 +28,14 @@ def body(text, signature):
 
 
 methods = [
+    "struct Elero::RadioProfileIO",
+    "bool Elero::init()",
+    "bool Elero::init_at_frequency_(",
+    "uint32_t Elero::estimate_airtime_us_(",
+    "bool Elero::wait_rx()",
+    "bool Elero::apply_frequency_(",
+    "bool Elero::reinit_frequency(",
+    "void Elero::check_radio_state_()",
     "struct Elero::RxFifoIO",
     "bool Elero::process_rx(",
     "void Elero::advance_tx()",
@@ -48,13 +56,16 @@ includes = [
     "elero_overflow_logic.h",
     "elero_tx_logic.h",
     "elero_radio_state_logic.h",
+    "elero_radio_profile.h",
+    "elero_watchdog_logic.h",
 ]
 text = '#include "radio_hub.h"\n' + "\n".join(f'#include "elero/{h}"' for h in includes)
 text += "\nnamespace esphome { namespace elero {\n"
 text += "\n".join(line for line in source.splitlines() if line.startswith("static const ") and "=" in line)
 text += "\n" + body(source, "static const char *marcstate_to_string(")
 text += "\n" + "\n".join(body(source, name) for name in methods)
-text += "\n" + body(core, "void Elero::publish_tx_completion_(") + "\n}}\n"
+text += "\n" + body(core, "void Elero::publish_tx_completion_(")
+text += "\n" + body(core, "void Elero::handle_frequency_reinit_(") + "\n}}\n"
 (out / "radio.cpp").write_text(text)
 hub = (root / "components/elero/elero.h").read_text()
 (out / "radio_types.h").write_text(
@@ -64,5 +75,8 @@ hub = (root / "components/elero/elero.h").read_text()
     + body(hub, "enum class RadioMode")
     + ";\n"
     + body(hub, "struct TxCompletion")
+    + "\n" + body(hub, "struct TxRequest")
+    + "\n" + body(hub, "enum class RadioControlType") + ";\n"
+    + body(hub, "struct RadioMessage")
     + "\n}}\n"
 )

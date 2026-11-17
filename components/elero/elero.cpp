@@ -229,8 +229,7 @@ void Elero::loop() {
     if (now - this->last_hub_sensor_update_ms_ >= 30000) {
       this->last_hub_sensor_update_ms_ = now;
       if (this->frequency_sensor_ != nullptr)
-        this->frequency_sensor_->publish_state(
-            registers_to_mhz(this->freq2_, this->freq1_, this->freq0_));
+        this->frequency_sensor_->publish_state(this->get_frequency_mhz());
       if (this->rx_count_sensor_ != nullptr)
         this->rx_count_sensor_->publish_state((float) this->get_rx_count());
       if (this->tx_count_sensor_ != nullptr)
@@ -290,7 +289,8 @@ void Elero::radio_task_func_(void *param) {
 void Elero::radio_task_loop_() {
   // Completed feedback is drained before selecting more TX. A following active
   // frame gets a bounded 20ms receive opportunity, even with STOP pending.
-  const bool rx_drained = !this->is_tx_idle() || this->process_rx();
+  const bool rx_drained = !this->is_tx_idle() ||
+      !this->radio_profile_valid_.load(std::memory_order_acquire) || this->process_rx();
   // 1. Process TX commands from Core 1 — priority queue first for time-critical stop commands
   //    Only dequeue TX_COMMAND when radio is idle — otherwise the message is
   //    removed from the FreeRTOS queue but send_command_internal_ rejects it,
@@ -319,27 +319,9 @@ void Elero::radio_task_loop_() {
           this->publish_tx_completion_(msg.tx.transaction_id, false);
         }
         break;
-      case RadioControlType::REINIT_FREQ: {
-        bool ok = false;
-        if (this->is_tx_idle()) {
-          this->radio_mode_.store(static_cast<uint8_t>(RadioMode::RX), std::memory_order_relaxed);
-          this->rx_ready_.store(false, std::memory_order_release);
-          this->tx_done_.store(false, std::memory_order_release);
-          this->tx_state_.store(TxState::IDLE, std::memory_order_release);
-          this->freq2_ = msg.freq.freq2;
-          this->freq1_ = msg.freq.freq1;
-          this->freq0_ = msg.freq.freq0;
-          this->reset();
-          this->init();
-          float mhz = registers_to_mhz(msg.freq.freq2, msg.freq.freq1, msg.freq.freq0);
-          ESP_LOGI(TAG, "CC1101 re-initialised: %.2f MHz (0x%02x 0x%02x 0x%02x)",
-                   mhz, msg.freq.freq2, msg.freq.freq1, msg.freq.freq0);
-          ok = true;
-        }
-        if (msg.result_ptr) *msg.result_ptr = ok;
-        if (msg.completion_sem) xSemaphoreGive(msg.completion_sem);
+      case RadioControlType::REINIT_FREQ:
+        this->handle_frequency_reinit_(msg.request_id, msg.freq.freq2, msg.freq.freq1, msg.freq.freq0);
         break;
-      }
       case RadioControlType::START_SCAN:
         this->scan_mode_.store(true, std::memory_order_release);
         break;
@@ -378,14 +360,22 @@ void Elero::radio_task_loop_() {
   }
 }
 
+void Elero::handle_frequency_reinit_(uint32_t request_id, uint8_t freq2, uint8_t freq1, uint8_t freq0) {
+  if (!this->reinit_request_.start(request_id, millis())) return;  // Expired/cancelled queue item.
+  const bool success = this->apply_frequency_(freq2, freq1, freq0);
+  this->reinit_request_.complete(request_id, success, millis());
+}
+
 void Elero::dump_config() {
   ESP_LOGCONFIG(TAG, "Elero CC1101:");
   LOG_PIN("  GDO0 Pin: ", this->gdo0_pin_);
-  ESP_LOGCONFIG(TAG, "  freq2: 0x%02x, freq1: 0x%02x, freq0: 0x%02x", this->freq2_, this->freq1_, this->freq0_);
+  const uint32_t frequency = this->get_frequency_registers();
+  ESP_LOGCONFIG(TAG, "  freq2: 0x%02x, freq1: 0x%02x, freq0: 0x%02x",
+                unsigned((frequency >> 16) & 0xFF), unsigned((frequency >> 8) & 0xFF), unsigned(frequency & 0xFF));
   ESP_LOGCONFIG(TAG, "  Send repeats: %d, send delay: %lu ms, dedup window: %lu ms",
                 this->send_repeats_, static_cast<unsigned long>(this->send_delay_),
                 static_cast<unsigned long>(this->dedup_window_ms_));
-  ESP_LOGCONFIG(TAG, "  RadioLib 8.0.0: begin() + standby(); direct SPI for Elero register access");
+  ESP_LOGCONFIG(TAG, "  RadioLib 8.0.0: begin() + enableRxAfterTx(); verified Elero profile, direct FIFO/CCA");
   if (this->spi_failed_.load(std::memory_order_acquire)) {
     ESP_LOGCONFIG(TAG, "  SPI Status: FAILED — CC1101 communication broken");
     ESP_LOGCONFIG(TAG, "  Check SPI pin assignments — avoid ESP32 strapping pins (GPIO0/2/5/12/15)");
@@ -486,8 +476,7 @@ void Elero::setup() {
   // Publish initial values for hub-level diagnostic sensors.
 #ifdef USE_SENSOR
   if (this->frequency_sensor_ != nullptr)
-    this->frequency_sensor_->publish_state(
-        registers_to_mhz(this->freq2_, this->freq1_, this->freq0_));
+    this->frequency_sensor_->publish_state(this->get_frequency_mhz());
   if (this->rx_count_sensor_ != nullptr)
     this->rx_count_sensor_->publish_state(0.0f);
   if (this->tx_count_sensor_ != nullptr)
