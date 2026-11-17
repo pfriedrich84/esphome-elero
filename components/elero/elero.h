@@ -385,7 +385,7 @@ class EleroRefreshButton : public button::Button, public Component {
 #endif  // USE_BUTTON
 
 /// RadioLib HAL adapter that bridges ESPHome's SPIDevice to RadioLib's Module.
-/// GPIO and interrupt operations are forwarded to ESPHome primitives.
+/// GPIO and interrupts are managed by Elero directly; HAL hooks are no-ops.
 /// SPI operations delegate to the parent Elero component's SPIDevice.
 class EspHomeRadioLibHal : public RadioLibHal {
  public:
@@ -406,11 +406,11 @@ class EspHomeRadioLibHal : public RadioLibHal {
   long pulseIn(uint32_t pin, uint32_t state, RadioLibTime_t timeout) override;
 
   // SPI — delegated to the parent Elero component's SPIDevice
-  void spiBegin() override;
+  int16_t spiBegin() override;
   void spiBeginTransaction() override;
-  void spiTransfer(uint8_t *out, size_t len, uint8_t *in) override;
+  int16_t spiTransfer(uint8_t *out, size_t len, uint8_t *in) override;
   void spiEndTransaction() override;
-  void spiEnd() override;
+  int16_t spiEnd() override;
 
   /// Set the parent component that owns the SPI bus.
   /// Must be called before any SPI operations.

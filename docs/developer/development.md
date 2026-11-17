@@ -165,13 +165,18 @@ The abstract base classes `EleroBlindBase` and `EleroLightBase` decouple the hub
 
 ### RadioLib integration
 
-The hub uses [RadioLib](https://github.com/jgromes/RadioLib) v7.1.2 (added via PlatformIO `cg.add_library()`) as a hardware abstraction layer for the CC1101 transceiver. A custom `EspHomeRadioLibHal` adapter class bridges ESPHome's `SPIDevice` to RadioLib's HAL interface — GPIO, interrupt, and SPI lifecycle operations are forwarded to ESPHome primitives while SPI transfers delegate to the parent `Elero` component. RadioLib provides:
+The hub uses [RadioLib](https://github.com/jgromes/RadioLib) v8.0.0 (added via PlatformIO `cg.add_library()`) as a hardware abstraction layer for the CC1101 transceiver. A custom `EspHomeRadioLibHal` adapter class bridges ESPHome's `SPIDevice` to RadioLib's HAL interface. Elero/ESPHome manage GPIO, interrupts, and the shared SPI bus lifecycle directly; HAL transactions and byte transfers delegate to the parent `Elero` component. RadioLib provides:
 
-- `radio_->standby()` — synchronous IDLE transition (~1 ms), replacing the old multi-state async SIDLE approach
-- `radio_module_->SPIsetRegValue()` / `SPIgetRegValue()` — register access with verify-readback for init/config
-- `radio_->begin()` — initial CC1101 configuration (frequency, bandwidth, data rate, etc.)
+- `radio_->standby()` — synchronous IDLE transition; the hub still verifies MARCSTATE and retains its direct-SIDLE fallback
+- `radio_->begin()` — initial CC1101 bootstrap configuration (frequency, bandwidth, data rate, etc.)
+
+The hub uses direct ESPHome SPI access for its Elero register profile, frequency updates, FIFO transfers, and status checks.
 
 The `Elero` class owns the RadioLib instances (`radio_hal_`, `radio_module_`, `radio_`) and cleans them up in its destructor.
+
+[RadioLib 8.0.0](https://github.com/jgromes/RadioLib/releases/tag/8.0.0) changes FSK configuration to integer Hz/bps and makes HAL `spiBegin()`, `spiTransfer()`, and `spiEnd()` return status codes. The adapter's `spiBegin()` and `spiTransfer()` return an error without a parent, otherwise success. RadioLib's generic HAL `init()`/`term()` do not call `spiBegin()`/`spiEnd()`, and its CC1101 SPI paths do not propagate transfer status to callers. ESPHome's byte-transfer API also cannot report transport errors, so the hub's register readback and recovery checks remain essential. `spiEnd()` does not stop the shared ESPHome SPI bus. The initial `ConfigFSK_t` values are bootstrap settings only: the subsequent `reset()`/`init()` still apply the existing Elero register profile, PATABLE, and YAML frequency bytes unchanged. Packet IRQ callbacks remain managed directly by Elero, not RadioLib's IRQ API.
+
+For a hardware migration test, retain the previous known-good firmware and use the same YAML and RF settings. Confirm `RadioLib CC1101 initialized (chip version verified)` at boot (no `RadioLib begin() returned rc=` warning), reception of remote/motor status, individual OPEN/CLOSE/STOP, and group/light commands if configured. Check status feedback and watchdog recovery counters during normal use; compilation and host tests cannot establish RF reliability or motor standstill.
 
 ### Dual-core architecture
 
@@ -738,7 +743,7 @@ When the switch is OFF, all `/elero` endpoints return HTTP 503 (Service Unavaila
 
 ### External dependencies
 
-- **RadioLib v7.1.2** — added automatically via `cg.add_library("jgromes/RadioLib", "7.1.2")` in the hub's `to_code()`
+- **RadioLib v8.0.0** — added automatically via `cg.add_library("jgromes/RadioLib", "8.0.0")` in the hub's `to_code()`
 - **ESPHome 2026.1.0+ compatibility** — the hub's `to_code()` calls `request_log_listener()` to reserve a log listener slot for the StaticVector migration; gracefully falls back for older ESPHome versions
 
 ### Local development

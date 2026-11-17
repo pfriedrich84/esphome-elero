@@ -86,17 +86,18 @@ RadioLibTime_t EspHomeRadioLibHal::micros() {
 long EspHomeRadioLibHal::pulseIn(uint32_t pin, uint32_t state, RadioLibTime_t timeout) {
   return 0;  // Not used
 }
-void EspHomeRadioLibHal::spiBegin() {
-  // SPI bus is initialized by ESPHome's SPI component — no-op
+int16_t EspHomeRadioLibHal::spiBegin() {
+  // SPI bus is initialized by ESPHome's SPI component.
+  return this->spi_parent_ != nullptr ? RADIOLIB_ERR_NONE : RADIOLIB_ERR_NULL_POINTER;
 }
 void EspHomeRadioLibHal::spiBeginTransaction() {
   if (this->spi_parent_ != nullptr) {
     static_cast<Elero *>(this->spi_parent_)->enable();
   }
 }
-void EspHomeRadioLibHal::spiTransfer(uint8_t *out, size_t len, uint8_t *in) {
+int16_t EspHomeRadioLibHal::spiTransfer(uint8_t *out, size_t len, uint8_t *in) {
   if (this->spi_parent_ == nullptr)
-    return;
+    return RADIOLIB_ERR_NULL_POINTER;
   auto *parent = static_cast<Elero *>(this->spi_parent_);
   for (size_t i = 0; i < len; i++) {
     uint8_t tx = (out != nullptr) ? out[i] : 0x00;
@@ -104,6 +105,9 @@ void EspHomeRadioLibHal::spiTransfer(uint8_t *out, size_t len, uint8_t *in) {
     if (in != nullptr)
       in[i] = rx;
   }
+  // ESPHome's byte-transfer API has no transport status to propagate.
+  // CC1101 communication is verified separately by the hub's readback checks.
+  return RADIOLIB_ERR_NONE;
 }
 void EspHomeRadioLibHal::spiEndTransaction() {
   if (this->spi_parent_ != nullptr) {
@@ -111,8 +115,9 @@ void EspHomeRadioLibHal::spiEndTransaction() {
     delay_microseconds_safe(SPI_SETTLE_US);  // Match main's inter-transaction settling time for CC1101
   }
 }
-void EspHomeRadioLibHal::spiEnd() {
-  // SPI bus lifecycle is managed by ESPHome — no-op
+int16_t EspHomeRadioLibHal::spiEnd() {
+  // SPI bus lifecycle is managed by ESPHome — do not shut down the shared bus.
+  return RADIOLIB_ERR_NONE;
 }
 
 const char *elero_state_to_string(uint8_t state) {
@@ -380,7 +385,7 @@ void Elero::dump_config() {
   ESP_LOGCONFIG(TAG, "  Send repeats: %d, send delay: %lu ms, dedup window: %lu ms",
                 this->send_repeats_, static_cast<unsigned long>(this->send_delay_),
                 static_cast<unsigned long>(this->dedup_window_ms_));
-  ESP_LOGCONFIG(TAG, "  RadioLib: begin() + standby() + setFrequency(); direct SPI for register access");
+  ESP_LOGCONFIG(TAG, "  RadioLib 8.0.0: begin() + standby(); direct SPI for Elero register access");
   if (this->spi_failed_.load(std::memory_order_acquire)) {
     ESP_LOGCONFIG(TAG, "  SPI Status: FAILED — CC1101 communication broken");
     ESP_LOGCONFIG(TAG, "  Check SPI pin assignments — avoid ESP32 strapping pins (GPIO0/2/5/12/15)");
@@ -401,11 +406,13 @@ void Elero::setup() {
   this->radio_module_ = new Module(&this->radio_hal_, RADIOLIB_NC, RADIOLIB_NC, RADIOLIB_NC);
   this->radio_ = new CC1101(this->radio_module_);
 
+  // RadioLib 8 uses Hz/bps, not MHz/kbps/kHz. These are bootstrap settings;
+  // reset()/init() below still apply the Elero register profile and YAML frequency.
   ConfigFSK_t radio_config;
-  radio_config.frequency = 868.35;
-  radio_config.bitRate = 47.607;
-  radio_config.frequencyDeviation = 38.383;
-  radio_config.receiverBandwidth = 101.5625;
+  radio_config.frequency = 868350000;
+  radio_config.bitRate = 47607;
+  radio_config.frequencyDeviation = 38383;
+  radio_config.receiverBandwidth = 101563;  // 101.5625 kHz rounded to whole Hz
   radio_config.power = 10;
   radio_config.preambleLength = 32;
   int16_t rc = this->radio_->begin(radio_config);

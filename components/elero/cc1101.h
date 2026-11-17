@@ -133,7 +133,7 @@ namespace elero {
 #define CC1101_RXBYTES 0x3B
 #endif
 
-// MARCSTATE values are not exposed by RadioLib 7.7.1 as public constants.
+// Keep local MARCSTATE values available to standalone host builds without RadioLib.
 #define CC1101_MARCSTATE_SLEEP 0x00
 #define CC1101_MARCSTATE_IDLE 0x01
 #define CC1101_MARCSTATE_XOFF 0x02
