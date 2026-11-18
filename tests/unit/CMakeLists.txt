@@ -112,3 +112,7 @@ gtest_discover_tests(test_runtime_blind_logic)
 gtest_discover_tests(test_packet_parser)
 gtest_discover_tests(test_packet_replay)
 gtest_discover_tests(test_golden_vectors)
+
+add_executable(test_spi_verify_logic test_spi_verify_logic.cpp)
+target_link_libraries(test_spi_verify_logic GTest::gtest_main)
+add_test(NAME SpiVerifyLogicTests COMMAND test_spi_verify_logic)
