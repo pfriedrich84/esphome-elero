@@ -46,7 +46,7 @@ Buffered data is processed before new TX and on completion/cooldown, rather than
 
 MARCSTATE, RXBYTES, TXBYTES and PKTSTATUS use up to five SPI reads to obtain two consecutive identical full bytes. FIFO error bits and any observed TX-underflow state are retained, not masked into an empty FIFO. Inconclusive reads fail closed. Normal completion requires observed TX/TX_END, stable empty TXBYTES without error flags, and the expected RX state; GDO falling, arbitrary non-TX state, IDLE or a counter increment alone is not success. An unobservable short TX may conservatively fail/retry. Recovery strobes require verified IDLE; failed preparation returns to RX rather than leaving it stranded in IDLE.
 
-The CC1101 sources for CRC_AUTOFLUSH, CCA, FIFO state restrictions and dynamic status reads are the [TI datasheet SWRS061I](https://www.ti.com/lit/ds/swrs061i/swrs061i.pdf) and [TI errata SWRZ020E](https://www.ti.com/lit/er/swrz020e/swrz020e.pdf). RadioLib 7.1.2 remains the existing dependency. No PATABLE, frequency, modem, bandwidth, deviation, AGC or calibration register values change.
+The CC1101 sources for CRC_AUTOFLUSH, CCA, FIFO state restrictions and dynamic status reads are the [TI datasheet SWRS061I](https://www.ti.com/lit/ds/swrs061i/swrs061i.pdf) and [TI errata SWRZ020E](https://www.ti.com/lit/er/swrz020e/swrz020e.pdf). The RF reliability work retained RadioLib 7.1.2 at its review baseline; see [RadioLib integration](development.md#radiolib-integration) for the current dependency and migration details. The reliability work and subsequent RadioLib 8 migration do not change the final Elero PATABLE, frequency, modem, bandwidth, deviation, AGC or calibration register values.
 
 ## Validation boundary
 

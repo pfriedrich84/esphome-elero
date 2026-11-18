@@ -36,6 +36,8 @@ This document tracks the intended deep Modules and seams for the ESPHome Elero i
 
 - **Files**: `components/elero/elero_radio_state_logic.h`, `components/elero/elero_cc1101.cpp`, `tests/unit/test_radio_state_logic.cpp`
 - Pure predicates classify RX/TX/watchdog states. Hardware I/O remains in the Elero hub, and all post-setup CC1101 SPI access stays on the radio task/Core 0.
+- `elero_radio_profile.h` owns the unchanged expected register bytes and PATABLE, explicit RadioLib `enableRxAfterTx(true)` integration, and pre-SRX readback. An invalid profile gates RX/TX and forces verified watchdog reinitialization instead of a bare SRX restart.
+- `elero_reinit_request.h` owns bounded, single-flight frequency-request completion. Only tokens and frequency bytes cross the FreeRTOS queue; timeout cannot leave dangling caller pointers. Successful frequency publication is one atomic word. The direct SIDLE path keeps the previous 100 ms fault budget without RadioLib heap allocations; FSK airtime is diagnostic only.
 
 ### Runtime adopted Blind behaviour
 

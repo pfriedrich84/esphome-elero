@@ -87,7 +87,7 @@ execute_process(COMMAND ${Python3_EXECUTABLE} ${HOST_DIR}/generate_radio_fixture
 if(NOT RADIO_FIXTURE_RESULT EQUAL 0)
   message(FATAL_ERROR "Cannot generate production radio host fixture")
 endif()
-add_executable(test_radio_delivery test_radio_delivery.cpp ${ENTITY_FIXTURE_DIR}/radio.cpp)
+add_executable(test_radio_delivery test_radio_delivery.cpp test_radio_init.cpp ${ENTITY_FIXTURE_DIR}/radio.cpp)
 target_include_directories(test_radio_delivery PRIVATE ${ENTITY_FIXTURE_DIR} ${HOST_DIR})
 target_link_libraries(test_radio_delivery GTest::gtest_main)
 

@@ -7,6 +7,7 @@
 #include "elero_tx_logic.h"
 #include "elero_dedup_logic.h"
 #include "elero_radio_state_logic.h"
+#include "elero_radio_profile.h"
 #include "esphome/core/log.h"
 #include "esphome/core/helpers.h"
 #include <cstring>
@@ -17,6 +18,8 @@ namespace elero {
 static const char *TAG = "elero";
 static const uint8_t SPI_SETTLE_US = 5;
 
+static const uint32_t IDLE_TIMEOUT_US = 100000;  // Preserve RadioLib's former 100 ms fault budget.
+static const uint32_t IDLE_POLL_US = 500;
 static const uint32_t TX_STATE_TIMEOUT_MS = 50;
 static const uint32_t TX_COOLDOWN_MS = 1;  // CC1101 PLL settles in ~75µs; 1ms is ample margin
 static const uint32_t RADIO_WATCHDOG_MS = 5000;
@@ -90,6 +93,7 @@ struct Elero::RxFifoIO {
 };
 
 bool Elero::process_rx(bool keep_idle) {
+  if (!this->radio_profile_valid_.load(std::memory_order_acquire)) return false;
   if (this->radio_mode_.load(std::memory_order_relaxed) != static_cast<uint8_t>(RadioMode::RX))
     return false;
   // Poll the FIFO as well as the edge flag: several packet ends can coalesce
@@ -103,7 +107,7 @@ bool Elero::process_rx(bool keep_idle) {
   if (overflow_logic::should_reinit_after_overflow_count(this->rx_overflow_count_, 5)) {
     this->rx_overflow_count_ = 0;
     this->reset();
-    this->init();
+    if (!this->init()) ESP_LOGW(TAG, "Overflow recovery: profile verification failed; RX/TX remain disabled");
     return false;
   }
   if (result == RxFifoReader::Result::RECEIVING || result == RxFifoReader::Result::IO_ERROR) {
@@ -297,8 +301,9 @@ void Elero::check_radio_state_() {
 
   uint8_t marc = this->read_status(CC1101_MARCSTATE) & 0x1F;
 
-  // Healthy RX state — reset escalation counters/window.
-  if (radio_state_logic::is_watchdog_healthy_rx(marc)) {
+  const bool profile_valid = this->radio_profile_valid_.load(std::memory_order_acquire);
+  // An unverified profile must never be restarted by the lightweight SRX path.
+  if (profile_valid && radio_state_logic::is_watchdog_healthy_rx(marc)) {
     watchdog_logic::EscalationState state{
       this->watchdog_flush_count_,
       this->watchdog_reset_count_,
@@ -311,7 +316,7 @@ void Elero::check_radio_state_() {
     return;
   }
   // Transient calibration states — let them settle
-  if (radio_state_logic::is_watchdog_transient_state(marc))
+  if (profile_valid && radio_state_logic::is_watchdog_transient_state(marc))
     return;
 
   // --- Something is wrong: escalating recovery ---
@@ -330,10 +335,14 @@ void Elero::check_radio_state_() {
     this->watchdog_window_start_ms_ = state.window_start_ms;
   }
 
-  switch (watchdog_logic::choose_recovery_action(marc, this->watchdog_flush_count_,
-                                                 this->watchdog_reset_count_,
-                                                 WATCHDOG_MAX_FLUSHES_PER_WINDOW,
-                                                 WATCHDOG_MAX_RESETS_PER_WINDOW)) {
+  const auto action = !profile_valid
+      ? (this->watchdog_reset_count_ < WATCHDOG_MAX_RESETS_PER_WINDOW
+          ? watchdog_logic::RecoveryAction::RESET : watchdog_logic::RecoveryAction::FAIL)
+      : watchdog_logic::choose_recovery_action(marc, this->watchdog_flush_count_,
+                                               this->watchdog_reset_count_,
+                                               WATCHDOG_MAX_FLUSHES_PER_WINDOW,
+                                               WATCHDOG_MAX_RESETS_PER_WINDOW);
+  switch (action) {
     case watchdog_logic::RecoveryAction::RESTART_RX:
       ESP_LOGW(TAG, "Radio watchdog: stuck in IDLE, restarting RX");
       this->write_cmd(CC1101_SRX);
@@ -356,8 +365,7 @@ void Elero::check_radio_state_() {
 
     case watchdog_logic::RecoveryAction::RESET:
       this->watchdog_reset_count_++;
-      ESP_LOGW(TAG, "Radio watchdog L2: %d flushes exhausted, full reset (%d/%d in window)",
-               WATCHDOG_MAX_FLUSHES_PER_WINDOW,
+      ESP_LOGW(TAG, "Radio watchdog L2: profile invalid or flush budget exhausted, full reset (%d/%d in window)",
                this->watchdog_reset_count_, WATCHDOG_MAX_RESETS_PER_WINDOW);
       this->reset();
       if (!this->init()) {
@@ -384,25 +392,34 @@ float Elero::registers_to_mhz(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
   return utils::registers_to_mhz(freq2, freq1, freq0);
 }
 
+float Elero::get_frequency_mhz() const {
+  const uint32_t value = this->get_frequency_registers();
+  return registers_to_mhz(value >> 16, value >> 8, value);
+}
+
 bool Elero::reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
-  if (!this->tx_queue_) return false;
-  SemaphoreHandle_t sem = xSemaphoreCreateBinary();
-  if (!sem) return false;
-  bool result = false;
+  if (!this->tx_queue_ || !this->radio_task_handle_ ||
+      xTaskGetCurrentTaskHandle() == this->radio_task_handle_ ||
+      this->radio_fatal_error_.load(std::memory_order_acquire) ||
+      this->spi_failed_.load(std::memory_order_acquire)) return false;
+  const uint32_t id = this->reinit_request_.begin(millis());
+  if (id == 0) return false;  // Another request is queued, running or awaiting its caller.
   RadioMessage msg{};
   msg.type = RadioControlType::REINIT_FREQ;
   msg.freq.freq2 = freq2;
   msg.freq.freq1 = freq1;
   msg.freq.freq0 = freq0;
-  msg.completion_sem = sem;
-  msg.result_ptr = &result;
+  msg.request_id = id;
   if (xQueueSend(this->tx_queue_, &msg, pdMS_TO_TICKS(100)) != pdTRUE) {
-    vSemaphoreDelete(sem);
+    this->reinit_request_.cancel(id);
     return false;
   }
-  xSemaphoreTake(sem, pdMS_TO_TICKS(5000));
-  vSemaphoreDelete(sem);
-  return result;
+  while (true) {
+    const auto result = this->reinit_request_.poll(id, millis());
+    if (result != FrequencyReinitRequest::Result::PENDING)
+      return result == FrequencyReinitRequest::Result::SUCCEEDED;
+    delay(1);  // Only wait for component-owned state; no SPI access on the calling core.
+  }
 }
 
 bool Elero::reinit_frequency_mhz(float mhz) {
@@ -413,17 +430,39 @@ bool Elero::reinit_frequency_mhz(float mhz) {
   return this->reinit_frequency(f2, f1, f0);
 }
 
+bool Elero::apply_frequency_(uint8_t freq2, uint8_t freq1, uint8_t freq0) {
+  if (!this->is_tx_idle() || this->spi_failed_.load(std::memory_order_acquire) ||
+      this->radio_fatal_error_.load(std::memory_order_acquire)) return false;
+  const uint32_t requested = (uint32_t(freq2) << 16) | (uint32_t(freq1) << 8) | freq0;
+  this->reset();
+  if (!this->init_at_frequency_(requested)) {
+    // RX/TX stay disabled until a watchdog reset verifies the previous profile.
+    // The published atomic frequency is unchanged; no unverified candidate leaks.
+    ESP_LOGW(TAG, "Frequency reinit failed; waiting for verified recovery at the previous frequency");
+    return false;
+  }
+  this->frequency_registers_.store(requested, std::memory_order_release);
+  this->radio_mode_.store(static_cast<uint8_t>(RadioMode::RX), std::memory_order_relaxed);
+  ESP_LOGI(TAG, "CC1101 re-initialised: %.2f MHz (0x%02x 0x%02x 0x%02x)",
+           registers_to_mhz(freq2, freq1, freq0), freq2, freq1, freq0);
+  return true;
+}
+
 bool Elero::enter_idle_() {
-  this->radio_->standby();
-  uint8_t marc = 0;
-  if (this->read_status_stable(CC1101_MARCSTATE, marc) && (marc & 0x1f) == CC1101_MARCSTATE_IDLE)
-    return true;
+  const uint32_t started = micros();
   this->write_cmd(CC1101_SIDLE);
-  delay_microseconds_safe(500);
-  return this->read_status_stable(CC1101_MARCSTATE, marc) && (marc & 0x1f) == CC1101_MARCSTATE_IDLE;
+  do {
+    uint8_t marc = 0;
+    if (this->read_status_stable(CC1101_MARCSTATE, marc) && (marc & 0x1f) == CC1101_MARCSTATE_IDLE)
+      return true;
+    if (micros() - started >= IDLE_TIMEOUT_US) return false;
+    delay_microseconds_safe(IDLE_POLL_US);
+  } while (micros() - started < IDLE_TIMEOUT_US);
+  return false;
 }
 
 void Elero::flush_and_rx() {
+  if (!this->radio_profile_valid_.load(std::memory_order_acquire)) return;
   ESP_LOGVV(TAG, "flush_and_rx");
   if (!this->enter_idle_()) {
     this->radio_fatal_error_.store(true, std::memory_order_release);
@@ -438,6 +477,7 @@ void Elero::flush_and_rx() {
 }
 
 void Elero::flush_rx() {
+  if (!this->radio_profile_valid_.load(std::memory_order_acquire)) return;
   ESP_LOGVV(TAG, "flush_rx");
   if (!this->enter_idle_()) {
     this->radio_fatal_error_.store(true, std::memory_order_release);
@@ -451,6 +491,9 @@ void Elero::flush_rx() {
 }
 
 void Elero::reset() {
+  this->radio_profile_valid_.store(false, std::memory_order_release);
+  this->rx_ready_.store(false, std::memory_order_release);
+  this->tx_done_.store(false, std::memory_order_release);
   this->rx_fifo_.reset();
   this->enable();
   this->transfer_byte(CC1101_SRES);
@@ -531,7 +574,32 @@ void Elero::diagnose_spi_failure_() {
   this->mark_failed(LOG_STR("CC1101 SPI communication broken — check pin assignments"));
 }
 
+struct Elero::RadioProfileIO {
+  Elero &hub;
+  void write_reg(uint8_t addr, uint8_t value) { hub.write_reg(addr, value); }
+  void write_burst(uint8_t addr, const uint8_t *data, uint8_t len) { hub.write_burst(addr, data, len); }
+  uint8_t read_reg(uint8_t addr) { return hub.read_reg(addr); }
+  void read_buf(uint8_t addr, uint8_t *data, uint8_t len) { hub.read_buf(addr, data, len); }
+  bool enable_rx_after_tx() {
+    const int16_t rc = hub.radio_->enableRxAfterTx(true);
+    if (rc != RADIOLIB_ERR_NONE) ESP_LOGE(TAG, "enableRxAfterTx failed: rc=%d", rc);
+    return rc == RADIOLIB_ERR_NONE;
+  }
+  void mismatch(uint8_t addr, uint8_t expected, uint8_t actual) {
+    ESP_LOGE(TAG, "Radio profile verify failed at 0x%02x: expected 0x%02x, read 0x%02x", addr, expected, actual);
+  }
+};
+
 bool Elero::init() {
+  return this->init_at_frequency_(this->get_frequency_registers());
+}
+
+bool Elero::init_at_frequency_(uint32_t frequency) {
+  this->radio_profile_valid_.store(false, std::memory_order_release);
+  if (!this->enter_idle_()) {
+    ESP_LOGE(TAG, "Cannot verify IDLE before radio profile initialization");
+    return false;
+  }
   const uint8_t max_spi_retries = 5;
   bool spi_ok = false;
   for (uint8_t attempt = 1; attempt <= max_spi_retries; attempt++) {
@@ -558,50 +626,18 @@ bool Elero::init() {
     return false;
   }
 
-  uint8_t patable_data[] = {0xc0, 0xc0, 0xc0, 0xc0, 0xc0, 0xc0, 0xc0, 0xc0};
-
-  this->write_reg(CC1101_FSCTRL0, 0x00);
-  this->write_reg(CC1101_FREQ2, this->freq2_);
-  this->write_reg(CC1101_FREQ1, this->freq1_);
-  this->write_reg(CC1101_FREQ0, this->freq0_);
-  this->write_reg(CC1101_MDMCFG4, 0x7B);
-  this->write_reg(CC1101_MDMCFG3, 0x83);
-  this->write_reg(CC1101_MDMCFG2, 0x13);
-  this->write_reg(CC1101_MDMCFG1, 0x52);
-  this->write_reg(CC1101_MDMCFG0, 0xF8);
-  this->write_reg(CC1101_CHANNR, 0x00);
-  this->write_reg(CC1101_DEVIATN, 0x43);
-  this->write_reg(CC1101_FREND1, 0xB6);
-  this->write_reg(CC1101_FREND0, 0x10);
-  this->write_reg(CC1101_MCSM0, 0x18);
-  this->write_reg(CC1101_MCSM1, 0x3F);
-  this->write_reg(CC1101_FOCCFG, 0x1D);
-  this->write_reg(CC1101_BSCFG, 0x1F);
-  this->write_reg(CC1101_AGCCTRL2, 0xC7);
-  this->write_reg(CC1101_AGCCTRL1, 0x00);
-  this->write_reg(CC1101_AGCCTRL0, 0xB2);
-  this->write_reg(CC1101_FSCAL3, 0xEA);
-  this->write_reg(CC1101_FSCAL2, 0x2A);
-  this->write_reg(CC1101_FSCAL1, 0x00);
-  this->write_reg(CC1101_FSCAL0, 0x1F);
-  this->write_reg(CC1101_FSTEST, 0x59);
-  this->write_reg(CC1101_TEST2, 0x81);
-  this->write_reg(CC1101_TEST1, 0x35);
-  this->write_reg(CC1101_TEST0, 0x09);
-  this->write_reg(CC1101_IOCFG0, 0x06);
-  this->write_reg(CC1101_PKTCTRL1, 0x8C);
-  this->write_reg(CC1101_PKTCTRL0, 0x45);
-  this->write_reg(CC1101_ADDR, 0x00);
-  this->write_reg(CC1101_PKTLEN, 0x3C);
-  this->write_reg(CC1101_SYNC1, 0xD3);
-  this->write_reg(CC1101_SYNC0, 0x91);
-  this->write_burst(CC1101_PATABLE, patable_data, 8);
-
+  RadioProfileIO io{*this};
+  if (!configure_radio_profile(io, frequency >> 16, frequency >> 8, frequency)) {
+    ESP_LOGE(TAG, "Radio profile not verified; RX/TX remain disabled");
+    return false;
+  }
   this->write_cmd(CC1101_SRX);
   if (!this->wait_rx()) {
     ESP_LOGW(TAG, "init: CC1101 failed to enter RX after configuration");
+    this->write_cmd(CC1101_SIDLE);
     return false;
   }
+  this->radio_profile_valid_.store(true, std::memory_order_release);
   return true;
 }
 
@@ -613,7 +649,7 @@ void Elero::write_reg(uint8_t addr, uint8_t data) {
   delay_microseconds_safe(SPI_SETTLE_US);
 }
 
-void Elero::write_burst(uint8_t addr, uint8_t *data, uint8_t len) {
+void Elero::write_burst(uint8_t addr, const uint8_t *data, uint8_t len) {
   this->enable();
   this->write_byte(addr | CC1101_WRITE_BURST);
   for (uint8_t i = 0; i < len; i++)
@@ -684,11 +720,29 @@ void Elero::read_buf(uint8_t addr, uint8_t *buf, uint8_t len) {
   delay_microseconds_safe(SPI_SETTLE_US);
 }
 
+uint32_t Elero::estimate_airtime_us_(uint8_t fifo_bytes) {
+  // Explicit final Elero settings: RadioLib's cached bootstrap bitrate is stale.
+  // Integer bps is rounded to the closest representation of the register rate.
+  constexpr uint8_t exponent = radio_profile_value(CC1101_MDMCFG4) & 0x0f;
+  constexpr uint32_t mantissa = 256u + radio_profile_value(CC1101_MDMCFG3);
+  DataRate_t rate{};
+  rate.fsk.bitRate = (uint64_t(mantissa) * 26000000u * (1u << exponent) + (1u << 27)) >> 28;
+  constexpr uint16_t preamble_bits[] = {16, 24, 32, 48, 64, 96, 128, 192};
+  PacketConfig_t packet{};
+  packet.fsk.preambleLength = preamble_bits[(radio_profile_value(CC1101_MDMCFG1) >> 4) & 0x07];
+  packet.fsk.syncWordLength = (radio_profile_value(CC1101_MDMCFG2) & 0x03) == 3 ? 32 : 16;
+  packet.fsk.crcLength = (radio_profile_value(CC1101_PKTCTRL0) & 0x04) != 0 ? 2 : 0;
+  // fifo_bytes includes the variable-length prefix. This estimate excludes
+  // calibration/listen/backoff; it never drives CCA, TX timeouts or completion.
+  return this->radio_->calculateTimeOnAir(RADIOLIB_MODEM_FSK, rate, packet, fifo_bytes);
+}
+
 // ---------------------------------------------------------------------------
 // send_command_internal_ — Core 0 only: execute TX via SPI
 // ---------------------------------------------------------------------------
 bool Elero::send_command_internal_(t_elero_command *cmd, uint32_t enqueued_at_ms) {
-  if (this->spi_failed_.load(std::memory_order_acquire))
+  if (this->spi_failed_.load(std::memory_order_acquire) ||
+      !this->radio_profile_valid_.load(std::memory_order_acquire))
     return false;
   // Note: caller (radio_task_loop_) guarantees tx_state_ == IDLE before
   // dequeuing a TX_COMMAND, so no idle check needed here.
@@ -763,6 +817,8 @@ bool Elero::send_command_internal_(t_elero_command *cmd, uint32_t enqueued_at_ms
 #if ESPHOME_LOG_LEVEL >= ESPHOME_LOG_LEVEL_VERBOSE
   ESP_LOGV(TAG, "  TX raw [%d bytes]: %s", static_cast<int>(msg_len + 1),
            format_hex_pretty(this->msg_tx_, static_cast<uint8_t>(msg_len + 1)).c_str());
+  ESP_LOGV(TAG, "  Estimated RF airtime: %lu us (final Elero profile, excludes CCA/calibration)",
+           static_cast<unsigned long>(this->estimate_airtime_us_(msg_len + 1)));
 #endif
 
   // Drain complete feedback first and acquire verified IDLE without consuming
