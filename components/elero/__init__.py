@@ -245,12 +245,12 @@ async def to_code(config):
     # Arduino SPI library. Adding "SPI" explicitly ensures the include path is
     # available. The "Could not find the package" warning is cosmetic — PlatformIO's
     # registry lookup fails, but the built-in framework library is still resolved.
-    cg.add_library("jgromes/RadioLib", "7.7.1")
+    cg.add_library("jgromes/RadioLib", "8.0.0")
     cg.add_library("SPI", None)
 
     # Exclude all unused RadioLib modules to reduce firmware binary size.
     # This project only uses CC1101; all other radio drivers and protocol
-    # decoders are dead code.  RadioLib v7.7.1 honours RADIOLIB_EXCLUDE_*
+    # decoders are dead code.  RadioLib v8.0.0 honours RADIOLIB_EXCLUDE_*
     # preprocessor defines (guarded via #if in each module header/source).
     # Using add_build_flag (not add_define) so flags propagate to library code.
     _radiolib_exclusions = [
@@ -265,7 +265,10 @@ async def to_code(config):
         # STM32WLX is NOT listed here — RadioLib auto-excludes it on non-STM32 platforms
         "RADIOLIB_EXCLUDE_SX128X",
         "RADIOLIB_EXCLUDE_LR11X0",
+        "RADIOLIB_EXCLUDE_LR2021",
         # Protocol decoders (none used by this project)
+        "RADIOLIB_EXCLUDE_ADSB",
+        "RADIOLIB_EXCLUDE_SSDV",
         "RADIOLIB_EXCLUDE_AFSK",
         "RADIOLIB_EXCLUDE_AX25",
         "RADIOLIB_EXCLUDE_APRS",

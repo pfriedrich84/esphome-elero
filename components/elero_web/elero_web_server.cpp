@@ -1180,16 +1180,13 @@ void EleroWebServer::handle_packets_download(AsyncWebServerRequest *request) {
 // ─── Frequency ────────────────────────────────────────────────────────────────
 
 void EleroWebServer::handle_get_frequency(AsyncWebServerRequest *request) {
-  float mhz = Elero::registers_to_mhz(this->parent_->get_freq2(),
-                                        this->parent_->get_freq1(),
-                                        this->parent_->get_freq0());
+  const uint32_t frequency = this->parent_->get_frequency_registers();
+  const uint8_t f2 = frequency >> 16, f1 = frequency >> 8, f0 = frequency;
+  const float mhz = Elero::registers_to_mhz(f2, f1, f0);
   char buf[120];
   snprintf(buf, sizeof(buf),
     "{\"freq2\":\"0x%02x\",\"freq1\":\"0x%02x\",\"freq0\":\"0x%02x\",\"mhz\":%.2f}",
-    this->parent_->get_freq2(),
-    this->parent_->get_freq1(),
-    this->parent_->get_freq0(),
-    mhz);
+    f2, f1, f0, mhz);
   AsyncWebServerResponse *response = request->beginResponse(200, "application/json", buf);
   this->add_cors_headers(response);
   request->send(response);
@@ -1218,7 +1215,7 @@ void EleroWebServer::handle_set_frequency(AsyncWebServerRequest *request) {
     return;
   }
   if (!this->parent_->reinit_frequency(f2, f1, f0)) {
-    this->send_json_error(request, 409, "TX in progress — retry when idle");
+    this->send_json_error(request, 409, "Frequency change not confirmed: busy, timed out or radio verification failed; query current frequency before retrying");
     return;
   }
   float mhz = Elero::registers_to_mhz(f2, f1, f0);
@@ -1244,20 +1241,16 @@ void EleroWebServer::handle_set_frequency_mhz(AsyncWebServerRequest *request) {
     return;
   }
   if (!this->parent_->reinit_frequency_mhz(mhz)) {
-    // reinit_frequency_mhz returns false for both TX-busy and setFrequency failure
-    this->send_json_error(request, 409, "Frequency change failed — TX may be in progress or value outside CC1101 supported bands");
+    this->send_json_error(request, 409, "Frequency change not confirmed: busy, timed out or radio verification failed; query current frequency before retrying");
     return;
   }
-  float actual_mhz = Elero::registers_to_mhz(this->parent_->get_freq2(),
-                                               this->parent_->get_freq1(),
-                                               this->parent_->get_freq0());
+  const uint32_t frequency = this->parent_->get_frequency_registers();
+  const uint8_t f2 = frequency >> 16, f1 = frequency >> 8, f0 = frequency;
+  const float actual_mhz = Elero::registers_to_mhz(f2, f1, f0);
   char buf[160];
   snprintf(buf, sizeof(buf),
     "{\"status\":\"ok\",\"mhz\":%.2f,\"freq2\":\"0x%02x\",\"freq1\":\"0x%02x\",\"freq0\":\"0x%02x\"}",
-    actual_mhz,
-    this->parent_->get_freq2(),
-    this->parent_->get_freq1(),
-    this->parent_->get_freq0());
+    actual_mhz, f2, f1, f0);
   AsyncWebServerResponse *response = request->beginResponse(200, "application/json", buf);
   this->add_cors_headers(response);
   request->send(response);
