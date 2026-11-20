@@ -53,8 +53,9 @@ external_components:
       type: local
       path: ../../components
 
+# Include raw TX logging in compile coverage (uses the ESPHome hex helpers).
 logger:
-  level: DEBUG
+  level: VERBOSE
 
 wifi:
   ssid: "test"

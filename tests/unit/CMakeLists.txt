@@ -61,6 +61,7 @@ set(ENTITY_FIXTURE_DIR ${CMAKE_CURRENT_BINARY_DIR}/entities)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
   ${HOST_DIR}/generate_cover_fixture.py
   ${CMAKE_CURRENT_SOURCE_DIR}/../../components/elero/elero.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../components/elero/elero_esphome_compat.h
   ${CMAKE_CURRENT_SOURCE_DIR}/../../components/elero/cover/EleroCover.h
   ${CMAKE_CURRENT_SOURCE_DIR}/../../components/elero/cover/EleroCover.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../../components/elero_group/EleroGroupCover.h

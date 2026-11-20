@@ -28,27 +28,28 @@ void Elero::interpret_msg() {
   const auto &packet = parsed.packet;
 
   if (!parsed.ok) {
+    [[maybe_unused]] char raw_hex[format_hex_pretty_size(CC1101_FIFO_LENGTH)];
     uint8_t length = packet.length;
     const char *reason = parsed.reject_reason;
     if (strcmp(reason, "too_long") == 0) {
       uint8_t dump_len = (length <= (uint8_t)(CC1101_FIFO_LENGTH - 3)) ? (length + 3) : CC1101_FIFO_LENGTH;
       ESP_LOGE(TAG, "Received invalid packet: too long (%d)", length);
       ESP_LOGD(TAG, "  Raw [%d bytes]: %s", dump_len,
-               format_hex_pretty(this->msg_rx_, dump_len).c_str());
+               format_hex_pretty_to(raw_hex, this->msg_rx_, dump_len, '.'));
     } else if (strcmp(reason, "too_short") == 0) {
       ESP_LOGD(TAG, "Received non-Elero packet: too short (%d bytes)", length);
     } else if (strcmp(reason, "zero_dests") == 0 || strcmp(reason, "too_many_dests") == 0) {
       ESP_LOGW(TAG, "Received invalid packet: invalid destination count (%d)", packet.num_dests);
       ESP_LOGW(TAG, "  Raw [%d bytes]: %s", length + 3,
-               format_hex_pretty(this->msg_rx_, length + 3).c_str());
+               format_hex_pretty_to(raw_hex, this->msg_rx_, length + 3, '.'));
     } else if (strcmp(reason, "dests_len_too_long") == 0) {
       ESP_LOGW(TAG, "Received invalid packet: dests_len too long (%d) for length %d", packet.dests_len, length);
       ESP_LOGW(TAG, "  Raw [%d bytes]: %s", length + 3,
-               format_hex_pretty(this->msg_rx_, length + 3).c_str());
+               format_hex_pretty_to(raw_hex, this->msg_rx_, length + 3, '.'));
     } else if (strcmp(reason, "rssi_oob") == 0) {
       ESP_LOGW(TAG, "Received invalid packet: RSSI/LQI out of buffer bounds (length=%d)", length);
       ESP_LOGW(TAG, "  Raw [%d bytes]: %s", CC1101_FIFO_LENGTH,
-               format_hex_pretty(this->msg_rx_, CC1101_FIFO_LENGTH).c_str());
+               format_hex_pretty_to(raw_hex, this->msg_rx_, CC1101_FIFO_LENGTH, '.'));
     } else if (strcmp(reason, "bad_crc") == 0) {
       ESP_LOGV(TAG, "Received packet with bad CRC, dropping");
     }
