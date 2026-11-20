@@ -192,13 +192,17 @@ jobs:
   python-tests:
     if: github.event_name != 'push' || !startsWith(github.ref, 'refs/heads/docs/')
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        esphome-version: ["2026.3.1", "2026.11.0"]
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-python@v7.1.0
         with:
           python-version: "3.12"
           cache: "pip"
-      - run: pip install pytest==9.0.2 esphome==2026.3.1
+      - run: pip install pytest==9.0.2 esphome==${{ matrix.esphome-version }}
       - run: pytest tests/python/ -v --tb=short
 
   ci-ok:

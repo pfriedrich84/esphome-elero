@@ -4,6 +4,7 @@
 #include "esphome/core/automation.h"
 #include "esphome/components/cover/cover.h"
 #include "../elero.h"
+#include "../elero_esphome_compat.h"
 #include <atomic>
 
 namespace esphome {
@@ -47,7 +48,7 @@ class EleroCover : public cover::Cover, public Component, public EleroBlindBase 
     this->last_rssi_ = rssi;
   }
   // EleroBlindBase web API helpers — identity & state
-  std::string get_blind_name() const override { return std::string(this->get_name().c_str()); }
+  std::string get_blind_name() const override { return compat::entity_name(*this); }
   float get_cover_position() const override { return this->position; }
   bool has_trusted_cover_position() const override { return this->position_trusted_for_redundancy_; }
   const char *get_operation_str() const override {

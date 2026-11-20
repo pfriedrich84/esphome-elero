@@ -817,8 +817,9 @@ bool Elero::send_command_internal_(t_elero_command *cmd, uint32_t enqueued_at_ms
              num_dests, cmd->payload[4], cmd->channel, cmd->counter);
   }
 #if ESPHOME_LOG_LEVEL >= ESPHOME_LOG_LEVEL_VERBOSE
+  char raw_hex[format_hex_pretty_size(CC1101_FIFO_LENGTH)];
   ESP_LOGV(TAG, "  TX raw [%d bytes]: %s", static_cast<int>(msg_len + 1),
-           format_hex_pretty(this->msg_tx_, static_cast<uint8_t>(msg_len + 1)).c_str());
+           format_hex_pretty_to(raw_hex, this->msg_tx_, msg_len + 1, '.'));
   ESP_LOGV(TAG, "  Estimated RF airtime: %lu us (final Elero profile, excludes CCA/calibration)",
            static_cast<unsigned long>(this->estimate_airtime_us_(msg_len + 1)));
 #endif

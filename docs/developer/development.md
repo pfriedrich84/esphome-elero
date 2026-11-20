@@ -835,7 +835,7 @@ CI runs automatically on pushes to `main`, `dev`, `feat/**`, `fix/**`, and `docs
 | **esphome-compile** | `esphome compile` across 8 config variants (matrix, `fail-fast: false`) | Every implementation push/PR; skipped on direct `docs/**` pushes |
 | **frontend-build** | `npm ci` + `npm run build` from `components/elero_web/frontend/`, then verifies generated `elero_web_ui.h` | Every implementation push/PR; skipped on direct `docs/**` pushes |
 | **unit-tests** | CMake configure/build plus `ctest --output-on-failure -V` | Every implementation push/PR; skipped on direct `docs/**` pushes |
-| **python-tests** | `pytest tests/python/ -v --tb=short` with pinned ESPHome | Every implementation push/PR; skipped on direct `docs/**` pushes |
+| **python-tests** | `pytest tests/python/ -v --tb=short` with ESPHome 2026.3.1 and 2026.11.0, including a C++ API compatibility probe | Every implementation push/PR; skipped on direct `docs/**` pushes |
 | **ci-ok** | Verifies markdown and required heavy jobs passed; accepts intentional heavy-job skips for direct `docs/**` pushes | Every push/PR |
 | **auto-issue creation** | Parses compile log for GCC warnings/errors, creates GitHub issues labeled `ci-detected` on push events | After each compile job |
 
@@ -853,6 +853,10 @@ CI runs automatically on pushes to `main`, `dev`, `feat/**`, `fix/**`, and `docs
 | `tests/configs/esp32s3-idf.yaml` | ESP32-S3 + esp-idf framework, shared SPI (CC1101 + TFT display), 6 covers, deep sleep, `compile_process_limit: 1` |
 
 Test configs in `tests/configs/` use `path: ../../components` to reference the local component source relative to their location.
+
+The ESP32-S3 fixture enables `VERBOSE` logging so raw TX formatting is compiled too. Packet dumps use `format_hex_pretty_to()` with FIFO-sized stack buffers; this API is available in both tested ESPHome versions. Dumps retain dot-separated uppercase bytes, but omit the old redundant trailing byte count (the log prefix already includes it).
+
+Entity names cross the version boundary through `components/elero/elero_esphome_compat.h`: ESPHome 2026.11+ uses `get_name_to()` for web/API strings and `get_log_name()` for logging; older releases use `get_name()`. The Python test `tests/python/test_esphome_cpp_compat.py` compiles this boundary against the installed ESPHome headers with deprecations treated as errors, at disabled and verbose log levels. It requires `g++` (available on CI runners); it is an API compile probe, not a firmware or hardware test.
 
 ### Auto-Issue Creation
 
