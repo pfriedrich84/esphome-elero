@@ -118,6 +118,8 @@ z.B.:
 - `SPI Status: FAILED — CC1101 communication broken`
 - keine RF-Pakete beim Drücken der Fernbedienung
 - ESP32-S3 Compile-OOM
+- `Duplicate sensor entity` bei zusätzlichen RSSI-/Status-Sensoren
+- optionaler Bootlog-Hinweis `Set flash_chip: ... to save IRAM`
 - schwaches Signal oder unzuverlässige Steuerung
 
 ## Getestete Konfigurationen
@@ -139,10 +141,16 @@ z.B.:
 - [example.yaml](example.yaml) — kompaktes Beispiel
 - [User Examples](docs/user/examples/README.md) — copy-paste-nahe YAML-Beispiele
 
+## Lizenz
+
+Dieses Projekt ist unter der [GNU General Public License Version 3 (GPLv3)](LICENSE) veröffentlicht. Die Nutzung ist **kostenlos**, auch für kommerzielle Zwecke. Du darfst den Code verwenden, verändern und weitergeben.
+
+Bei der Weitergabe (insbesondere veränderter Versionen) müssen die Bedingungen der GPLv3 eingehalten werden, einschließlich der erforderlichen Lizenzhinweise und Bereitstellung des entsprechenden Quellcodes. Details stehen in der [vollständigen Lizenz](LICENSE).
+
 ## Credits
 
 Dieses Projekt basiert auf der Arbeit von:
 
 - [QuadCorei8085/elero_protocol](https://github.com/QuadCorei8085/elero_protocol) (MIT) — Verschlüsselungs-/Entschlüsselungsstrukturen
 - [stanleypa/eleropy](https://github.com/stanleypa/eleropy) (GPLv3) — Fernbedienungs-Handling
-- [andyboeh/esphome-elero](https://github.com/pfriedrich84/esphome-elero) — Grundlage für diese Steuerung, wobei dieses Repo ein nahezu vollständiger Rebuild ist
+- [andyboeh/esphome-elero](https://github.com/andyboeh/esphome-elero) — Grundlage für diese Steuerung, wobei dieses Repo ein nahezu vollständiger Rebuild ist

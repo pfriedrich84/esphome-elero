@@ -1,5 +1,6 @@
 #include "EleroGroupCover.h"
 #include "../elero/elero_group_delivery_policy.h"
+#include "../elero/elero_esphome_compat.h"
 #include "esphome/core/log.h"
 #include <cmath>
 
@@ -27,7 +28,7 @@ void EleroGroupCover::setup() {
     }
   }
   ESP_LOGD(TAG, "Group '%s' with %d members, native_group=%s, hide_members=%s",
-           this->get_name().c_str(), (int) this->members_.size(),
+           LOG_STR_ARG(compat::entity_log_name(*this)), (int) this->members_.size(),
            this->native_group_ ? "true" : "false", this->hide_members_ ? "true" : "false");
   this->update_position_();
 }
@@ -41,7 +42,7 @@ void EleroGroupCover::loop() {
 }
 
 void EleroGroupCover::dump_config() {
-  ESP_LOGCONFIG(TAG, "Elero Group Cover '%s':", this->get_name().c_str());
+  ESP_LOGCONFIG(TAG, "Elero Group Cover '%s':", LOG_STR_ARG(compat::entity_log_name(*this)));
   ESP_LOGCONFIG(TAG, "  Members: %d", static_cast<int>(this->members_.size()));
   ESP_LOGCONFIG(TAG, "  Native multi-dest: %s", this->native_group_ ? "yes" : "no (incompatible profiles)");
   ESP_LOGCONFIG(TAG, "  Hide members: %s", YESNO(this->hide_members_));
@@ -139,13 +140,13 @@ IntentSubmitResult EleroGroupCover::submit_intermediate_target_(float target_pos
     return IntentSubmitResult::COALESCED;
   if (group_position_logic::uses_native_start(plan.route)) {
     ESP_LOGD(TAG, "Group '%s' using native synchronized %s start for target %.2f; member covers own stops",
-             this->get_name().c_str(), plan.native_direction == CommandIntentKind::OPEN ? "OPEN" : "CLOSE",
+             LOG_STR_ARG(compat::entity_log_name(*this)), plan.native_direction == CommandIntentKind::OPEN ? "OPEN" : "CLOSE",
              target_position);
     return this->submit_group_intent_({plan.native_direction, 0}, target_position);
   }
   if (plan.route == group_position_logic::Route::REJECT) {
     ESP_LOGW(TAG, "Group '%s' cannot safely position to %.2f: members need calibrated durations and known positions",
-             this->get_name().c_str(), target_position);
+             LOG_STR_ARG(compat::entity_log_name(*this)), target_position);
     for (auto *member : this->members_)
       member->schedule_immediate_poll();
     if (this->parent_ != nullptr)

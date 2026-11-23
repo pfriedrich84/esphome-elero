@@ -2,6 +2,8 @@
 
 Diese Anleitung führt dich Schritt für Schritt durch die komplette Einrichtung der Elero-Komponente, vom Zusammenbau der Hardware bis zur fertigen Home-Assistant-Integration.
 
+Die Beispiele verwenden einen klassischen ESP32 mit externem CC1101-Modul. Für den **Lilygo T-Embed CC1101** (ESP32-S3 mit integriertem CC1101) entfällt die Verkabelung; nimm die Pins, das Board-Power-Setup und die `esp32:`-Einstellungen aus den [Lilygo Board Notes](boards/lilygo-t-embed-cc1101.md) bzw. aus [`examples/lilygo-minimal.yaml`](examples/lilygo-minimal.yaml). Alle übrigen Schritte (Frequenz testen, Discovery, Cover-Konfiguration) sind identisch.
+
 ---
 
 ## Inhaltsverzeichnis
@@ -14,6 +16,7 @@ Diese Anleitung führt dich Schritt für Schritt durch die komplette Einrichtung
 6. [Endgültige Konfiguration](#6-endgültige-konfiguration)
 7. [In Home Assistant einbinden](#7-in-home-assistant-einbinden)
 8. [Mehrere Rollläden hinzufügen](#8-mehrere-rollläden-hinzufügen)
+9. [Optionale Hinweise im Bootlog](#9-optionale-hinweise-im-bootlog)
 
 ---
 
@@ -29,13 +32,15 @@ Diese Anleitung führt dich Schritt für Schritt durch die komplette Einrichtung
 | USB-Kabel | Micro-USB oder USB-C (je nach Board) | vorhanden |
 | Elero Fernbedienung | z.B. TempoTel 2 (bereits vorhanden) | - |
 
+Alternative ohne Verkabelung: [Lilygo T-Embed CC1101](boards/lilygo-t-embed-cc1101.md) (ESP32-S3 mit integriertem 868-MHz-CC1101).
+
 > **Tipp:** 868 MHz CC1101-Module haben deutlich bessere Reichweite als 433 MHz. Falls möglich, verwende 868 MHz.
 
 ### Werkzeug
 
 - Computer mit USB-Anschluss
-- Python 3.9+ installiert
-- Internetzugang
+- Home Assistant mit ESPHome-Add-on **oder** ESPHome-CLI (aktuelle ESPHome-Versionen benötigen Python 3.12 oder neuer)
+- Internetzugang (ESPHome lädt die Komponente beim Kompilieren von GitHub)
 
 ---
 
@@ -59,19 +64,9 @@ GDO0 ──────>    GPIO26
 
 > **WARNUNG:** CC1101 arbeitet mit **3.3V**. Niemals an 5V anschließen!
 
-> **WICHTIG:** Verwende **keine ESP32 Strapping-Pins** (GPIO0, GPIO2, GPIO5, GPIO12, GPIO15) für die SPI-Leitungen (SCK, MOSI, MISO). Besonders **GPIO12 als MISO** ist problematisch: Das CC1101-Modul kann GPIO12 beim Boot auf HIGH ziehen, was VDD_SDIO auf 1.8V setzt und die gesamte SPI-Kommunikation zerstört. Die oben empfohlenen Pins (GPIO18/23/19) sind sicher. GPIO5 für CSN ist akzeptabel, da es als Chip-Select nur kurz aktiv ist.
+> **WICHTIG:** Verwende **keine ESP32-Strapping-Pins** (GPIO0, GPIO2, GPIO5, GPIO12, GPIO15) für die SPI-Leitungen (SCK, MOSI, MISO). Besonders **GPIO12 als MISO** ist problematisch: Das CC1101-Modul kann GPIO12 beim Boot auf HIGH ziehen, was VDD_SDIO auf 1.8V setzt und die gesamte SPI-Kommunikation zerstört. Die oben empfohlenen Pins (GPIO18/23/19) sind sicher. GPIO5 für CSN ist akzeptabel, da es als Chip-Select nur kurz aktiv ist; ESPHome warnt dafür trotzdem mit `GPIO5 is a strapping pin`.
 >
-> **IMPORTANT:** Do **not** use ESP32 strapping pins (GPIO0, GPIO2, GPIO5, GPIO12, GPIO15) for SPI signals (SCK, MOSI, MISO). **GPIO12 as MISO** is especially problematic: the CC1101 module can pull GPIO12 HIGH at boot, setting VDD_SDIO to 1.8V and breaking all SPI communication. The recommended pins above (GPIO18/23/19) are safe.
-
-### Hinweis: ESP32-S3 Kompilierungsproblem
-
-Bei ESP32-S3 Boards (z.B. Lilygo T-Embed CC1101) kann der Compiler bei paralleler Kompilierung wegen Speichermangel abstürzen (`fatal error: Killed signal terminated program cc1plus`). Lösung: Kompilierung serialisieren:
-
-```yaml
-esphome:
-  name: mein-geraet
-  compile_process_limit: 1  # Verhindert OOM bei ESP32-S3
-```
+> Das gilt für den klassischen ESP32. Auf dem ESP32-S3 (z.B. Lilygo) ist GPIO12 der erwartete CC1101-Chip-Select, siehe [Board Notes](boards/lilygo-t-embed-cc1101.md#hinweise-zu-gpio12).
 
 ### Schritt 2.2: Verkabelung prüfen
 
@@ -98,10 +93,9 @@ Verbinde den ESP32 per USB mit deinem Computer. Der Treiber sollte automatisch i
 ### Option B: ESPHome CLI (Kommandozeile)
 
 ```bash
-# Python und pip müssen installiert sein
 pip install esphome
 
-# Prüfen ob es funktioniert
+# Prüfen, ob es funktioniert
 esphome version
 ```
 
@@ -113,7 +107,17 @@ Bevor du die Rollladen-Steuerung konfigurierst, musst du sicherstellen, dass die
 
 ### Schritt 4.1: Basis-Konfiguration erstellen
 
-Erstelle die Datei `elero-blinds.yaml`:
+Lege für Zugangsdaten eine `secrets.yaml` neben der Gerätekonfiguration an (das ESPHome-Dashboard hat dafür einen eigenen **Secrets**-Button):
+
+```yaml
+wifi_ssid: "DEIN_WLAN_NAME"
+wifi_password: "DEIN_WLAN_PASSWORT"
+ap_password: "fallback-passwort"
+api_key: "32-Byte-Base64-Schlüssel"   # Das Dashboard erzeugt ihn beim Anlegen eines Geräts
+ota_password: "DEIN_OTA_PASSWORT"
+```
+
+Erstelle dann die Datei `elero-blinds.yaml`:
 
 ```yaml
 esphome:
@@ -123,26 +127,27 @@ esphome:
 esp32:
   board: esp32dev
   variant: esp32
-  minimum_chip_revision: 3.1
+  framework:
+    type: arduino
 
 wifi:
-  ssid: "DEIN_WLAN_NAME"
-  password: "DEIN_WLAN_PASSWORT"
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
 
   ap:
     ssid: "Elero-Fallback"
-    password: "fallback123"
+    password: !secret ap_password
 
 logger:
   level: DEBUG
 
 api:
   encryption:
-    key: "GeneriereDiesenSchlüsselPerESPHomeDashboard"
+    key: !secret api_key
 
 ota:
   - platform: esphome
-    password: "DeinOTAPasswort"
+    password: !secret ota_password
 
 # Externe Elero-Komponente
 external_components:
@@ -159,7 +164,7 @@ elero:
   cs_pin: GPIO5
   gdo0_pin: GPIO26
 
-# Dummy Cover (benötigt für Kompilierung)
+# Platzhalter-Cover für die Ersteinrichtung; wird in Schritt 6 ersetzt
 cover:
   - platform: elero
     blind_address: 0x000001
@@ -190,25 +195,28 @@ esphome run elero-blinds.yaml
 2. YAML einfügen
 3. "Install" klicken > "Plug into this computer"
 
-### Schritt 4.3: Frequenz testen
+> Bricht die Kompilierung auf einem ESP32-S3 mit `Killed signal terminated program cc1plus` ab, siehe [Common Issues](common-issues.md#esp32-s3-kompilierung-bricht-mit-killed-signal-terminated-program-cc1plus-ab).
+
+### Schritt 4.3: SPI und Frequenz testen
 
 1. Öffne den ESPHome-Log:
    ```bash
    esphome logs elero-blinds.yaml
    ```
-2. Drücke eine Taste auf deiner Elero-Fernbedienung
-3. **Wenn im Log Pakete erscheinen** (Zeilen mit `rcv'd: len=...`): Die Frequenz stimmt!
-4. **Wenn NICHTS passiert**: Die Frequenz muss angepasst werden.
+2. Prüfe zuerst, dass **kein** `SPI Status: FAILED` erscheint. Sonst ist der CC1101 nicht erreichbar, siehe [Common Issues](common-issues.md).
+3. Drücke eine Taste auf deiner Elero-Fernbedienung.
+4. **Wenn im Log Pakete erscheinen** (Zeilen mit `rcv'd: len=...`): Die Frequenz stimmt!
+5. **Wenn NICHTS passiert**: Die Frequenz muss angepasst werden.
 
 ### Schritt 4.4: Frequenz anpassen (falls nötig)
 
-Ändere die Frequenz-Register in der Konfiguration:
+Ohne Angabe verwendet der Hub die Standardfrequenz (868,35 MHz). Empfängst du damit nichts, probiere die Alternative:
 
 ```yaml
 elero:
   cs_pin: GPIO5
   gdo0_pin: GPIO26
-  freq0: 0xc0    # Häufige Alternative statt 0x7a
+  freq0: 0xc0    # Alternative statt Standard 0x7a
   freq1: 0x71
   freq2: 0x21
 ```
@@ -217,45 +225,45 @@ Flashe erneut und teste. Gängige Kombinationen:
 
 | Konfiguration | freq0 | freq1 | freq2 |
 |---|---|---|---|
-| Standard 868 MHz | `0x7a` | `0x71` | `0x21` |
-| Alternative 868 MHz | `0xc0` | `0x71` | `0x21` |
+| Standard 868,35 MHz (Default) | `0x7a` | `0x71` | `0x21` |
+| Alternative 868,95 MHz | `0xc0` | `0x71` | `0x21` |
 
-> **Tipp:** Probiere `0xc0` zuerst, das ist die häufigste Alternative.
+> **Tipp:** Mit aktivierter Web-UI lässt sich die Frequenz auch ohne erneutes Flashen testen, siehe [Discovery: Frequenz testen](discovery.md#frequenz-testen).
 
 ---
 
 ## 5. Blind-Adressen herausfinden
 
-Wenn die Kommunikation funktioniert, kannst du die Adressen deiner Rollladen ermitteln. Es gibt zwei Wege: per **Web-UI** (empfohlen) oder per **Log-Analyse**.
+Wenn die Kommunikation funktioniert, kannst du die Adressen deiner Rollläden ermitteln. Es gibt zwei Wege: per **Web-UI** (empfohlen) oder per **Log-Analyse**. Ausführlicher beschreibt das die Seite [Discovery](discovery.md).
 
 ### Option A: Web-UI (empfohlen)
 
-Fuege folgendes zu deiner Konfiguration hinzu:
+Füge Folgendes zu deiner Konfiguration hinzu:
 
 ```yaml
 # Lädt den HTTP-Server auf Port 80 automatisch.
 elero_web:
 ```
 
-Flashe erneut und oeffne im Browser `http://<device-ip>/elero`. Die Web-UI ermoeglicht:
+Flashe erneut und öffne im Browser `http://<device-ip>/elero`. Dann:
 
 1. Klicke **Scan starten**
-2. Betaetige die Fernbedienung (Hoch/Runter/Stopp fuer jeden Rollladen)
-3. Die gefundenen Geraete erscheinen live in der Liste
+2. Betätige die Fernbedienung (Hoch/Runter/Stopp für jeden Rollladen)
+3. Die gefundenen Geräte erscheinen live in der Liste
 4. Klicke **Scan stoppen**
-5. Klicke **YAML exportieren** - die fertige Konfiguration kann direkt kopiert werden
+5. Klicke **YAML exportieren**, die fertige Konfiguration kann direkt kopiert werden
 
 > **Tipp:** Die Web-UI zeigt auch bereits konfigurierte Covers mit Position und Status an.
 
 ### Option B: Log-Analyse
 
-### Schritt 5.1: Scan starten
+#### Schritt 5.1: Scan starten
 
-1. Oeffne den ESPHome-Log
-2. Druecke den "Start Scan"-Button in Home Assistant (oder per Log beobachten)
-3. Betaetige die Fernbedienung: Waehle einen Rollladen aus und druecke Hoch/Runter
+1. Öffne den ESPHome-Log
+2. Drücke den Button "Elero Start Scan" in Home Assistant
+3. Betätige die Fernbedienung: Wähle einen Rollladen aus und drücke Hoch/Runter
 
-### Schritt 5.2: Log-Ausgabe lesen
+#### Schritt 5.2: Log-Ausgabe lesen
 
 Im Log siehst du Zeilen wie:
 
@@ -272,7 +280,7 @@ Und die detaillierten Pakete:
                 payload=[0x00 0x04 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00]
 ```
 
-### Schritt 5.3: Werte notieren
+#### Schritt 5.3: Werte notieren
 
 Aus der Log-Zeile oben:
 
@@ -287,7 +295,7 @@ payload_1:      0x00        (= payload[0])
 payload_2:      0x04        (= payload[1])
 ```
 
-### Schritt 5.4: Befehle identifizieren
+#### Schritt 5.4: Befehle identifizieren
 
 Drücke die einzelnen Tasten auf der Fernbedienung und beobachte das 5. Payload-Byte (Position [4]):
 
@@ -299,9 +307,9 @@ Taste STOPP:  payload=[0x00 0x04 0x00 0x00 0x10 ...]  → command_stop: 0x10
 
 > Falls die Werte mit den Standardwerten übereinstimmen, müssen sie nicht extra konfiguriert werden.
 
-### Schritt 5.5: Scan stoppen
+#### Schritt 5.5: Scan stoppen
 
-Drücke den "Stop Scan"-Button. Im Log erscheint eine Zusammenfassung:
+Drücke den Button "Elero Stop Scan". Im Log erscheint eine Zusammenfassung:
 
 ```
 [I][elero.button:xxx]: Stopped Elero RF scan. Discovered 2 device(s).
@@ -313,7 +321,7 @@ Drücke den "Stop Scan"-Button. Im Log erscheint eine Zusammenfassung:
 
 ## 6. Endgültige Konfiguration
 
-Ersetze den Dummy-Cover mit den ermittelten Werten:
+Ersetze das Platzhalter-Cover durch die ermittelten Werte:
 
 ```yaml
 esphome:
@@ -323,7 +331,8 @@ esphome:
 esp32:
   board: esp32dev
   variant: esp32
-  minimum_chip_revision: 3.1
+  framework:
+    type: arduino
 
 wifi:
   ssid: !secret wifi_ssid
@@ -355,11 +364,15 @@ spi:
 elero:
   cs_pin: GPIO5
   gdo0_pin: GPIO26
-  freq0: 0xc0     # Anpassen falls nötig
+  freq0: 0xc0     # Nur nötig, wenn die Standardfrequenz nicht funktioniert
   freq1: 0x71
   freq2: 0x21
 
 # ── Rollläden ──
+# Pro Cover werden automatisch ein RSSI-Sensor ("Schlafzimmer RSSI"),
+# ein Status-Text-Sensor ("Schlafzimmer Status") und ein Refresh-Button
+# erzeugt (auto_sensors: true). Keine zusätzlichen sensor:/text_sensor:-
+# Einträge mit denselben Namen anlegen.
 cover:
   - platform: elero
     name: "Schlafzimmer"
@@ -369,17 +382,6 @@ cover:
     open_duration: 25s        # Für Positionssteuerung (optional)
     close_duration: 22s       # Für Positionssteuerung (optional)
     poll_interval: 5min
-
-# ── Diagnose-Sensoren (optional) ──
-sensor:
-  - platform: elero
-    blind_address: 0xa831e5
-    name: "Schlafzimmer RSSI"
-
-text_sensor:
-  - platform: elero
-    blind_address: 0xa831e5
-    name: "Schlafzimmer Status"
 
 # ── Scan-Buttons (optional, kann nach Einrichtung entfernt werden) ──
 button:
@@ -407,7 +409,7 @@ Falls `api:` konfiguriert ist, wird das Gerät automatisch in Home Assistant ent
 
 1. **Einstellungen > Geräte & Dienste**
 2. Das ESPHome-Gerät sollte unter "Entdeckt" erscheinen
-3. "Konfigurieren" klicken
+3. "Konfigurieren" klicken und den API-Schlüssel (`api_key` aus der `secrets.yaml`) eingeben
 
 ### Manuelle Einbindung
 
@@ -420,19 +422,20 @@ Falls das Gerät nicht automatisch gefunden wird:
 
 ### Entities prüfen
 
-Nach der Einbindung stehen folgende Entities zur Verfügung:
+Nach der Einbindung stehen pro Rollladen ein Cover, ein RSSI-Sensor, ein Status-Sensor und ein Refresh-Button zur Verfügung, dazu die Scan-Buttons und die Hub-Diagnose-Sensoren. Home Assistant bildet die Entity-IDs aus Gerätename und Entity-Name, z.B.:
 
-- `cover.schlafzimmer` - Rollladen-Steuerung
-- `sensor.schlafzimmer_rssi` - Signalstärke
-- `text_sensor.schlafzimmer_status` - Status-Text
-- `button.elero_start_scan` - Scan starten
-- `button.elero_stop_scan` - Scan stoppen
+- `cover.elero_rollladen_schlafzimmer` - Rollladen-Steuerung
+- `sensor.elero_rollladen_schlafzimmer_rssi` - Signalstärke
+- `sensor.elero_rollladen_schlafzimmer_status` - Status-Text (ESPHome-Text-Sensoren erscheinen in Home Assistant als `sensor.*`)
+- `button.elero_rollladen_schlafzimmer_refresh` - Status sofort abfragen
+
+Die tatsächlichen IDs findest du unter **Einstellungen > Geräte & Dienste > ESPHome > Gerät**.
 
 ---
 
 ## 8. Mehrere Rollläden hinzufügen
 
-Für jeden zusätzlichen Rollladen einen weiteren Cover-Eintrag hinzufügen:
+Für jeden zusätzlichen Rollladen einen weiteren Cover-Eintrag hinzufügen. RSSI- und Status-Sensoren entstehen pro Cover automatisch:
 
 ```yaml
 cover:
@@ -459,37 +462,29 @@ cover:
     remote_address: 0xf0d008
     open_duration: 30s
     close_duration: 27s
-
-# RSSI und Status für alle Rollläden
-sensor:
-  - platform: elero
-    blind_address: 0xa831e5
-    name: "Schlafzimmer RSSI"
-  - platform: elero
-    blind_address: 0xb912f3
-    name: "Wohnzimmer Links RSSI"
-  - platform: elero
-    blind_address: 0xc4a7d2
-    name: "Wohnzimmer Rechts RSSI"
-
-text_sensor:
-  - platform: elero
-    blind_address: 0xa831e5
-    name: "Schlafzimmer Status"
-  - platform: elero
-    blind_address: 0xb912f3
-    name: "Wohnzimmer Links Status"
-  - platform: elero
-    blind_address: 0xc4a7d2
-    name: "Wohnzimmer Rechts Status"
 ```
 
 > **Hinweis:** Die Komponente staggert die Polling-Abfragen automatisch (5 Sekunden Versatz pro Rollladen), um Kollisionen auf dem Funkkanal zu vermeiden.
+
+Eigene Namen für die Diagnose-Entities oder eine Gruppensteuerung: siehe [Konfigurationsreferenz](configuration.md) und die Snippets unter [User Examples](examples/README.md).
+
+---
+
+## 9. Optionale Hinweise im Bootlog
+
+Aktuelle ESPHome-Versionen schlagen beim Start mitunter Speicheroptimierungen vor, z.B.:
+
+```text
+[W][app:...]: Set flash_chip: generic under esp32 > framework > advanced to save IRAM
+```
+
+Das ist **kein Fehler** und hat keinen Einfluss auf Funkempfang oder Reichweite. Wenn du die Optimierung übernehmen willst, lies vorher [ESP32: optionale Speicheroptimierungen](configuration.md#esp32-optionale-speicheroptimierungen): Der Wert muss aus dem Bootlog des eigenen Geräts stammen und setzt ESPHome 2026.10 oder neuer voraus.
 
 ---
 
 ## Nächste Schritte
 
 - [Konfigurationsreferenz](configuration.md) - Alle Parameter im Detail
-- [Beispielkonfigurationen](examples/) - Vorlagen für verschiedene Szenarien
-- [README](../../README.md) - Übersicht und Fehlerbehebung
+- [User Examples](examples/README.md) - Vorlagen für verschiedene Szenarien
+- [Home Assistant Integration](home-assistant.md) - Dashboard und Automationen
+- [Common Issues](common-issues.md) - Fehlerbehebung

@@ -4,6 +4,7 @@
 #include "esphome/core/automation.h"
 #include "esphome/components/cover/cover.h"
 #include "../elero.h"
+#include "../elero_esphome_compat.h"
 #include <atomic>
 
 namespace esphome {
@@ -47,7 +48,7 @@ class EleroCover : public cover::Cover, public Component, public EleroBlindBase 
     this->last_rssi_ = rssi;
   }
   // EleroBlindBase web API helpers — identity & state
-  std::string get_blind_name() const override { return std::string(this->get_name().c_str()); }
+  std::string get_blind_name() const override { return compat::entity_name(*this); }
   float get_cover_position() const override { return this->position; }
   bool has_trusted_cover_position() const override { return this->position_trusted_for_redundancy_; }
   const char *get_operation_str() const override {
@@ -70,6 +71,7 @@ class EleroCover : public cover::Cover, public Component, public EleroBlindBase 
   uint8_t get_payload_1() const override { return this->command_.payload[0]; }
   uint8_t get_payload_2() const override { return this->command_.payload[1]; }
   IntentSubmitResult submit_intent(const CommandIntent &intent) override;
+  IntentSubmitResult submit_control_intent(const CommandIntent &intent) override;
   CommandDeliveryConfig get_command_delivery_config() const override;
   CommandIntentDelivery *get_command_delivery() override { return &this->delivery_; }
   bool should_defer_intent(const CommandIntent &intent) const override {
@@ -87,7 +89,7 @@ class EleroCover : public cover::Cover, public Component, public EleroBlindBase 
   void prepare_group_intent(const CommandIntent &intent, float target_position = -1.0f) override;
   void handle_group_delivery_outcome(const DeliveryOutcome &outcome) override;
   void recompute_position();
-  void start_movement(cover::CoverOperation op);
+  IntentSubmitResult start_movement(cover::CoverOperation op);
   bool is_at_target();
 
  protected:

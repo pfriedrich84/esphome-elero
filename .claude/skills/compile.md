@@ -31,7 +31,7 @@ Compile the ESPHome firmware to verify the component builds without errors.
 
 4. If compilation **fails**, analyze the error:
    - Missing includes → check the 3-file split (elero.cpp, elero_cc1101.cpp, elero_protocol.cpp)
-   - Undefined symbols → check RadioLib v7.1.2 dependency
+   - Undefined symbols → check the RadioLib dependency pin in `components/elero/__init__.py`
    - Template errors → check ESPHome version compatibility
    - Schema errors → run `esphome config <file>` first for better error messages
    - Suggest specific fixes

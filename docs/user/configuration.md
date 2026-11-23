@@ -4,6 +4,35 @@ Vollständige Referenz aller konfigurierbaren Parameter.
 
 ---
 
+## Komponente einbinden: `external_components`
+
+Kurzform, die immer den Stand von `main` lädt:
+
+```yaml
+external_components:
+  - source: github://pfriedrich84/esphome-elero
+```
+
+Für reproduzierbare Builds auf ein Release pinnen ([Releases](https://github.com/pfriedrich84/esphome-elero/releases), Tag-Format `JJJJ-MM-NN`):
+
+```yaml
+external_components:
+  - source: github://pfriedrich84/esphome-elero@2026-11-02
+```
+
+Wer einem Branch folgt (z.B. `main` oder einem Test-Branch), sollte ESPHome anweisen, den Stand bei jedem Build neu zu holen; standardmäßig wird ein Git-Checkout nur einmal pro Tag aktualisiert:
+
+```yaml
+external_components:
+  - source:
+      type: git
+      url: https://github.com/pfriedrich84/esphome-elero
+      ref: main
+    refresh: always
+```
+
+---
+
 ## Hub: `elero`
 
 Der zentrale Hub steuert die SPI-Kommunikation mit dem CC1101-Funkmodul.
@@ -19,6 +48,8 @@ elero:
 
 | Parameter | Typ | Pflicht | Standard | Beschreibung |
 |---|---|---|---|---|
+| `id` | ID | Nein | automatisch | ESPHome-ID des Hubs |
+| `spi_id` | ID | Nein | einziger `spi:`-Bus | Welcher `spi:`-Bus verwendet wird. Nötig, wenn mehrere SPI-Busse definiert sind. |
 | `cs_pin` | GPIO-Pin | Ja | - | SPI Chip-Select Pin für den CC1101 |
 | `gdo0_pin` | GPIO-Pin (Input) | Ja | - | CC1101 GDO0 Interrupt-Pin |
 | `freq0` | Hex (0x00-0xFF) | Nein | `0x7a` | CC1101 Frequenz-Register FREQ0 |
@@ -29,9 +60,11 @@ elero:
 | `dedup_window` | Zeitdauer (`0ms` oder `100ms`-`60s`) | Nein | `0ms` | Zeitfenster, in dem doppelte Statuspakete gleicher Quelle/Zähler unterdrückt werden. `0ms` deaktiviert Deduplication (Default); zum Aktivieren z.B. `500ms` setzen. |
 | `auto_sensors` | Boolean | Nein | `true` | Erstellt automatisch Hub-Diagnose-Sensoren (Frequenz, Zähler, Drop- und Latenzmetriken) |
 
-> Der Hub erweitert die ESPHome SPI-Konfiguration. `spi:` muss separat mit `clk_pin`, `mosi_pin` und `miso_pin` konfiguriert sein.
+> Der Hub erweitert die ESPHome SPI-Konfiguration. `spi:` muss separat mit `clk_pin`, `mosi_pin` und `miso_pin` konfiguriert sein. Teilen sich mehrere Geräte einen Bus (z.B. CC1101 und Display auf dem Lilygo T-Embed), braucht jedes Gerät einen eigenen `cs_pin`.
 
 > **Tipp für ESP32-S3:** Bei Speichermangel-Abstürzen während der Kompilierung (`Killed signal terminated program cc1plus`) hilft `compile_process_limit: 1` unter `esphome:`. Das serialisiert die Kompilierung und verhindert OOM-Kills.
+
+> ESP32-Board- und Framework-Einstellungen (`esp32:`) gehören nicht zum Hub. Optionale Speicheroptimierungen, die ESPHome im Bootlog vorschlägt, stehen unter [ESP32: optionale Speicheroptimierungen](#esp32-optionale-speicheroptimierungen).
 
 ### Hub-Diagnose-Sensoren
 
@@ -106,7 +139,7 @@ cover:
 | `poll_interval` | Zeitdauer / `never` | `5min` | Intervall für Status-Abfragen. `never` deaktiviert das Polling. Während der Fahrt wird alle 5 s abgefragt (bei aktivierter Positionssteuerung werden Fahrt-Abfragen übersprungen, da der Motor seinen Status selbst sendet). |
 | `supports_tilt` | Boolean | `false` | Aktiviert Tilt/Kipp-Unterstützung (z.B. für Raffstore). |
 | `assumed_state` | Boolean | `true` | `true` = Hoch/Runter-Buttons in Home Assistant immer aktiv (kein Warten auf Positionsrückmeldung). |
-| `auto_sensors` | Boolean | `true` | Erstellt automatisch RSSI-Sensor, Status-Text-Sensor und Refresh-Button für diesen Rollladen. Setzen Sie auf `false`, um diese manuell zu konfigurieren. |
+| `auto_sensors` | Boolean | `true` | Erstellt automatisch RSSI-Sensor, Status-Text-Sensor und Refresh-Button für diesen Rollladen. Mit `false` lassen sie sich manuell konfigurieren. |
 
 ### Protokoll-Parameter
 
@@ -171,7 +204,7 @@ light:
 | Parameter | Typ | Standard | Beschreibung |
 |---|---|---|---|
 | `dim_duration` | Zeitdauer | `0s` | Dimm-Fahrzeit von 0 % auf 100 %. `0s` = nur Ein/Aus (`ColorMode::ON_OFF`); Wert > 0 = Helligkeitssteuerung aktiv (`ColorMode::BRIGHTNESS`). |
-| `auto_sensors` | Boolean | `true` | Erstellt automatisch RSSI-Sensor, Status-Text-Sensor und Refresh-Button für dieses Licht. Setzen Sie auf `false`, um diese manuell zu konfigurieren. |
+| `auto_sensors` | Boolean | `true` | Erstellt automatisch RSSI-Sensor, Status-Text-Sensor und Refresh-Button für dieses Licht. Mit `false` lassen sie sich manuell konfigurieren. |
 | `rssi_sensor` | Sensor-Konfig | - | Explizite RSSI-Sensor-Konfiguration (überschreibt auto-generierten Sensor). |
 | `status_sensor` | Text-Sensor-Konfig | - | Explizite Status-Text-Sensor-Konfiguration (überschreibt auto-generierten Sensor). |
 
@@ -203,6 +236,8 @@ Diese Werte werden aus dem Log der echten Fernbedienung ausgelesen (gleiche Bede
 ## Plattform: `sensor` (RSSI)
 
 Zeigt die Empfangsstärke (RSSI) des letzten empfangenen Pakets eines bestimmten Rollladens.
+
+> Covers und Lights erzeugen mit `auto_sensors: true` (Standard) bereits einen RSSI-Sensor namens `<Name> RSSI`. Diese Plattform brauchst du nur, wenn du für das Gerät `auto_sensors: false` setzt. Ein zusätzlicher Sensor mit demselben Namen führt zu `Duplicate sensor entity with name ...`.
 
 ```yaml
 sensor:
@@ -239,6 +274,8 @@ sensor:
 ## Plattform: `text_sensor` (Status)
 
 Zeigt den aktuellen Blind-Status als lesbaren Text.
+
+> Wie beim RSSI-Sensor gilt: Mit `auto_sensors: true` (Standard) existiert bereits ein Status-Sensor namens `<Name> Status`. Diese Plattform nur zusammen mit `auto_sensors: false` am Cover/Light verwenden.
 
 ```yaml
 text_sensor:
@@ -380,7 +417,7 @@ Wenn beide gesetzt sind, erfordern alle `/elero`-Endpoints HTTP Basic Authentica
 
 **REST-API Endpoints:**
 
-Alle Endpoints unterstuetzen CORS (Cross-Origin Resource Sharing).
+Same-Origin-Regeln für Browserzugriffe stehen unten unter **CORS-Verhalten**.
 
 **Kern-Endpoints:**
 
@@ -390,11 +427,11 @@ Alle Endpoints unterstuetzen CORS (Cross-Origin Resource Sharing).
 | `/elero` | GET | Web-UI (HTML) |
 | `/elero/api/scan/start` | POST | RF-Scan starten |
 | `/elero/api/scan/stop` | POST | RF-Scan stoppen |
-| `/elero/api/discovered` | GET | Gefundene Geraete (JSON) |
+| `/elero/api/discovered` | GET | Gefundene Geräte (JSON) |
 | `/elero/api/configured` | GET | Konfigurierte Covers und Lichter mit aktuellem Status (JSON) |
 | `/elero/api/status` | GET | Kombinierter Status: Covers, Lichter, Runtime, Diagnose (RX/TX/Watchdog, Parser-Drops, TX-Queue- und Dispatch-Latenz) |
-| `/elero/api/yaml` | GET | YAML-Export fuer entdeckte Blinds |
-| `/elero/api/info` | GET | Geraete-Informationen (Version, Entdeckungen, etc.) |
+| `/elero/api/yaml` | GET | YAML-Export für entdeckte Blinds |
+| `/elero/api/info` | GET | Geräte-Informationen (Version, Entdeckungen, etc.) |
 | `/elero/api/runtime` | GET | Runtime-adoptierte Blinds (JSON Array) |
 
 **Rollladen-/Licht-Steuerung (erfordert Adresse):**
@@ -402,7 +439,7 @@ Alle Endpoints unterstuetzen CORS (Cross-Origin Resource Sharing).
 | Endpoint | Methode | Beschreibung |
 |---|---|---|
 | `/elero/api/covers/0xADDRESS/command` | POST | Befehl an Rollladen senden (Body: `{"cmd": "up"\|"down"\|"stop"\|"tilt"}`) |
-| `/elero/api/covers/0xADDRESS/settings` | POST | Einstellungen des Rollladens zur Laufzeit aendern (Body: JSON mit Timing/Poll-Einstellungen) |
+| `/elero/api/covers/0xADDRESS/settings` | POST | Einstellungen des Rollladens zur Laufzeit ändern (Body: JSON mit Timing/Poll-Einstellungen) |
 | `/elero/api/lights/0xADDRESS/command` | POST | Befehl an Licht senden (Body: `{"cmd": "on"\|"off"\|"stop"}`) |
 
 **Runtime-Blind-Adoption:**
@@ -412,25 +449,29 @@ Alle Endpoints unterstuetzen CORS (Cross-Origin Resource Sharing).
 | `/elero/api/discovered/0xADDRESS/adopt` | POST | Entdeckten Rollladen/Licht in Runtime-Blinds aufnehmen |
 | `/elero/api/runtime/0xADDRESS/command` | POST | Befehl an Runtime-Blind senden |
 | `/elero/api/runtime/0xADDRESS` | DELETE | Runtime-Blind entfernen |
-| `/elero/api/runtime/0xADDRESS/settings` | POST | Runtime-Blind-Einstellungen aendern |
+| `/elero/api/runtime/0xADDRESS/settings` | POST | Runtime-Blind-Einstellungen ändern |
 
 **Diagnose-Endpoints:**
 
 | Endpoint | Methode | Beschreibung |
 |---|---|---|
 | `/elero/api/frequency` | GET | Aktuelle CC1101-Frequenzeinstellungen |
-| `/elero/api/frequency/set` | POST | CC1101-Frequenz aendern (Body: `{"freq0": 0x7a, "freq1": 0x71, "freq2": 0x21}`) |
+| `/elero/api/frequency/set` | POST | CC1101-Frequenz ändern (Body: `{"freq0": 0x7a, "freq1": 0x71, "freq2": 0x21}`) |
 | `/elero/api/frequency/set_mhz` | POST | CC1101-Frequenz per MHz setzen (Body: `{"mhz": 868.35}`) |
-| `/elero/api/logs` | GET | Aktuelle Log-Eintraege (unterstützt `since`-Query-Parameter) |
-| `/elero/api/logs/clear` | POST | Erfasste Logs loeschen |
+| `/elero/api/logs` | GET | Aktuelle Log-Einträge (unterstützt `since`-Query-Parameter) |
+| `/elero/api/logs/clear` | POST | Erfasste Logs löschen |
 | `/elero/api/logs/capture/start` | POST | Log-Erfassung starten |
 | `/elero/api/logs/capture/stop` | POST | Log-Erfassung beenden |
 | `/elero/api/dump/start` | POST | RF-Paket-Dump starten |
 | `/elero/api/dump/stop` | POST | RF-Paket-Dump beenden |
 | `/elero/api/packets` | GET | Erfasste RF-Pakete |
-| `/elero/api/packets/clear` | POST | Erfasste Pakete loeschen |
+| `/elero/api/packets/clear` | POST | Erfasste Pakete löschen |
 | `/elero/api/packets/download` | GET | Erfasste RF-Pakete als Datei herunterladen |
-| `/elero/api/diagnostics/reset` | POST | Diagnose-Zaehler und Latenz-Maxima zuruecksetzen (RX, TX, Watchdog, Parser-Drops, TX-Drops) |
+| `/elero/api/diagnostics/reset` | POST | Diagnose-Zähler und Latenz-Maxima zurücksetzen (RX, TX, Watchdog, Parser-Drops, TX-Drops) |
+
+Frequenzänderungen werden erst nach Register-Readback (einschließlich RX-nach-TX, CCA und PATABLE) und erfolgreichem RX-Eintritt bestätigt. Bei belegtem Funkpfad, laufender Frequenzänderung, Timeout oder fehlgeschlagener Verifikation liefern die Set-Endpoints HTTP 409 statt einer falschen Erfolgsmeldung. Die Wartezeit beträgt maximal fünf Sekunden. Ein noch nicht gestarteter Auftrag wird beim Timeout verworfen; ein bereits laufender kann danach noch fertig werden. Deshalb vor einem erneuten Versuch `/elero/api/frequency` abfragen. Die Ausgabe bleibt bei der zuletzt erfolgreich angewendeten Frequenz; nach einem Prüfungsfehler bleiben RX/TX bis zur verifizierten Watchdog-Wiederherstellung gesperrt.
+
+Bei `VERBOSE` erscheint zusätzlich die geschätzte reine RF-Sendezeit (`Estimated RF airtime`). Sie enthält keine CCA-, Kalibrier- oder Backoff-Zeit und verändert weder Timeouts noch Wiederholungen. Für den Dauerbetrieb `DEBUG` oder niedriger verwenden.
 
 **Web-UI-Zustand (elero_web switch Sub-Plattform):**
 
@@ -445,14 +486,14 @@ Alle Endpoints unterstuetzen CORS (Cross-Origin Resource Sharing).
 |---|---|---|
 | 200 | OK | Erfolgreiche Anfrage |
 | 401 | Unauthorized | HTTP Basic Auth erforderlich aber nicht angegeben/falsch |
-| 409 | Conflict | Scan starten wenn bereits laeuft, oder Scan stoppen wenn keiner laeuft |
+| 409 | Conflict | Scan-Konflikt oder Frequenzänderung nicht bestätigt (belegt, Timeout, Verifikationsfehler) |
 | 503 | Service Unavailable | Wenn Web-UI via Switch deaktiviert ist |
 
-Fehlerantworten werden als JSON zurueckgegeben: `{"error": "Beschreibung"}`
+Fehlerantworten werden als JSON zurückgegeben: `{"error": "Beschreibung"}`
 
 **CORS-Verhalten:**
 
-Die API-Endpoints sind auf Same-Origin-Zugriff beschraenkt (kein `Access-Control-Allow-Origin` Header). Zugriff ueber den Browser funktioniert nur direkt ueber die IP-Adresse des Geraets. Cross-Origin-Requests (z.B. von anderen Webseiten) werden vom Browser blockiert. Preflight-Requests (OPTIONS) werden beantwortet, aber ohne Cross-Origin-Freigabe.
+Die API-Endpoints sind auf Same-Origin-Zugriff beschränkt (kein `Access-Control-Allow-Origin` Header). Zugriff über den Browser funktioniert nur direkt über die IP-Adresse des Geräts. Cross-Origin-Requests (z.B. von anderen Webseiten) werden vom Browser blockiert. Preflight-Requests (OPTIONS) werden beantwortet, aber ohne Cross-Origin-Freigabe.
 
 ---
 
@@ -480,9 +521,66 @@ switch:
 
 ---
 
+## ESP32: optionale Speicheroptimierungen
+
+Ab ESPHome 2026.10 schreibt ESPHome beim Start Optimierungshinweise als Warnung (`[W]`) ins Log, direkt nach der Zeile `ESP32 Chip: ...`. Das sind **keine Fehler**: Die Firmware läuft auch ohne Änderung, und Funkreichweite oder Elero-Protokoll werden davon nicht beeinflusst. Die Einstellungen gehören in den `esp32:`-Block, nicht in `elero:`.
+
+### `flash_chip`
+
+Beispielmeldung (LilyGO T-Embed CC1101, ESP-IDF, ESPHome 2026.11.0):
+
+```text
+[W][app:...]: Set flash_chip: generic under esp32 > framework > advanced to save IRAM
+```
+
+ESP-IDF linkt standardmäßig Treiber für mehrere Flash-Hersteller, obwohl zur Laufzeit nur einer verwendet wird. Jeder ungenutzte Treiber belegt IRAM und eine kleine Tabelle im DRAM. `flash_chip` behält nur den angegebenen Herstellertreiber; `generic` deaktiviert alle zusätzlichen Herstellertreiber, der generische Treiber bleibt immer erhalten.
+
+Übernimm genau den Wert aus **deiner** Bootmeldung, ergänzend zu deinen bestehenden Einstellungen:
+
+```yaml
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: esp-idf
+    advanced:
+      flash_chip: generic   # Wert aus der eigenen Bootmeldung übernehmen
+```
+
+Regeln:
+
+- Nur setzen, wenn die Meldung im eigenen Bootlog erscheint, und nur mit dem dort genannten Wert. Keinen anderen Hersteller auf Verdacht eintragen und `generic` nicht pauschal für fremde Boards übernehmen: Boards desselben Modells können je nach Revision unterschiedliche Flash-Chips haben.
+- Teilen sich mehrere Geräte mit unterschiedlichen Flash-Chips eine Konfiguration, die Option weglassen.
+- Nach einem Board-Tausch den Bootlog erneut prüfen.
+- `flash_mode`, `flash_size` und PSRAM-Einstellungen sind davon unabhängig und müssen dafür nicht geändert werden. `mxic_opi` ist nur auf ESP32-S3 mit `flash_mode: opi` gültig.
+- Erfordert ESPHome **2026.10.0 oder neuer**. Ältere Versionen (z.B. 2026.3.x) lehnen die Option bei der Validierung ab.
+- Wie viel Speicher konkret frei wird, hängt vom Board ab und ist für dieses Projekt nicht gemessen. Nach dem Flashen sollte die Meldung verschwunden sein.
+
+Gültige Werte laut ESPHome-Quellcode: `generic`, `gd`, `issi`, `mxic`, `winbond`, `boya`, `th`, `mxic_opi`.
+
+### `minimum_chip_revision` (nur klassischer ESP32)
+
+Auf klassischen ESP32-Boards (nicht ESP32-S3) kann zusätzlich erscheinen:
+
+```text
+[W][app:...]: Chip rev >= 3.0 detected. Set minimum_chip_revision: "3.1" under esp32 > framework > advanced to reduce binary size
+```
+
+```yaml
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+    advanced:
+      minimum_chip_revision: "3.1"   # Wert aus der eigenen Bootmeldung übernehmen
+```
+
+Die Option steht unter `framework: advanced:`, **nicht** direkt unter `esp32:`; dort meldet ESPHome `[minimum_chip_revision] is an invalid option for [esp32]`. Eine so gebaute Firmware startet auf älteren Chip-Revisionen nicht mehr. Deshalb nur setzen, wenn der Bootlog des konkreten Geräts die Revision bestätigt.
+
+---
+
 ## Vollständiges Beispiel
 
-Eine vollständige Konfiguration mit allen Plattformen:
+Eine Konfiguration mit allen Elero-Plattformen. `esphome:`, `esp32:`, `wifi:`, `api:`, `ota:` und `logger:` sind hier weggelassen; vollständige Startdateien liegen unter [User Examples](examples/README.md).
 
 ```yaml
 external_components:
@@ -522,21 +620,9 @@ light:
     remote_address: 0xf0d008
     # dim_duration: 5s  # Aktivieren für Helligkeitssteuerung
 
-sensor:
-  - platform: elero
-    blind_address: 0xa831e5
-    name: "Schlafzimmer RSSI"
-  - platform: elero
-    blind_address: 0xb912f3
-    name: "Wohnzimmer RSSI"
-
-text_sensor:
-  - platform: elero
-    blind_address: 0xa831e5
-    name: "Schlafzimmer Status"
-  - platform: elero
-    blind_address: 0xb912f3
-    name: "Wohnzimmer Status"
+# RSSI-Sensor, Status-Text-Sensor und Refresh-Button pro Cover/Light
+# werden automatisch erzeugt (auto_sensors: true). Keine zusätzlichen
+# sensor:/text_sensor:-Einträge mit denselben Namen anlegen.
 
 button:
   - platform: elero

@@ -126,7 +126,7 @@ TEST_F(CoverDeliveryTest, CoverWebButtonAndAutomationShareStopEntry) {
     if (route == 1) {
       CommandIntent intent;
       ASSERT_TRUE(web_utils::parse_cover_intent("stop", intent));
-      static_cast<EleroBlindBase *>(&cover)->submit_intent(intent);
+      static_cast<EleroBlindBase *>(&cover)->submit_control_intent(intent);
     }
     if (route == 2) {
       auto mapping = cover.get_command_delivery_config().mapping;
@@ -156,6 +156,21 @@ TEST_F(CoverDeliveryTest, StopVerificationDeadlineSurvivesMillisWrap) {
   test_now = first + 100; cover.loop(); EXPECT_EQ(hub.advance(test_now), 0u);
   test_now = first + 1999; cover.loop(); EXPECT_EQ(hub.advance(test_now), 0u);
   test_now = first + 2000; cover.loop(); EXPECT_NE(hub.advance(test_now), 0u);
+  EXPECT_TRUE(cover.verifying());
+}
+
+TEST_F(CoverDeliveryTest, WebCommandsUseTheHomeAssistantMovementStatePath) {
+  transmit(1001);  // setup's initial CHECK
+
+  CommandIntent close;
+  ASSERT_TRUE(web_utils::parse_cover_intent("close", close));
+  EXPECT_TRUE(intent_was_accepted(cover.submit_control_intent(close)));
+  EXPECT_STREQ(cover.get_operation_str(), "closing");
+  transmit(1010);
+
+  CommandIntent stop;
+  ASSERT_TRUE(web_utils::parse_cover_intent("stop", stop));
+  EXPECT_TRUE(intent_was_accepted(cover.submit_control_intent(stop)));
   EXPECT_TRUE(cover.verifying());
 }
 

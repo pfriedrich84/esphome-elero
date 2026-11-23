@@ -9,6 +9,7 @@ class RadioDeliveryTest : public ::testing::Test {
   t_elero_command command{};
   void SetUp() override {
     test_now = 100;
+    test_sub_us = 0;
     command.remote_addr = 0x123456; command.num_dests = 1; command.dest_addrs[0] = 0x111111;
   }
   void queue() {
@@ -145,7 +146,8 @@ TEST_F(RadioDeliveryTest, UnstableCooldownCountDoesNotBecomeAnInventedOverflow) 
 }
 
 TEST_F(RadioDeliveryTest, UnverifiedIdleFailsClosedWithoutIllegalRecoveryStrobes) {
-  hub.script[CC1101_MARCSTATE] = {0, 2, 0, 2, 0, 2, 0, 2, 0, 2};
+  hub.ignore_idle = true;
+  hub.marc = CC1101_MARCSTATE_XOFF;
   hub.flush_and_rx();
   EXPECT_TRUE(hub.radio_fatal_error_);
   EXPECT_EQ(std::count(hub.strobes.begin(), hub.strobes.end(), CC1101_SFRX), 0);

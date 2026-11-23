@@ -165,23 +165,35 @@ The abstract base classes `EleroBlindBase` and `EleroLightBase` decouple the hub
 
 ### RadioLib integration
 
-The hub uses [RadioLib](https://github.com/jgromes/RadioLib) v7.1.2 (added via PlatformIO `cg.add_library()`) as a hardware abstraction layer for the CC1101 transceiver. A custom `EspHomeRadioLibHal` adapter class bridges ESPHome's `SPIDevice` to RadioLib's HAL interface — GPIO, interrupt, and SPI lifecycle operations are forwarded to ESPHome primitives while SPI transfers delegate to the parent `Elero` component. RadioLib provides:
+The hub uses [RadioLib](https://github.com/jgromes/RadioLib) v8.0.0 (added via PlatformIO `cg.add_library()`) as a hardware abstraction layer for the CC1101 transceiver. A custom `EspHomeRadioLibHal` adapter class bridges ESPHome's `SPIDevice` to RadioLib's HAL interface. Elero/ESPHome manage GPIO, interrupts, and the shared SPI bus lifecycle directly; HAL transactions and byte transfers delegate to the parent `Elero` component. RadioLib provides:
 
-- `radio_->standby()` — synchronous IDLE transition (~1 ms), replacing the old multi-state async SIDLE approach
-- `radio_module_->SPIsetRegValue()` / `SPIgetRegValue()` — register access with verify-readback for init/config
-- `radio_->begin()` — initial CC1101 configuration (frequency, bandwidth, data rate, etc.)
+- `radio_->begin()` — initial CC1101 bootstrap configuration (frequency, bandwidth, data rate, etc.)
+- `radio_->enableRxAfterTx(true)` — explicitly supplies TXOFF=RX during each profile initialization; full-byte readback must still confirm `MCSM1=0x3F`
+- `radio_->calculateTimeOnAir()` — VERBOSE-only theoretical FSK airtime diagnostic, using the final Elero profile rather than RadioLib's bootstrap cache
+
+The hub uses direct ESPHome SPI access for its Elero register profile, frequency updates, FIFO transfers, and status checks.
 
 The `Elero` class owns the RadioLib instances (`radio_hal_`, `radio_module_`, `radio_`) and cleans them up in its destructor.
+
+[RadioLib 8.0.0](https://github.com/jgromes/RadioLib/releases/tag/8.0.0) changes FSK configuration to integer Hz/bps and makes HAL `spiBegin()`, `spiTransfer()`, and `spiEnd()` return status codes. The adapter's `spiBegin()` and `spiTransfer()` return an error without a parent, otherwise success. RadioLib's generic HAL `init()`/`term()` do not call `spiBegin()`/`spiEnd()`, and its CC1101 SPI paths do not propagate transfer status to callers. ESPHome's byte-transfer API also cannot report transport errors, so the hub's register readback and recovery checks remain essential. `spiEnd()` does not stop the shared ESPHome SPI bus. The initial `ConfigFSK_t` values are bootstrap settings only: the subsequent `reset()`/`init()` still apply the existing Elero register profile, PATABLE, and YAML frequency bytes unchanged. Packet IRQ callbacks remain managed directly by Elero, not RadioLib's IRQ API.
+
+`init()` acquires verified IDLE, writes the existing profile from `elero_radio_profile.h`, explicitly enables RX after TX, and verifies every configured register, requested frequency byte, and all eight PATABLE entries before SRX. Calibration registers are checked before SRX because automatic calibration can change them. Any error leaves the profile invalid and blocks RX/TX. The watchdog must reset and successfully verify the profile before restarting; it retains the existing reset limit and escalation window.
+
+Runtime frequency changes use `FrequencyReinitRequest`: one component-owned, mutex-protected request slot and token-only queue messages. No caller stack pointer or ephemeral semaphore crosses cores. The caller waits up to five seconds; a queued timed-out request is cancelled before hardware access, while a running request retains its slot until completion. A running request may finish after the caller times out, so clients should query the frequency before retrying. Reinitialization returns success only after profile verification and RX entry. The frequency is published as one atomic register word only on success; on failure it remains unchanged and the watchdog recovers the previous profile. Calls from the radio task itself, concurrent requests, and unavailable radios are rejected.
+
+VERBOSE `Estimated RF airtime` logs include the variable-length byte, 96 preamble bits, 32 sync bits and two CRC bytes at approximately 76,767 bps (26 MHz crystal). Estimates exclude CCA, calibration and backoff, and do not drive TX timeouts, retries, completion evidence or duty-cycle enforcement.
+
+For a hardware migration test, retain the previous known-good firmware and use the same YAML and RF settings. Confirm `RadioLib CC1101 initialized (chip version verified)` at boot (no `RadioLib begin() returned rc=` warning), reception of remote/motor status, individual OPEN/CLOSE/STOP, and group/light commands if configured. Check status feedback and watchdog recovery counters during normal use; compilation and host tests cannot establish RF reliability or motor standstill.
 
 ### Dual-core architecture
 
 The component uses both ESP32 cores for improved RF responsiveness:
 
 ```
-Core 0: Radio Task (FreeRTOS, priority 19, 8KB stack)
+Core 0: Radio Task (FreeRTOS, priority 19, 16KB stack)
   ├─ process_rx()           — read CC1101 FIFO, decode, push RxResult to rx_queue_
   ├─ advance_tx()           — poll TX state machine (TRANSMITTING → COOLDOWN → IDLE)
-  ├─ send_command_internal_()  — execute SPI TX (standby, flush, load FIFO, STX)
+  ├─ send_command_internal_()  — execute SPI TX (verified IDLE, TX load, RX/CCA, STX)
   ├─ check_radio_state_()   — 5s periodic radio health watchdog
   └─ RadioMessage handler   — REINIT_FREQ, START/STOP_SCAN, START/STOP_DUMP, SHUTDOWN
 
@@ -210,11 +222,11 @@ The radio uses a bounded four-state non-blocking TX state machine on Core 0:
 IDLE → CCA (RX/listen/backoff) → TRANSMITTING → COOLDOWN → IDLE
 ```
 
-RadioLib's `standby()` handles the IDLE transition synchronously in `send_command_internal_()`. See `TxState` enum in `elero.h`. Commands are transferred through FreeRTOS queues (normal + priority) and consumed by Core 0, so Core 1 callers no longer need to check `is_tx_idle()` before enqueuing. A radio-wide transaction admission gate allows only one command packet to be queued or in flight at a time. Once its real TX completion returns, the hub selects waiting STOP work across all delivery profiles before admitting normal work. Within each priority class, a rotating cursor resumes after the last admitted profile so a low-sorted profile cannot monopolize the radio with repeats or queued intents. The separate queues therefore affect latency but cannot reorder two admitted command packets.
+The hub's direct SIDLE path handles the IDLE transition using stable MARCSTATE reads, no heap allocation, and a 100 ms fault budget (retained from the previous RadioLib standby path). There is no unconditional delay on the nominal path; settling polls are spaced by 500 µs. A shorter hardware-specific deadline is deliberately not introduced. See `TxState` enum in `elero.h`. Commands are transferred through FreeRTOS queues (normal + priority) and consumed by Core 0, so Core 1 callers no longer need to check `is_tx_idle()` before enqueuing. A radio-wide transaction admission gate allows only one command packet to be queued or in flight at a time. Once its real TX completion returns, the hub selects waiting STOP work across all delivery profiles before admitting normal work. Within each priority class, a rotating cursor resumes after the last admitted profile so a low-sorted profile cannot monopolize the radio with repeats or queued intents. The separate queues therefore affect latency but cannot reorder two admitted command packets.
 
 TX initiation in `send_command_internal_()` (Core 0):
 1. Preserve RX first: wait up to 20 ms for an in-flight packet before interrupting reception.
-2. `radio_->standby()` plus stable MARCSTATE verifies IDLE; drain each length/body/appended-status tuple separately. With CRC_AUTOFLUSH enabled no FIFO length byte is consumed during active RX. An interrupted trailing fragment is explicitly counted/discarded, never concatenated with a later packet.
+2. Direct SIDLE plus stable MARCSTATE verifies IDLE; drain each length/body/appended-status tuple separately. With CRC_AUTOFLUSH enabled no FIFO length byte is consumed during active RX. An interrupted trailing fragment is explicitly counted/discarded, never concatenated with a later packet.
 3. Flush TX only, load TX FIFO, issue `SRX` and enter `CCA`.
 4. Allow a 1 ms listen interval, require RX and hardware CCA, then issue `STX` **from RX**. Busy/refused attempts remain in RX with bounded 2–19 ms jittered backoff, at most five busy decisions or 50 ms. Existing coordinator retries remain separate and bounded.
 
@@ -231,7 +243,7 @@ The CC1101 can enter unrecoverable states (RXFIFO_OVERFLOW, stuck IDLE) during T
 - **RX preservation before TX** — `send_command_internal_()` first invokes the CRC-autoflush-safe packet reader, then loads TX in IDLE and returns to RX for CCA. Normal preparation does not flush RX; overflow, malformed length and an interrupted tail have explicit recovery/drop accounting.
 - **No SFTX after TX completion** — The CC1101 auto-transitions to RX via MCSM1 TXOFF_MODE after TX. Issuing SFTX in this state is invalid per the CC1101 datasheet (only valid in IDLE or TXFIFO_UNDERFLOW) and can corrupt radio state.
 - **Post-TX FIFO health check** — After COOLDOWN, before resuming normal RX, the code reads RXBYTES to detect overflow or pending data that arrived during TX.
-- **Escalating radio watchdog** (`check_radio_state_()`, every 5 s) — Reads CC1101 MARCSTATE and applies 3-level recovery within a 60-second window: L1 = flush FIFO (up to 3×), L2 = full chip reset (up to 3×), L3 = mark permanently failed. Stuck IDLE is handled separately with a simple SRX restart. Only runs when TX is idle.
+- **Escalating radio watchdog** (`check_radio_state_()`, every 5 s) — Reads CC1101 MARCSTATE and applies 3-level recovery within a 60-second window: L1 = flush FIFO (up to 3×), L2 = full chip reset (up to 3×), L3 = mark permanently failed. Stuck IDLE with a verified profile is handled separately with a simple SRX restart; an invalid profile requires full reset and readback instead. Only runs when TX is idle.
 - **TX cooldown** — 1 ms settling time after TX before resuming RX (CC1101 PLL settles in ~75µs).
 - **Minimum packet validation** — Packets shorter than `ELERO_MIN_PACKET_SIZE` (17 bytes) are rejected as non-Elero RF noise.
 
@@ -738,7 +750,7 @@ When the switch is OFF, all `/elero` endpoints return HTTP 503 (Service Unavaila
 
 ### External dependencies
 
-- **RadioLib v7.1.2** — added automatically via `cg.add_library("jgromes/RadioLib", "7.1.2")` in the hub's `to_code()`
+- **RadioLib v8.0.0** — added automatically via `cg.add_library("jgromes/RadioLib", "8.0.0")` in the hub's `to_code()`
 - **ESPHome 2026.1.0+ compatibility** — the hub's `to_code()` calls `request_log_listener()` to reserve a log listener slot for the StaticVector migration; gracefully falls back for older ESPHome versions
 
 ### Local development
@@ -823,7 +835,7 @@ CI runs automatically on pushes to `main`, `dev`, `feat/**`, `fix/**`, and `docs
 | **esphome-compile** | `esphome compile` across 8 config variants (matrix, `fail-fast: false`) | Every implementation push/PR; skipped on direct `docs/**` pushes |
 | **frontend-build** | `npm ci` + `npm run build` from `components/elero_web/frontend/`, then verifies generated `elero_web_ui.h` | Every implementation push/PR; skipped on direct `docs/**` pushes |
 | **unit-tests** | CMake configure/build plus `ctest --output-on-failure -V` | Every implementation push/PR; skipped on direct `docs/**` pushes |
-| **python-tests** | `pytest tests/python/ -v --tb=short` with pinned ESPHome | Every implementation push/PR; skipped on direct `docs/**` pushes |
+| **python-tests** | `pytest tests/python/ -v --tb=short` with ESPHome 2026.3.1 and 2026.11.0, including a C++ API compatibility probe | Every implementation push/PR; skipped on direct `docs/**` pushes |
 | **ci-ok** | Verifies markdown and required heavy jobs passed; accepts intentional heavy-job skips for direct `docs/**` pushes | Every push/PR |
 | **auto-issue creation** | Parses compile log for GCC warnings/errors, creates GitHub issues labeled `ci-detected` on push events | After each compile job |
 
@@ -841,6 +853,10 @@ CI runs automatically on pushes to `main`, `dev`, `feat/**`, `fix/**`, and `docs
 | `tests/configs/esp32s3-idf.yaml` | ESP32-S3 + esp-idf framework, shared SPI (CC1101 + TFT display), 6 covers, deep sleep, `compile_process_limit: 1` |
 
 Test configs in `tests/configs/` use `path: ../../components` to reference the local component source relative to their location.
+
+The ESP32-S3 fixture enables `VERBOSE` logging so raw TX formatting is compiled too. Packet dumps use `format_hex_pretty_to()` with FIFO-sized stack buffers; this API is available in both tested ESPHome versions. Dumps retain dot-separated uppercase bytes, but omit the old redundant trailing byte count (the log prefix already includes it).
+
+Entity names cross the version boundary through `components/elero/elero_esphome_compat.h`: ESPHome 2026.11+ uses `get_name_to()` for web/API strings and `get_log_name()` for logging; older releases use `get_name()`. The Python test `tests/python/test_esphome_cpp_compat.py` compiles this boundary against the installed ESPHome headers with deprecations treated as errors, at disabled and verbose log levels. It requires `g++` (available on CI runners); it is an API compile probe, not a firmware or hardware test.
 
 ### Auto-Issue Creation
 
@@ -975,7 +991,7 @@ The `tests/configs/compile_test.yaml` includes system monitoring sensors for Hom
 - **Poll interval `never`**: Set `poll_interval: never` for blinds that reliably push state updates (avoids unnecessary RF traffic). Internally this maps to `uint32_t` max (4 294 967 295 ms).
 - **TX busy**: radio-wide admission allows one queued/in-flight command. Additional coordinator submissions receive `QUEUE_FULL` semantics without consuming retry budget until the matching completion releases admission.
 - **CC1101 SFTX/SFRX validity**: SFTX is only valid in IDLE or TXFIFO_UNDERFLOW states; SFRX is only valid in IDLE or RXFIFO_OVERFLOW states (per CC1101 datasheet). Issuing these strobes in other states silently corrupts radio state. The TX state machine must respect this.
-- **RX FIFO stale data after TX**: When `standby()` interrupts an in-progress packet reception, partial data remains in the RX FIFO. `send_command_internal_()` flushes both FIFOs after entering IDLE to prevent `process_rx()` from misinterpreting stale data after TX completes.
+- **RX FIFO stale data after TX**: TX preparation first drains buffered feedback through the CRC-autoflush-safe reader and verifies IDLE. It flushes TX only, never normal RX feedback. An interrupted trailing fragment is explicitly counted/discarded; no FIFO length byte is consumed during active reception.
 - **RXFIFO_OVERFLOW during TX**: While TX is active, `process_rx()` does not run, so RX FIFO overflow goes undetected until the post-TX FIFO health check or the 5-second radio watchdog catches it.
 - **Command queue overflow**: Each blind's command queue is capped at `ELERO_MAX_COMMAND_QUEUE` (10) to prevent OOM on ESP32.
 - **ESP32-S3 compile OOM**: On memory-constrained build machines, the ESP32-S3 toolchain (`xtensa-esp-elf-g++`) can be killed by the OS during parallel compilation of large `.cpp` files (symptoms: `fatal error: Killed signal terminated program cc1plus`). Fix by limiting parallel compile jobs: add `compile_process_limit: 1` under `esphome:` in your YAML config. This serializes compilation, trading speed for reliability.

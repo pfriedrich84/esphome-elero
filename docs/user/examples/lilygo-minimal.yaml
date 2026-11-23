@@ -20,6 +20,11 @@ esp32:
   flash_size: 16MB
   framework:
     type: esp-idf
+    # Optional (ESPHome >= 2026.10): only if YOUR boot log prints
+    # "Set flash_chip: generic under esp32 > framework > advanced to save IRAM".
+    # Use the exact value from your own log. See docs/user/configuration.md.
+    # advanced:
+    #   flash_chip: generic
 
 logger:
   level: DEBUG

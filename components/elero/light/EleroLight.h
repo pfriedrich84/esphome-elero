@@ -5,6 +5,7 @@
 #include "esphome/components/light/light_state.h"
 #include "esphome/components/light/light_traits.h"
 #include "../elero.h"
+#include "../elero_esphome_compat.h"
 
 namespace esphome {
 namespace elero {
@@ -33,7 +34,7 @@ class EleroLight : public light::LightOutput, public Component, public EleroLigh
 
   // Web API helpers (EleroLightBase interface)
   std::string get_light_name() const override {
-    return this->state_ ? std::string(this->state_->get_name().c_str()) : "Unknown";
+    return this->state_ ? compat::entity_name(*this->state_) : "Unknown";
   }
   float get_brightness() const override { return this->brightness_; }
   bool get_is_on() const override { return this->is_on_; }

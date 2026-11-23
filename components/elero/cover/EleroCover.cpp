@@ -282,6 +282,28 @@ IntentSubmitResult EleroCover::submit_intent(const CommandIntent &intent) {
   return result;
 }
 
+IntentSubmitResult EleroCover::submit_control_intent(const CommandIntent &intent) {
+  std::lock_guard<std::recursive_mutex> lock(this->cover_mutex_);
+  switch (intent.kind) {
+    case CommandIntentKind::OPEN:
+      this->target_position_ = COVER_OPEN;
+      return this->start_movement(COVER_OPERATION_OPENING);
+    case CommandIntentKind::CLOSE:
+      this->target_position_ = COVER_CLOSED;
+      return this->start_movement(COVER_OPERATION_CLOSING);
+    case CommandIntentKind::STOP:
+      return this->start_movement(COVER_OPERATION_IDLE);
+    case CommandIntentKind::TILT: {
+      const auto result = this->submit_intent(intent);
+      if (intent_was_accepted(result))
+        this->tilt = 1.0f;
+      return result;
+    }
+    default:
+      return this->submit_intent(intent);
+  }
+}
+
 IntentSubmitResult EleroCover::request_stop(bool already_admitted) {
   std::lock_guard<std::recursive_mutex> lock(this->cover_mutex_);
   const uint32_t now = millis();
@@ -531,13 +553,15 @@ void EleroCover::control(const cover::CoverCall &call) {
   }
 }
 
-void EleroCover::start_movement(CoverOperation dir) {
+IntentSubmitResult EleroCover::start_movement(CoverOperation dir) {
   std::lock_guard<std::recursive_mutex> lock(this->cover_mutex_);
+  IntentSubmitResult result = IntentSubmitResult::REJECTED;
   switch(dir) {
     case COVER_OPERATION_OPENING:
       ESP_LOGV(TAG, "Sending OPEN command");
-      if (!intent_was_accepted(this->submit_intent({CommandIntentKind::OPEN, 0})))
-        return;
+      result = this->submit_intent({CommandIntentKind::OPEN, 0});
+      if (!intent_was_accepted(result))
+        return result;
       // Reset tilt state on movement
       this->tilt = 0.0;
       this->last_operation_ = COVER_OPERATION_OPENING;
@@ -545,8 +569,9 @@ void EleroCover::start_movement(CoverOperation dir) {
     break;
     case COVER_OPERATION_CLOSING:
       ESP_LOGV(TAG, "Sending CLOSE command");
-      if (!intent_was_accepted(this->submit_intent({CommandIntentKind::CLOSE, 0})))
-        return;
+      result = this->submit_intent({CommandIntentKind::CLOSE, 0});
+      if (!intent_was_accepted(result))
+        return result;
       // Reset tilt state on movement
       this->tilt = 0.0;
       this->last_operation_ = COVER_OPERATION_CLOSING;
@@ -555,15 +580,15 @@ void EleroCover::start_movement(CoverOperation dir) {
     case COVER_OPERATION_IDLE:
       ESP_LOGI(TAG, "Blind 0x%06lx manual stop at position %.2f",
                static_cast<unsigned long>(this->command_.blind_addr), this->position);
-      this->request_stop();
-      return;
+      return this->request_stop();
   }
 
   if (this->stop_verification_active_.load()) {
     this->pending_movement_start_ = true;
-    return;  // admitted deferred work is not movement yet
+    return result;  // admitted deferred work is not movement yet
   }
   this->apply_movement_state_(dir);
+  return result;
 }
 
 void EleroCover::apply_movement_state_(CoverOperation dir) {

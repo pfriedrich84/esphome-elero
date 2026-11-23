@@ -14,6 +14,7 @@
 #include "elero_counter_logic.h"
 #include "elero_status_read.h"
 #include "elero_radio_timing.h"
+#include "elero_reinit_request.h"
 #include <RadioLib.h>
 #include <string>
 #include <vector>
@@ -262,8 +263,7 @@ struct RadioMessage {
     TxRequest tx;
     struct { uint8_t freq2; uint8_t freq1; uint8_t freq0; } freq;
   };
-  SemaphoreHandle_t completion_sem{nullptr};  // optional: signaled when done
-  bool *result_ptr{nullptr};                   // optional: success/failure output
+  uint32_t request_id{0};  // REINIT_FREQ completion token; no caller-owned pointers
 
   RadioMessage() : type(RadioControlType::TX_COMMAND), tx{} {}
 };
@@ -327,6 +327,10 @@ class EleroBlindBase {
   virtual uint32_t get_close_duration_ms() const = 0;
   virtual bool get_supports_tilt() const = 0;
   virtual IntentSubmitResult submit_intent(const CommandIntent &intent) = 0;
+  /// Submit a command through the same semantic state transition used by the
+  /// ESPHome cover control path. Web adapters must use this instead of
+  /// bypassing cover movement and STOP state handling via submit_intent().
+  virtual IntentSubmitResult submit_control_intent(const CommandIntent &intent) = 0;
   virtual CommandDeliveryConfig get_command_delivery_config() const = 0;
   virtual CommandIntentDelivery *get_command_delivery() = 0;
   virtual bool should_defer_intent(const CommandIntent &) const { return false; }
@@ -381,7 +385,7 @@ class EleroRefreshButton : public button::Button, public Component {
 #endif  // USE_BUTTON
 
 /// RadioLib HAL adapter that bridges ESPHome's SPIDevice to RadioLib's Module.
-/// GPIO and interrupt operations are forwarded to ESPHome primitives.
+/// GPIO and interrupts are managed by Elero directly; HAL hooks are no-ops.
 /// SPI operations delegate to the parent Elero component's SPIDevice.
 class EspHomeRadioLibHal : public RadioLibHal {
  public:
@@ -402,11 +406,11 @@ class EspHomeRadioLibHal : public RadioLibHal {
   long pulseIn(uint32_t pin, uint32_t state, RadioLibTime_t timeout) override;
 
   // SPI — delegated to the parent Elero component's SPIDevice
-  void spiBegin() override;
+  int16_t spiBegin() override;
   void spiBeginTransaction() override;
-  void spiTransfer(uint8_t *out, size_t len, uint8_t *in) override;
+  int16_t spiTransfer(uint8_t *out, size_t len, uint8_t *in) override;
   void spiEndTransaction() override;
-  void spiEnd() override;
+  int16_t spiEnd() override;
 
   /// Set the parent component that owns the SPI bus.
   /// Must be called before any SPI operations.
@@ -428,9 +432,9 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   void dump_config() override;
   float get_setup_priority() const override { return setup_priority::DATA; }
   void reset();
-  bool init();  // returns false if SPI is broken (early bail after first write failure)
+  bool init();  // verifies the complete profile before allowing RX/TX
   void write_reg(uint8_t addr, uint8_t data);
-  void write_burst(uint8_t addr, uint8_t *data, uint8_t len);
+  void write_burst(uint8_t addr, const uint8_t *data, uint8_t len);
   void write_cmd(uint8_t cmd);
   uint8_t read_reg(uint8_t addr);
   uint8_t read_status(uint8_t addr);
@@ -602,9 +606,10 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   }
 
   void set_gdo0_pin(InternalGPIOPin *pin) { gdo0_pin_ = pin; }
-  void set_freq0(uint8_t freq) { freq0_ = freq; }
-  void set_freq1(uint8_t freq) { freq1_ = freq; }
-  void set_freq2(uint8_t freq) { freq2_ = freq; }
+  // YAML codegen only, before the radio task starts.
+  void set_freq0(uint8_t freq) { frequency_registers_ = (frequency_registers_.load() & 0xFFFF00u) | freq; }
+  void set_freq1(uint8_t freq) { frequency_registers_ = (frequency_registers_.load() & 0xFF00FFu) | (uint32_t(freq) << 8); }
+  void set_freq2(uint8_t freq) { frequency_registers_ = (frequency_registers_.load() & 0x00FFFFu) | (uint32_t(freq) << 16); }
   void set_send_repeats(uint8_t repeats) { send_repeats_ = repeats; }
   void set_send_delay(uint32_t delay_ms) { send_delay_ = delay_ms; }
   void set_dedup_window(uint32_t window_ms) { dedup_window_ms_ = window_ms; }
@@ -614,9 +619,11 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   bool reinit_frequency(uint8_t freq2, uint8_t freq1, uint8_t freq0);
   bool reinit_frequency_mhz(float mhz);
   static float registers_to_mhz(uint8_t freq2, uint8_t freq1, uint8_t freq0);
-  uint8_t get_freq0() const { return freq0_; }
-  uint8_t get_freq1() const { return freq1_; }
-  uint8_t get_freq2() const { return freq2_; }
+  uint32_t get_frequency_registers() const { return frequency_registers_.load(std::memory_order_acquire); }
+  uint8_t get_freq0() const { return get_frequency_registers() & 0xFF; }
+  uint8_t get_freq1() const { return (get_frequency_registers() >> 8) & 0xFF; }
+  uint8_t get_freq2() const { return (get_frequency_registers() >> 16) & 0xFF; }
+  float get_frequency_mhz() const;
 
  private:
   // Radio task (Core 0) — owns ALL SPI access after setup()
@@ -626,9 +633,14 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
 
   // Non-blocking TX state machine (runs on Core 0 radio task)
   bool enter_idle_();
+  uint32_t estimate_airtime_us_(uint8_t fifo_bytes);
+  bool init_at_frequency_(uint32_t frequency);
+  bool apply_frequency_(uint8_t freq2, uint8_t freq1, uint8_t freq0);
+  void handle_frequency_reinit_(uint32_t request_id, uint8_t freq2, uint8_t freq1, uint8_t freq0);
   uint8_t read_status_once_(uint8_t addr);
   bool read_status_stable(uint8_t addr, uint8_t &value);
   struct RxFifoIO;
+  struct RadioProfileIO;
   bool process_rx(bool keep_idle = false);
   void advance_tx();
   void dispatch_rx_result_(const RxResult &rx);  // runs on Core 1 main loop
@@ -683,17 +695,17 @@ class Elero : public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARIT
   uint32_t tx_state_entered_ms_{0};
   uint32_t last_tx_complete_ms_{0};
 
-  // RadioLib instances — standby() used for IDLE transition, SPI register
-  // access with verify-readback for init/config.
+  // RadioLib owns bootstrap configuration and explicit TXOFF=RX setup.
+  // Runtime FIFO, CCA and stable status reads stay in the radio task.
+  std::atomic<bool> radio_profile_valid_{false};
+  FrequencyReinitRequest reinit_request_;
   EspHomeRadioLibHal radio_hal_;
   Module *radio_module_{nullptr};
   CC1101 *radio_{nullptr};
 
   uint8_t msg_rx_[CC1101_FIFO_LENGTH];
   uint8_t msg_tx_[CC1101_FIFO_LENGTH];
-  uint8_t freq0_{0x7a};
-  uint8_t freq1_{0x71};
-  uint8_t freq2_{0x21};
+  std::atomic<uint32_t> frequency_registers_{0x21717A};  // Published only after verified runtime reinit.
   uint8_t send_repeats_{ELERO_DEFAULT_SEND_REPEATS};
   uint32_t send_delay_{ELERO_DEFAULT_SEND_DELAY};
   uint32_t dedup_window_ms_{ELERO_DEDUP_WINDOW_MS};
