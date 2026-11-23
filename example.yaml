@@ -1,8 +1,13 @@
-# Set minimum_chip_revision to reduce binary size (removes compat code for older chips)
+# Compact feature overview: esphome:, wifi:, api:, ota: and logger: are omitted.
+# Complete starting points: docs/user/examples/README.md
 esp32:
   board: esp32dev
   variant: esp32
-  minimum_chip_revision: 3.1
+  framework:
+    type: arduino
+    # Optional, only if your boot log suggests it (older chips won't boot):
+    # advanced:
+    #   minimum_chip_revision: "3.1"
 
 external_components:
   - source: github://pfriedrich84/esphome-elero
@@ -49,17 +54,10 @@ elero_group:
       - cover_schlafzimmer
       - cover_wohnzimmer
 
-# RSSI sensor - reports signal strength for a specific blind
-sensor:
-  - platform: elero
-    blind_address: 0xa831e5
-    name: "Schlafzimmer RSSI"
-
-# Text sensor - reports blind state as text (top, bottom, moving_up, etc.)
-text_sensor:
-  - platform: elero
-    blind_address: 0xa831e5
-    name: "Schlafzimmer Status"
+# Each cover/light auto-creates "<name> RSSI", "<name> Status" and
+# "<name> Refresh" entities (auto_sensors: true). Only add sensor:/text_sensor:
+# with platform: elero after setting auto_sensors: false on that cover/light,
+# otherwise ESPHome reports a duplicate entity name.
 
 # Buttons for RF discovery scan
 button:

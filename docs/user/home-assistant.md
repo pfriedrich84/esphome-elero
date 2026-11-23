@@ -7,13 +7,19 @@ firmware-nah auf dem ESP32 + CC1101.
 
 ## Typische Entities
 
-| Entity-Typ | Beispiel | Beschreibung |
+Home Assistant bildet Entity-IDs aus dem Gerätenamen (`friendly_name`) und dem
+Entity-Namen. Bei `friendly_name: "Elero Rollladen"` wird aus dem Cover
+`Schlafzimmer` z.B. `cover.elero_rollladen_schlafzimmer`. Die Beispiele unten
+lassen das Gerätepräfix der Lesbarkeit halber weg; die echten IDs stehen unter
+**Einstellungen > Geräte & Dienste > ESPHome > Gerät**.
+
+| ESPHome-Typ | Beispiel-Entity | Beschreibung |
 |---|---|---|
 | Cover | `cover.schlafzimmer` | Hoch, runter, stopp, optional Position und Tilt |
 | Cover-Gruppe | `cover.alle_rolllaeden` | Steuert mehrere Covers gleichzeitig |
 | Light | `light.wohnzimmerlicht` | Ein/Aus, optional Helligkeit |
 | Sensor | `sensor.schlafzimmer_rssi` | Signalstärke in dBm, auto-generiert |
-| Text Sensor | `text_sensor.schlafzimmer_status` | Aktueller Status, auto-generiert |
+| Text Sensor | `sensor.schlafzimmer_status` | Aktueller Status, auto-generiert; ESPHome-Text-Sensoren erscheinen in Home Assistant unter `sensor.*` |
 | Button | `button.schlafzimmer_refresh` | Sofortige Statusabfrage, auto-generiert |
 | Button | `button.elero_start_scan` | RF-Scan starten |
 | Button | `button.elero_stop_scan` | RF-Scan stoppen |
@@ -28,7 +34,7 @@ title: Elero Rollläden
 entities:
   - entity: cover.schlafzimmer
   - entity: sensor.schlafzimmer_rssi
-  - entity: text_sensor.schlafzimmer_status
+  - entity: sensor.schlafzimmer_status
   - type: divider
   - entity: button.elero_start_scan
   - entity: button.elero_stop_scan
@@ -50,17 +56,18 @@ Details und Override-Möglichkeiten stehen in der
 
 ## Automation-Beispiel
 
-Status-Text-Sensoren können für Automationen genutzt werden:
+Status-Text-Sensoren können für Automationen genutzt werden. Mögliche Werte
+stehen in der [Konfigurationsreferenz](configuration.md#mögliche-status-werte).
 
 ```yaml
 automation:
   - alias: "Warnung bei Rollladen-Blockade"
-    trigger:
-      - platform: state
-        entity_id: text_sensor.schlafzimmer_status
+    triggers:
+      - trigger: state
+        entity_id: sensor.schlafzimmer_status
         to: "blocking"
-    action:
-      - service: notify.notify
+    actions:
+      - action: notify.notify
         data:
           message: "Rollladen Schlafzimmer ist blockiert!"
 ```

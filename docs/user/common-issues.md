@@ -1,70 +1,103 @@
 # Common Issues
 
-This page collects common setup symptoms and the first checks to run before
-changing Elero protocol values.
+Diese Seite sammelt typische Symptome beim Einrichten und die ersten Prüfungen,
+bevor du Elero-Protokollwerte änderst.
 
 ## `SPI Status: FAILED — CC1101 communication broken`
 
-This means the ESP32 cannot communicate with the CC1101 over SPI. RF frequency,
-blind addresses, channels, and Elero command settings are not involved yet.
+Der ESP32 kann nicht per SPI mit dem CC1101 kommunizieren. Frequenz,
+Blind-Adressen, Kanäle und Elero-Befehlswerte spielen an dieser Stelle noch
+keine Rolle.
 
 ### Lilygo T-Embed CC1101
 
-If you use a Lilygo T-Embed CC1101, see the board-specific notes:
+Für den Lilygo T-Embed CC1101 gibt es eigene Hinweise:
 [`boards/lilygo-t-embed-cc1101.md`](boards/lilygo-t-embed-cc1101.md).
 
-Common causes on this board are:
+Typische Ursachen auf diesem Board:
 
-- the onboard CC1101 power rail is not enabled
-- the antenna/RF switch pins are not initialized
-- the wrong ESP32-S3 board variant or pin mapping is used
+- die Stromversorgung des Onboard-CC1101 ist nicht eingeschaltet
+- die Antennen-/RF-Switch-Pins sind nicht initialisiert
+- falsche ESP32-S3-Board-Variante oder falsches Pin-Mapping
 
-Check the Lilygo board-power and antenna-switch setup before changing SPI pins.
+Prüfe das Board-Power- und Antennen-Switch-Setup, bevor du SPI-Pins änderst.
 
-### External CC1101 module
+### Externes CC1101-Modul
 
-For a separate CC1101 module, check:
+Bei einem separaten CC1101-Modul prüfen:
 
-- VCC is connected to 3.3V, not 5V
-- GND is connected
-- CLK, MOSI, MISO, and CS match the YAML configuration
-- CS is not shared with another SPI device
-- unsafe ESP32 strapping pins are avoided for SPI signals
+- VCC hängt an 3.3V, nicht an 5V
+- GND ist verbunden
+- CLK, MOSI, MISO und CS entsprechen der YAML-Konfiguration
+- CS wird nicht mit einem anderen SPI-Gerät geteilt
+- keine kritischen ESP32-Strapping-Pins für SPI-Signale
 
-On classic ESP32 boards, avoid GPIO0, GPIO2, GPIO5, GPIO12, and GPIO15 for SPI
-signals. GPIO12 is especially risky on classic ESP32 because it controls
-VDD_SDIO at boot. ESP32-S3 has different strapping pins; see the board-specific
-notes for Lilygo T-Embed CC1101.
+Auf klassischen ESP32-Boards GPIO0, GPIO2, GPIO5, GPIO12 und GPIO15 für
+SPI-Signale meiden. GPIO12 ist besonders kritisch, weil es beim Boot VDD_SDIO
+festlegt. Der ESP32-S3 hat andere Strapping-Pins; siehe die Board Notes zum
+Lilygo T-Embed CC1101.
 
-## No RF packets when pressing the remote
+## Keine RF-Pakete beim Drücken der Fernbedienung
 
-If SPI communication works but no packets appear in the log when pressing the
-real Elero remote, check the CC1101 frequency settings.
+Funktioniert SPI, erscheinen beim Drücken der echten Elero-Fernbedienung aber
+keine Pakete im Log, zuerst die Frequenz prüfen. `logger:` muss dafür auf
+`DEBUG` stehen.
 
-Common 868 MHz variants:
+Gängige 868-MHz-Varianten:
 
-| Variant | `freq2` | `freq1` | `freq0` |
+| Variante | `freq2` | `freq1` | `freq0` |
 |---|---:|---:|---:|
-| Standard 868.35 MHz | `0x21` | `0x71` | `0x7a` |
-| Alternative 868.95 MHz | `0x21` | `0x71` | `0xc0` |
+| Standard 868,35 MHz (Default) | `0x21` | `0x71` | `0x7a` |
+| Alternative 868,95 MHz | `0x21` | `0x71` | `0xc0` |
 
-Try the standard setting first, then the alternative. The frequency can also be
-tested at runtime through the web API when `elero_web` is enabled.
+Zuerst den Standard testen, dann die Alternative. Mit aktiviertem `elero_web`
+lässt sich die Frequenz auch zur Laufzeit über die Web-API testen, siehe
+[Discovery: Frequenz testen](discovery.md#frequenz-testen).
 
-## ESP32-S3 compile fails with `Killed signal terminated program cc1plus`
+## ESP32-S3-Kompilierung bricht mit `Killed signal terminated program cc1plus` ab
 
-ESP32-S3 builds can run out of memory during parallel compilation. Serialize the
-build:
+ESP32-S3-Builds können bei paralleler Kompilierung zu wenig Arbeitsspeicher auf
+dem Build-Rechner haben. Kompilierung serialisieren:
 
 ```yaml
 esphome:
   compile_process_limit: 1
 ```
 
-## Weak signal or unreliable control
+## `Duplicate sensor entity with name '... RSSI' found`
 
-- Watch the RSSI diagnostic sensor.
-- Values above about `-70 dBm` are typically good.
-- Reposition the antenna and keep it away from noisy power supplies.
-- Prefer an 868 MHz CC1101 module for European Elero installations.
-- Check that the ESP32 and CC1101 have a stable 3.3V supply.
+Covers und Lights erzeugen mit `auto_sensors: true` (Standard) bereits einen
+RSSI-Sensor, einen Status-Text-Sensor und einen Refresh-Button. Zusätzliche
+`sensor:`/`text_sensor:`-Einträge mit `platform: elero` und demselben Namen
+kollidieren damit. Entweder die zusätzlichen Einträge entfernen oder am Cover
+bzw. Light `auto_sensors: false` setzen. Details:
+[Konfigurationsreferenz: `sensor`](configuration.md#plattform-sensor-rssi).
+
+## `[minimum_chip_revision] is an invalid option for [esp32]`
+
+`minimum_chip_revision` gehört unter `esp32: framework: advanced:`, nicht direkt
+unter `esp32:`. Die Option ist optional; siehe
+[ESP32: optionale Speicheroptimierungen](configuration.md#minimum_chip_revision-nur-klassischer-esp32).
+
+## Bootlog: `Set flash_chip: ... to save IRAM`
+
+Beispiel:
+
+```text
+[W][app:...]: Set flash_chip: generic under esp32 > framework > advanced to save IRAM
+```
+
+Das ist ein **optionaler Optimierungshinweis** von ESPHome 2026.10 und neuer,
+kein Laufzeitfehler. Funkempfang, Reichweite und Elero-Protokoll sind davon
+nicht betroffen; das Gerät kann ohne Änderung weiterlaufen. Wer die
+Optimierung übernehmen will, setzt genau den im eigenen Bootlog genannten Wert,
+siehe [ESP32: optionale Speicheroptimierungen](configuration.md#flash_chip).
+`generic` nicht ungeprüft für andere Boards übernehmen.
+
+## Schwaches Signal oder unzuverlässige Steuerung
+
+- Den RSSI-Diagnosesensor beobachten.
+- Werte über etwa `-70 dBm` sind in der Regel gut.
+- Antenne neu ausrichten und von störenden Netzteilen fernhalten.
+- Für europäische Elero-Installationen ein 868-MHz-CC1101-Modul verwenden.
+- Auf eine stabile 3.3V-Versorgung von ESP32 und CC1101 achten.

@@ -147,4 +147,4 @@ elero:
   freq2: 0x21
 ```
 
-Weitere Hinweise stehen in [Common Issues](common-issues.md#no-rf-packets-when-pressing-the-remote).
+Weitere Hinweise stehen in [Common Issues](common-issues.md#keine-rf-pakete-beim-drücken-der-fernbedienung).

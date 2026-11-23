@@ -1,10 +1,24 @@
 # Lilygo T-Embed CC1101
 
-The Lilygo T-Embed CC1101 is an ESP32-S3 board with an onboard CC1101 radio. The
-CC1101 uses the board's internal SPI wiring; do not use the default external
-ESP32 wiring from the generic installation guide.
+Der Lilygo T-Embed CC1101 ist ein ESP32-S3-Board mit integriertem CC1101. Der
+CC1101 hängt an der internen SPI-Verdrahtung des Boards; die Standard-Pins aus
+der allgemeinen Installationsanleitung für externe Module gelten hier nicht.
 
-## Known-good CC1101 pins
+Eine vollständige Startkonfiguration mit allen folgenden Punkten liegt unter
+[`../examples/lilygo-minimal.yaml`](../examples/lilygo-minimal.yaml).
+
+## ESP32-Einstellungen
+
+```yaml
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: esp32s3
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+```
+
+## Bewährte CC1101-Pins
 
 ```yaml
 spi:
@@ -17,12 +31,13 @@ elero:
   gdo0_pin: GPIO3
 ```
 
-## Required board setup
+## Erforderliches Board-Setup
 
-Some Lilygo T-Embed CC1101 boards require the board power rail and antenna/RF
-switch to be initialized before the onboard CC1101 responds on SPI.
+Bei manchen Lilygo T-Embed CC1101 müssen Board-Stromversorgung und
+Antennen-/RF-Switch initialisiert werden, bevor der Onboard-CC1101 auf SPI
+antwortet.
 
-Add this setup to the same YAML configuration:
+Dieses Setup in dieselbe YAML-Konfiguration übernehmen:
 
 ```yaml
 esphome:
@@ -53,46 +68,81 @@ switch:
     internal: true
 ```
 
-If your configuration already has an `esphome:` block, merge the `on_boot:`
-section into the existing block instead of creating a second one.
+Gibt es in der Konfiguration bereits einen `esphome:`-Block, den
+`on_boot:`-Abschnitt dort einfügen statt einen zweiten Block anzulegen.
 
-## ESP32-S3 compile memory
+## Speicher beim Kompilieren (ESP32-S3)
 
-If compilation fails with `Killed signal terminated program cc1plus`, serialize
-the build:
+Bricht die Kompilierung mit `Killed signal terminated program cc1plus` ab, die
+Kompilierung serialisieren:
 
 ```yaml
 esphome:
   compile_process_limit: 1
 ```
 
-This can be combined with the `on_boot:` setup in the same `esphome:` block.
+Das lässt sich im selben `esphome:`-Block mit dem `on_boot:`-Setup kombinieren.
 
-## Notes about GPIO12
+## Bootlog-Hinweis `Set flash_chip: generic ...`
 
-`GPIO12` is the expected CC1101 chip-select pin on the Lilygo T-Embed CC1101
-ESP32-S3. The classic ESP32 warning about GPIO12 and VDD_SDIO does not apply in
-the same way to ESP32-S3.
+Auf einem T-Embed CC1101 mit ESP-IDF und ESPHome 2026.11.0 wurde beim Start
+dieser Hinweis beobachtet:
 
-For external CC1101 modules on classic ESP32 boards, GPIO12 can still be unsafe
-and should be avoided for SPI signals.
+```text
+[W][app:...]: Set flash_chip: generic under esp32 > framework > advanced to save IRAM
+```
 
-## Troubleshooting `SPI Status: FAILED`
+Das ist ein optionaler Optimierungsvorschlag, kein Fehler; Funkempfang und
+Senden funktionieren unverändert. Wer ihn übernehmen will, ergänzt den
+bestehenden `esp32:`-Block, ohne andere Einstellungen zu ändern:
 
-If the log shows:
+```yaml
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: esp32s3
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+    advanced:
+      flash_chip: generic   # nur wenn der eigene Bootlog genau "generic" nennt
+```
+
+- Den Wert immer aus dem **eigenen** Bootlog übernehmen. Andere
+  Board-Revisionen können einen anderen Flash-Chip haben.
+- Erfordert ESPHome 2026.10.0 oder neuer.
+- Auf einem T-Embed CC1101 (ESP-IDF, ESPHome 2026.11) angewendet; das Gerät
+  läuft damit stabil und sendet/empfängt Elero-Pakete. Die Speicherersparnis
+  wurde nicht vermessen.
+
+Hintergrund und Regeln:
+[ESP32: optionale Speicheroptimierungen](../configuration.md#esp32-optionale-speicheroptimierungen).
+
+## Hinweise zu GPIO12
+
+`GPIO12` ist auf dem Lilygo T-Embed CC1101 (ESP32-S3) der erwartete
+CC1101-Chip-Select-Pin. Die Warnung zu GPIO12 und VDD_SDIO beim klassischen
+ESP32 gilt für den ESP32-S3 so nicht.
+
+Bei externen CC1101-Modulen an klassischen ESP32-Boards bleibt GPIO12 für
+SPI-Signale problematisch und sollte gemieden werden.
+
+## Fehlersuche bei `SPI Status: FAILED`
+
+Wenn im Log steht:
 
 ```text
 SPI Status: FAILED — CC1101 communication broken
 ```
 
-then the CC1101 is not reachable over SPI yet. On Lilygo T-Embed CC1101, check
-in this order:
+ist der CC1101 noch nicht per SPI erreichbar. Auf dem Lilygo T-Embed CC1101 in
+dieser Reihenfolge prüfen:
 
-1. Add the board power and antenna/RF switch setup above.
-2. Confirm the ESP32 configuration uses an ESP32-S3 board and variant.
-3. Confirm the SPI pins match the known-good Lilygo pins above.
-4. Capture the full boot log, including the CC1101 diagnostic lines for
-   `PARTNUM`, `VERSION`, and SPI write/read tests.
+1. Board-Power- und Antennen-/RF-Switch-Setup von oben ergänzen.
+2. Prüfen, dass die ESP32-Konfiguration ein ESP32-S3-Board und `variant: esp32s3` verwendet.
+3. Prüfen, dass die SPI-Pins den bewährten Lilygo-Pins oben entsprechen.
+4. Den vollständigen Bootlog sichern, inklusive der CC1101-Diagnosezeilen für
+   `PARTNUM`, `VERSION` und die SPI-Schreib-/Lesetests.
 
-Do this before changing Elero frequency, blind addresses, channels, or command
-values; those settings only matter after SPI communication works.
+Das alles erledigen, bevor du Frequenz, Blind-Adressen, Kanäle oder
+Befehlswerte änderst; diese Einstellungen spielen erst eine Rolle, wenn SPI
+funktioniert.

@@ -9,9 +9,12 @@ esphome:
 esp32:
   board: esp32dev
   variant: esp32
-  minimum_chip_revision: 3.1
   framework:
     type: arduino
+    # Optional: only if YOUR boot log suggests it ("Chip rev >= 3.0 detected.
+    # Set minimum_chip_revision: ..."). Firmware then won't boot on older chips.
+    # advanced:
+    #   minimum_chip_revision: "3.1"
 
 logger:
   level: DEBUG

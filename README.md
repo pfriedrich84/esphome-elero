@@ -118,6 +118,8 @@ z.B.:
 - `SPI Status: FAILED — CC1101 communication broken`
 - keine RF-Pakete beim Drücken der Fernbedienung
 - ESP32-S3 Compile-OOM
+- `Duplicate sensor entity` bei zusätzlichen RSSI-/Status-Sensoren
+- optionaler Bootlog-Hinweis `Set flash_chip: ... to save IRAM`
 - schwaches Signal oder unzuverlässige Steuerung
 
 ## Getestete Konfigurationen
